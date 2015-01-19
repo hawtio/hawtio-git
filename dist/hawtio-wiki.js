@@ -2987,1550 +2987,6 @@ var ActiveMQ;
 })(ActiveMQ || (ActiveMQ = {}));
 
 /// <reference path="../../includes.ts"/>
-/**
- * @module Dozer
- * @main Dozer
- */
-var Dozer;
-(function (Dozer) {
-    /**
-     * The JMX domain for Dozer
-     * @property jmxDomain
-     * @for Dozer
-     * @type String
-     */
-    Dozer.jmxDomain = 'net.sourceforge.dozer';
-    Dozer.introspectorMBean = "hawtio:type=Introspector";
-    /**
-     * Don't try and load properties for these types
-     * @property excludedPackages
-     * @for Dozer
-     * @type {Array}
-     */
-    Dozer.excludedPackages = [
-        'java.lang',
-        'int',
-        'double',
-        'long'
-    ];
-    /**
-     * Lets map the class names to element names
-     * @property elementNameMappings
-     * @for Dozer
-     * @type {Array}
-     */
-    Dozer.elementNameMappings = {
-        "Mapping": "mapping",
-        "MappingClass": "class",
-        "Field": "field"
-    };
-    Dozer.log = Logger.get("Dozer");
-    /**
-     * Converts the XML string or DOM node to a Dozer model
-     * @method loadDozerModel
-     * @for Dozer
-     * @static
-     * @param {Object} xml
-     * @param {String} pageId
-     * @return {Mappings}
-     */
-    function loadDozerModel(xml, pageId) {
-        var doc = xml;
-        if (angular.isString(xml)) {
-            doc = $.parseXML(xml);
-        }
-        console.log("Has Dozer XML document: " + doc);
-        var model = new Dozer.Mappings(doc);
-        var mappingsElement = doc.documentElement;
-        copyAttributes(model, mappingsElement);
-        $(mappingsElement).children("mapping").each(function (idx, element) {
-            var mapping = createMapping(element);
-            model.mappings.push(mapping);
-        });
-        return model;
-    }
-    Dozer.loadDozerModel = loadDozerModel;
-    function saveToXmlText(model) {
-        // lets copy the original doc then replace the mapping elements
-        var element = model.doc.documentElement.cloneNode(false);
-        appendElement(model.mappings, element, null, 1);
-        Dozer.addTextNode(element, "\n");
-        var xmlText = Core.xmlNodeToString(element);
-        return '<?xml version="1.0" encoding="UTF-8"?>\n' + xmlText;
-    }
-    Dozer.saveToXmlText = saveToXmlText;
-    function findUnmappedFields(workspace, mapping, fn) {
-        // lets find the fields which are unmapped
-        var className = mapping.class_a.value;
-        findProperties(workspace, className, null, function (properties) {
-            var answer = [];
-            angular.forEach(properties, function (property) {
-                console.log("got property " + JSON.stringify(property, null, "  "));
-                var name = property.name;
-                if (name) {
-                    if (mapping.hasFromField(name)) {
-                    }
-                    else {
-                        // TODO auto-detect this property name in the to classes?
-                        answer.push(new Dozer.UnmappedField(name, property));
-                    }
-                }
-            });
-            fn(answer);
-        });
-    }
-    Dozer.findUnmappedFields = findUnmappedFields;
-    /**
-     * Finds the properties on the given class and returns them; and either invokes the given function
-     * or does a sync request and returns them
-     * @method findProperties
-     * @for Dozer
-     * @static
-     * @param {Core.Workspace} workspace
-     * @param {String} className
-     * @param {String} filter
-     * @param {Function} fn
-     * @return {any}
-     */
-    function findProperties(workspace, className, filter, fn) {
-        if (filter === void 0) { filter = null; }
-        if (fn === void 0) { fn = null; }
-        var mbean = getIntrospectorMBean(workspace);
-        if (mbean) {
-            if (filter) {
-                return workspace.jolokia.execute(mbean, "findProperties", className, filter, onSuccess(fn));
-            }
-            else {
-                return workspace.jolokia.execute(mbean, "getProperties", className, onSuccess(fn));
-            }
-        }
-        else {
-            if (fn) {
-                return fn([]);
-            }
-            else {
-                return [];
-            }
-        }
-    }
-    Dozer.findProperties = findProperties;
-    /**
-     * Finds class names matching the given search text and either invokes the function with the results
-     * or does a sync request and returns them.
-     * @method findClassNames
-     * @for Dozer
-     * @static
-     * @param {Core.Workspace} workspace
-     * @param {String} searchText
-     * @param {Number} limit @default 20
-     * @param {Function} fn
-     * @return {any}
-     */
-    function findClassNames(workspace, searchText, limit, fn) {
-        if (limit === void 0) { limit = 20; }
-        if (fn === void 0) { fn = null; }
-        var mbean = getIntrospectorMBean(workspace);
-        if (mbean) {
-            return workspace.jolokia.execute(mbean, "findClassNames", searchText, limit, onSuccess(fn));
-        }
-        else {
-            if (fn) {
-                return fn([]);
-            }
-            else {
-                return [];
-            }
-        }
-    }
-    Dozer.findClassNames = findClassNames;
-    function getIntrospectorMBean(workspace) {
-        // lets hard code this so its easy to use in any JVM
-        return Dozer.introspectorMBean;
-        // return Core.getMBeanTypeObjectName(workspace, "hawtio", "Introspector");
-    }
-    Dozer.getIntrospectorMBean = getIntrospectorMBean;
-    function loadModelFromTree(rootTreeNode, oldModel) {
-        oldModel.mappings = [];
-        angular.forEach(rootTreeNode.childList, function (treeNode) {
-            var mapping = Core.pathGet(treeNode, ["data", "entity"]);
-            if (mapping) {
-                oldModel.mappings.push(mapping);
-            }
-        });
-        return oldModel;
-    }
-    Dozer.loadModelFromTree = loadModelFromTree;
-    function createDozerTree(model) {
-        var id = "mappings";
-        var folder = new Folder(id);
-        folder.addClass = "net-sourceforge-dozer-mappings";
-        folder.domain = Dozer.jmxDomain;
-        folder.typeName = "mappings";
-        folder.entity = model;
-        folder.key = Core.toSafeDomID(id);
-        angular.forEach(model.mappings, function (mapping) {
-            var mappingFolder = createMappingFolder(mapping, folder);
-            folder.children.push(mappingFolder);
-        });
-        return folder;
-    }
-    Dozer.createDozerTree = createDozerTree;
-    function createMappingFolder(mapping, parentFolder) {
-        var mappingName = mapping.name();
-        var mappingFolder = new Folder(mappingName);
-        mappingFolder.addClass = "net-sourceforge-dozer-mapping";
-        mappingFolder.typeName = "mapping";
-        mappingFolder.domain = Dozer.jmxDomain;
-        mappingFolder.key = (parentFolder ? parentFolder.key + "_" : "") + Core.toSafeDomID(mappingName);
-        mappingFolder.parent = parentFolder;
-        mappingFolder.entity = mapping;
-        mappingFolder.icon = Core.url("/app/dozer/img/class.gif");
-        /*
-              mappingFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
-              */
-        angular.forEach(mapping.fields, function (field) {
-            addMappingFieldFolder(field, mappingFolder);
-        });
-        return mappingFolder;
-    }
-    Dozer.createMappingFolder = createMappingFolder;
-    function addMappingFieldFolder(field, mappingFolder) {
-        var name = field.name();
-        var fieldFolder = new Folder(name);
-        fieldFolder.addClass = "net-sourceforge-dozer-field";
-        fieldFolder.typeName = "field";
-        fieldFolder.domain = Dozer.jmxDomain;
-        fieldFolder.key = mappingFolder.key + "_" + Core.toSafeDomID(name);
-        fieldFolder.parent = mappingFolder;
-        fieldFolder.entity = field;
-        fieldFolder.icon = Core.url("/app/dozer/img/attribute.gif");
-        /*
-              fieldFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
-              */
-        mappingFolder.children.push(fieldFolder);
-        return fieldFolder;
-    }
-    Dozer.addMappingFieldFolder = addMappingFieldFolder;
-    function createMapping(element) {
-        var mapping = new Dozer.Mapping();
-        var elementJQ = $(element);
-        mapping.class_a = createMappingClass(elementJQ.children("class-a"));
-        mapping.class_b = createMappingClass(elementJQ.children("class-b"));
-        elementJQ.children("field").each(function (idx, fieldElement) {
-            var field = createField(fieldElement);
-            mapping.fields.push(field);
-        });
-        copyAttributes(mapping, element);
-        return mapping;
-    }
-    function createField(element) {
-        if (element) {
-            var jqe = $(element);
-            var a = jqe.children("a").text();
-            var b = jqe.children("b").text();
-            var field = new Dozer.Field(new Dozer.FieldDefinition(a), new Dozer.FieldDefinition(b));
-            copyAttributes(field, element);
-            return field;
-        }
-        return new Dozer.Field(new Dozer.FieldDefinition(""), new Dozer.FieldDefinition(""));
-    }
-    function createMappingClass(jqElement) {
-        if (jqElement && jqElement[0]) {
-            var element = jqElement[0];
-            var text = element.textContent;
-            if (text) {
-                var mappingClass = new Dozer.MappingClass(text);
-                copyAttributes(mappingClass, element);
-                return mappingClass;
-            }
-        }
-        // lets create a default empty mapping
-        return new Dozer.MappingClass("");
-    }
-    function copyAttributes(object, element) {
-        var attributeMap = element.attributes;
-        for (var i = 0; i < attributeMap.length; i++) {
-            // TODO hacky work around for compiler issue ;)
-            //var attr = attributeMap.item(i);
-            var attMap = attributeMap;
-            var attr = attMap.item(i);
-            if (attr) {
-                var name = attr.localName;
-                var value = attr.value;
-                if (name && !name.startsWith("xmlns")) {
-                    var safeName = Forms.safeIdentifier(name);
-                    object[safeName] = value;
-                }
-            }
-        }
-    }
-    function appendAttributes(object, element, ignorePropertyNames) {
-        angular.forEach(object, function (value, key) {
-            if (ignorePropertyNames.any(key)) {
-            }
-            else {
-                // lets add an attribute value
-                if (value) {
-                    var text = value.toString();
-                    // lets replace any underscores with dashes
-                    var name = key.replace(/_/g, '-');
-                    element.setAttribute(name, text);
-                }
-            }
-        });
-    }
-    Dozer.appendAttributes = appendAttributes;
-    /**
-     * Adds a new child element for this mapping to the given element
-     * @method appendElement
-     * @for Dozer
-     * @static
-     * @param {any} object
-     * @param {any} element
-     * @param {String} elementName
-     * @param {Number} indentLevel
-     * @return the last child element created
-     */
-    function appendElement(object, element, elementName, indentLevel) {
-        if (elementName === void 0) { elementName = null; }
-        if (indentLevel === void 0) { indentLevel = 0; }
-        var answer = null;
-        if (angular.isArray(object)) {
-            angular.forEach(object, function (child) {
-                answer = appendElement(child, element, elementName, indentLevel);
-            });
-        }
-        else if (object) {
-            if (!elementName) {
-                var className = Core.pathGet(object, ["constructor", "name"]);
-                if (!className) {
-                    console.log("WARNING: no class name for value " + object);
-                }
-                else {
-                    elementName = Dozer.elementNameMappings[className];
-                    if (!elementName) {
-                        console.log("WARNING: could not map class name " + className + " to an XML element name");
-                    }
-                }
-            }
-            if (elementName) {
-                if (indentLevel) {
-                    var text = indentText(indentLevel);
-                    Dozer.addTextNode(element, text);
-                }
-                var doc = element.ownerDocument || document;
-                var child = doc.createElement(elementName);
-                // navigate child properties...
-                var fn = object.saveToElement;
-                if (fn) {
-                    fn.apply(object, [child]);
-                }
-                else {
-                    angular.forEach(object, function (value, key) {
-                        console.log("has key " + key + " value " + value);
-                    });
-                }
-                // if we have any element children then add newline text node
-                if ($(child).children().length) {
-                    //var text = indentText(indentLevel - 1);
-                    var text = indentText(indentLevel);
-                    Dozer.addTextNode(child, text);
-                }
-                element.appendChild(child);
-                answer = child;
-            }
-        }
-        return answer;
-    }
-    Dozer.appendElement = appendElement;
-    function nameOf(object) {
-        var text = angular.isObject(object) ? object["value"] : null;
-        if (!text && angular.isString(object)) {
-            text = object;
-        }
-        return text || "?";
-    }
-    Dozer.nameOf = nameOf;
-    function addTextNode(element, text) {
-        if (text) {
-            var doc = element.ownerDocument || document;
-            var child = doc.createTextNode(text);
-            element.appendChild(child);
-        }
-    }
-    Dozer.addTextNode = addTextNode;
-    function indentText(indentLevel) {
-        var text = "\n";
-        for (var i = 0; i < indentLevel; i++) {
-            text += "  ";
-        }
-        return text;
-    }
-})(Dozer || (Dozer = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Dozer
- */
-var Dozer;
-(function (Dozer) {
-    /**
-     * @class Mappings
-     */
-    var Mappings = (function () {
-        function Mappings(doc, mappings) {
-            if (mappings === void 0) { mappings = []; }
-            this.doc = doc;
-            this.mappings = mappings;
-        }
-        return Mappings;
-    })();
-    Dozer.Mappings = Mappings;
-    /**
-     * @class Mapping
-     */
-    var Mapping = (function () {
-        function Mapping() {
-            this.fields = [];
-            this.map_id = Core.getUUID();
-            this.class_a = new MappingClass('');
-            this.class_b = new MappingClass('');
-        }
-        Mapping.prototype.name = function () {
-            return Dozer.nameOf(this.class_a) + " -> " + Dozer.nameOf(this.class_b);
-        };
-        Mapping.prototype.hasFromField = function (name) {
-            return this.fields.find(function (f) { return name === f.a.value; });
-        };
-        Mapping.prototype.hasToField = function (name) {
-            return this.fields.find(function (f) { return name === f.b.value; });
-        };
-        Mapping.prototype.saveToElement = function (element) {
-            Dozer.appendElement(this.class_a, element, "class-a", 2);
-            Dozer.appendElement(this.class_b, element, "class-b", 2);
-            Dozer.appendElement(this.fields, element, "field", 2);
-            Dozer.appendAttributes(this, element, ["class_a", "class_b", "fields"]);
-        };
-        return Mapping;
-    })();
-    Dozer.Mapping = Mapping;
-    /**
-     * @class MappingClass
-     */
-    var MappingClass = (function () {
-        function MappingClass(value) {
-            this.value = value;
-        }
-        MappingClass.prototype.saveToElement = function (element) {
-            Dozer.addTextNode(element, this.value);
-            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
-        };
-        return MappingClass;
-    })();
-    Dozer.MappingClass = MappingClass;
-    /**
-     * @class Field
-     */
-    var Field = (function () {
-        function Field(a, b) {
-            this.a = a;
-            this.b = b;
-        }
-        Field.prototype.name = function () {
-            return Dozer.nameOf(this.a) + " -> " + Dozer.nameOf(this.b);
-        };
-        Field.prototype.saveToElement = function (element) {
-            Dozer.appendElement(this.a, element, "a", 3);
-            Dozer.appendElement(this.b, element, "b", 3);
-            Dozer.appendAttributes(this, element, ["a", "b"]);
-        };
-        return Field;
-    })();
-    Dozer.Field = Field;
-    /**
-     * @class FieldDefinition
-     */
-    var FieldDefinition = (function () {
-        function FieldDefinition(value) {
-            this.value = value;
-        }
-        FieldDefinition.prototype.saveToElement = function (element) {
-            Dozer.addTextNode(element, this.value);
-            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
-        };
-        return FieldDefinition;
-    })();
-    Dozer.FieldDefinition = FieldDefinition;
-    /**
-     * @class UnmappedField
-     */
-    var UnmappedField = (function () {
-        function UnmappedField(fromField, property, toField) {
-            if (toField === void 0) { toField = null; }
-            this.fromField = fromField;
-            this.property = property;
-            this.toField = toField;
-        }
-        return UnmappedField;
-    })();
-    Dozer.UnmappedField = UnmappedField;
-})(Dozer || (Dozer = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Dozer
- */
-var Dozer;
-(function (Dozer) {
-    /**
-     * Configures the JSON schemas to improve the UI models
-     * @method schemaConfigure
-     * @for Dozer
-     */
-    function schemaConfigure() {
-        io_hawt_dozer_schema_Field["tabs"] = {
-            'Fields': ['a.value', 'b.value'],
-            'From Field': ['a\\..*'],
-            'To Field': ['b\\..*'],
-            'Field Configuration': ['*']
-        };
-        io_hawt_dozer_schema_Mapping["tabs"] = {
-            'Classes': ['class-a.value', 'class-b.value'],
-            'From Class': ['class-a\\..*'],
-            'To Class': ['class-b\\..*'],
-            'Class Configuration': ['*']
-        };
-        // hide the fields table from the class configuration tab
-        io_hawt_dozer_schema_Mapping.properties.fieldOrFieldExclude.hidden = true;
-        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "label"], "From Field");
-        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "label"], "To Field");
-        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "label"], "From Class");
-        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "label"], "To Class");
-        // ignore prefixes in the generated labels
-        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "a", "ignorePrefixInLabel"], true);
-        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "b", "ignorePrefixInLabel"], true);
-        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-a", "ignorePrefixInLabel"], true);
-        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-b", "ignorePrefixInLabel"], true);
-        // add custom widgets
-        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "formTemplate"], classNameWidget("class_a"));
-        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "formTemplate"], classNameWidget("class_b"));
-        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.a.value" ' + 'typeahead="title for title in fromFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
-        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.b.value" ' + 'typeahead="title for title in toFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
-        function classNameWidget(propertyName) {
-            return '<input type="text" ng-model="dozerEntity.' + propertyName + '.value" ' + 'typeahead="title for title in classNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>';
-        }
-    }
-    Dozer.schemaConfigure = schemaConfigure;
-})(Dozer || (Dozer = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf.log = Logger.get("Karaf");
-    function setSelect(selection, group) {
-        if (!angular.isDefined(selection)) {
-            return group[0];
-        }
-        var answer = group.findIndex(function (item) {
-            return item.id === selection.id;
-        });
-        if (answer !== -1) {
-            return group[answer];
-        }
-        else {
-            return group[0];
-        }
-    }
-    Karaf.setSelect = setSelect;
-    function installRepository(workspace, jolokia, uri, success, error) {
-        Karaf.log.info("installing URI: ", uri);
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionFeaturesMBean(workspace),
-            operation: 'addRepository(java.lang.String)',
-            arguments: [uri]
-        }, onSuccess(success, { error: error }));
-    }
-    Karaf.installRepository = installRepository;
-    function uninstallRepository(workspace, jolokia, uri, success, error) {
-        Karaf.log.info("uninstalling URI: ", uri);
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionFeaturesMBean(workspace),
-            operation: 'removeRepository(java.lang.String)',
-            arguments: [uri]
-        }, onSuccess(success, { error: error }));
-    }
-    Karaf.uninstallRepository = uninstallRepository;
-    function installFeature(workspace, jolokia, feature, version, success, error) {
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionFeaturesMBean(workspace),
-            operation: 'installFeature(java.lang.String, java.lang.String)',
-            arguments: [feature, version]
-        }, onSuccess(success, { error: error }));
-    }
-    Karaf.installFeature = installFeature;
-    function uninstallFeature(workspace, jolokia, feature, version, success, error) {
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionFeaturesMBean(workspace),
-            operation: 'uninstallFeature(java.lang.String, java.lang.String)',
-            arguments: [feature, version]
-        }, onSuccess(success, { error: error }));
-    }
-    Karaf.uninstallFeature = uninstallFeature;
-    // TODO move to core?
-    function toCollection(values) {
-        var collection = values;
-        if (!angular.isArray(values)) {
-            collection = [values];
-        }
-        return collection;
-    }
-    Karaf.toCollection = toCollection;
-    function featureLinks(workspace, name, version) {
-        return "<a href='" + Core.url("#/karaf/feature/" + name + "/" + version + workspace.hash()) + "'>" + version + "</a>";
-    }
-    Karaf.featureLinks = featureLinks;
-    function extractFeature(attributes, name, version) {
-        var features = [];
-        var repos = [];
-        populateFeaturesAndRepos(attributes, features, repos);
-        return features.find(function (feature) {
-            return feature.Name == name && feature.Version == version;
-        });
-        /*
-        var f = {};
-        angular.forEach(attributes["Features"], (feature) => {
-          angular.forEach(feature, (entry) => {
-            if (entry["Name"] === name && entry["Version"] === version) {
-              var deps = [];
-              populateDependencies(attributes, entry["Dependencies"], deps);
-              f["Name"] = entry["Name"];
-              f["Version"] = entry["Version"];
-              f["Bundles"] = entry["Bundles"];
-              f["Dependencies"] = deps;
-              f["Installed"] = entry["Installed"];
-              f["Configurations"] = entry["Configurations"];
-              f["Configuration Files"] = entry["Configuration Files"];
-              f["Files"] = entry["Configuration Files"];
-            }
-          });
-        });
-        return f;
-        */
-    }
-    Karaf.extractFeature = extractFeature;
-    var platformBundlePatterns = [
-        "^org.apache.aries",
-        "^org.apache.karaf",
-        "^activemq-karaf",
-        "^org.apache.commons",
-        "^org.apache.felix",
-        "^io.fabric8",
-        "^io.fabric8.fab",
-        "^io.fabric8.insight",
-        "^io.fabric8.mq",
-        "^io.fabric8.patch",
-        "^io.fabric8.runtime",
-        "^io.fabric8.security",
-        "^org.apache.geronimo.specs",
-        "^org.apache.servicemix.bundles",
-        "^org.objectweb.asm",
-        "^io.hawt",
-        "^javax.mail",
-        "^javax",
-        "^org.jvnet",
-        "^org.mvel2",
-        "^org.apache.mina.core",
-        "^org.apache.sshd.core",
-        "^org.apache.neethi",
-        "^org.apache.servicemix.specs",
-        "^org.apache.xbean",
-        "^org.apache.santuario.xmlsec",
-        "^biz.aQute.bndlib",
-        "^groovy-all",
-        "^com.google.guava",
-        "jackson-\\w+-asl",
-        "^com.fasterxml.jackson",
-        "^org.ops4j",
-        "^org.springframework",
-        "^bcprov$",
-        "^jline$",
-        "scala-library$",
-        "^org.scala-lang",
-        "^stax2-api$",
-        "^woodstox-core-asl",
-        "^org.jboss.amq.mq-fabric",
-        "^gravia-",
-        "^joda-time$",
-        "^org.apache.ws",
-        "-commands$",
-        "patch.patch",
-        "org.fusesource.insight",
-        "activeio-core",
-        "activemq-osgi",
-        "^org.eclipse.jetty",
-        "org.codehaus.jettison.jettison",
-        "org.jledit.core",
-        "org.fusesource.jansi",
-        "org.eclipse.equinox.region"
-    ];
-    var platformBundleRegex = new RegExp(platformBundlePatterns.join('|'));
-    var camelBundlePatterns = ["^org.apache.camel", "camel-karaf-commands$", "activemq-camel$"];
-    var camelBundleRegex = new RegExp(camelBundlePatterns.join('|'));
-    var cxfBundlePatterns = ["^org.apache.cxf"];
-    var cxfBundleRegex = new RegExp(cxfBundlePatterns.join('|'));
-    var activemqBundlePatterns = ["^org.apache.activemq", "activemq-camel$"];
-    var activemqBundleRegex = new RegExp(activemqBundlePatterns.join('|'));
-    function isPlatformBundle(symbolicName) {
-        return platformBundleRegex.test(symbolicName);
-    }
-    Karaf.isPlatformBundle = isPlatformBundle;
-    function isActiveMQBundle(symbolicName) {
-        return activemqBundleRegex.test(symbolicName);
-    }
-    Karaf.isActiveMQBundle = isActiveMQBundle;
-    function isCamelBundle(symbolicName) {
-        return camelBundleRegex.test(symbolicName);
-    }
-    Karaf.isCamelBundle = isCamelBundle;
-    function isCxfBundle(symbolicName) {
-        return cxfBundleRegex.test(symbolicName);
-    }
-    Karaf.isCxfBundle = isCxfBundle;
-    function populateFeaturesAndRepos(attributes, features, repositories) {
-        var fullFeatures = attributes["Features"];
-        angular.forEach(attributes["Repositories"], function (repo) {
-            repositories.push({
-                id: repo["Name"],
-                uri: repo["Uri"]
-            });
-            if (!fullFeatures) {
-                return;
-            }
-            angular.forEach(repo["Features"], function (feature) {
-                angular.forEach(feature, function (entry) {
-                    if (fullFeatures[entry['Name']] !== undefined) {
-                        var f = Object.extended(fullFeatures[entry['Name']][entry['Version']]).clone();
-                        f["Id"] = entry["Name"] + "/" + entry["Version"];
-                        f["RepositoryName"] = repo["Name"];
-                        f["RepositoryURI"] = repo["Uri"];
-                        features.push(f);
-                    }
-                });
-            });
-        });
-    }
-    Karaf.populateFeaturesAndRepos = populateFeaturesAndRepos;
-    function createScrComponentsView(workspace, jolokia, components) {
-        var result = [];
-        angular.forEach(components, function (component) {
-            result.push({
-                Name: component,
-                State: getComponentStateDescription(getComponentState(workspace, jolokia, component))
-            });
-        });
-        return result;
-    }
-    Karaf.createScrComponentsView = createScrComponentsView;
-    function getComponentStateDescription(state) {
-        switch (state) {
-            case 2:
-                return "Enabled";
-            case 4:
-                return "Unsatisfied";
-            case 8:
-                return "Activating";
-            case 16:
-                return "Active";
-            case 32:
-                return "Registered";
-            case 64:
-                return "Factory";
-            case 128:
-                return "Deactivating";
-            case 256:
-                return "Destroying";
-            case 1024:
-                return "Disabling";
-            case 2048:
-                return "Disposing";
-        }
-        return "Unknown";
-    }
-    Karaf.getComponentStateDescription = getComponentStateDescription;
-    ;
-    function getAllComponents(workspace, jolokia) {
-        var scrMBean = getSelectionScrMBean(workspace);
-        var response = jolokia.request({
-            type: 'read',
-            mbean: scrMBean,
-            arguments: []
-        });
-        //Check if the MBean provides the Components attribute.
-        if (!('Components' in response.value)) {
-            response = jolokia.request({
-                type: 'exec',
-                mbean: scrMBean,
-                operation: 'listComponents()'
-            });
-            return createScrComponentsView(workspace, jolokia, response.value);
-        }
-        return response.value['Components'].values;
-    }
-    Karaf.getAllComponents = getAllComponents;
-    function getComponentByName(workspace, jolokia, componentName) {
-        var components = getAllComponents(workspace, jolokia);
-        return components.find(function (c) {
-            return c.Name == componentName;
-        });
-    }
-    Karaf.getComponentByName = getComponentByName;
-    function isComponentActive(workspace, jolokia, component) {
-        var response = jolokia.request({
-            type: 'exec',
-            mbean: getSelectionScrMBean(workspace),
-            operation: 'isComponentActive(java.lang.String)',
-            arguments: [component]
-        });
-        return response.value;
-    }
-    Karaf.isComponentActive = isComponentActive;
-    function getComponentState(workspace, jolokia, component) {
-        var response = jolokia.request({
-            type: 'exec',
-            mbean: getSelectionScrMBean(workspace),
-            operation: 'componentState(java.lang.String)',
-            arguments: [component]
-        });
-        return response.value;
-    }
-    Karaf.getComponentState = getComponentState;
-    function activateComponent(workspace, jolokia, component, success, error) {
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionScrMBean(workspace),
-            operation: 'activateComponent(java.lang.String)',
-            arguments: [component]
-        }, onSuccess(success, { error: error }));
-    }
-    Karaf.activateComponent = activateComponent;
-    function deactivateComponent(workspace, jolokia, component, success, error) {
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionScrMBean(workspace),
-            operation: 'deactiveateComponent(java.lang.String)',
-            arguments: [component]
-        }, onSuccess(success, { error: error }));
-    }
-    Karaf.deactivateComponent = deactivateComponent;
-    function populateDependencies(attributes, dependencies, features) {
-        angular.forEach(dependencies, function (feature) {
-            angular.forEach(feature, function (entry) {
-                var enhancedFeature = extractFeature(attributes, entry["Name"], entry["Version"]);
-                enhancedFeature["id"] = entry["Name"] + "/" + entry["Version"];
-                //enhancedFeature["repository"] = repo["Name"];
-                features.push(enhancedFeature);
-            });
-        });
-    }
-    Karaf.populateDependencies = populateDependencies;
-    function getSelectionFeaturesMBean(workspace) {
-        if (workspace) {
-            var featuresStuff = workspace.mbeanTypesToDomain["features"] || {};
-            var karaf = featuresStuff["org.apache.karaf"] || {};
-            var mbean = karaf.objectName;
-            if (mbean) {
-                return mbean;
-            }
-            // lets navigate to the tree item based on paths
-            var folder = workspace.tree.navigate("org.apache.karaf", "features");
-            if (!folder) {
-                // sometimes the features mbean is inside the 'root' folder
-                folder = workspace.tree.navigate("org.apache.karaf");
-                if (folder) {
-                    var children = folder.children;
-                    folder = null;
-                    angular.forEach(children, function (child) {
-                        if (!folder) {
-                            folder = child.navigate("features");
-                        }
-                    });
-                }
-            }
-            if (folder) {
-                var children = folder.children;
-                if (children) {
-                    var node = children[0];
-                    if (node) {
-                        return node.objectName;
-                    }
-                }
-                return folder.objectName;
-            }
-        }
-        return null;
-    }
-    Karaf.getSelectionFeaturesMBean = getSelectionFeaturesMBean;
-    function getSelectionScrMBean(workspace) {
-        if (workspace) {
-            var scrStuff = workspace.mbeanTypesToDomain["scr"] || {};
-            var karaf = scrStuff["org.apache.karaf"] || {};
-            var mbean = karaf.objectName;
-            if (mbean) {
-                return mbean;
-            }
-            // lets navigate to the tree item based on paths
-            var folder = workspace.tree.navigate("org.apache.karaf", "scr");
-            if (!folder) {
-                // sometimes the features mbean is inside the 'root' folder
-                folder = workspace.tree.navigate("org.apache.karaf");
-                if (folder) {
-                    var children = folder.children;
-                    folder = null;
-                    angular.forEach(children, function (child) {
-                        if (!folder) {
-                            folder = child.navigate("scr");
-                        }
-                    });
-                }
-            }
-            if (folder) {
-                var children = folder.children;
-                if (children) {
-                    var node = children[0];
-                    if (node) {
-                        return node.objectName;
-                    }
-                }
-                return folder.objectName;
-            }
-        }
-        return null;
-    }
-    Karaf.getSelectionScrMBean = getSelectionScrMBean;
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/**
- * @module Karaf
- * @main Karaf
- */
-var Karaf;
-(function (Karaf) {
-    var pluginName = 'karaf';
-    Karaf._module = angular.module(pluginName, ['bootstrap', 'ngResource', 'hawtioCore']);
-    Karaf._module.config(["$routeProvider", function ($routeProvider) {
-        $routeProvider.when('/osgi/server', { templateUrl: 'app/karaf/html/server.html' }).when('/osgi/features', { templateUrl: 'app/karaf/html/features.html', reloadOnSearch: false }).when('/osgi/scr-components', { templateUrl: 'app/karaf/html/scr-components.html' }).when('/osgi/scr-component/:name', { templateUrl: 'app/karaf/html/scr-component.html' }).when('/osgi/feature/:name/:version', { templateUrl: 'app/karaf/html/feature.html' });
-    }]);
-    Karaf._module.run(["workspace", "viewRegistry", "helpRegistry", function (workspace, viewRegistry, helpRegistry) {
-        helpRegistry.addUserDoc('karaf', 'app/karaf/doc/help.md', function () {
-            return workspace.treeContainsDomainAndProperties('org.apache.karaf');
-        });
-    }]);
-    hawtioPluginLoader.addModule(pluginName);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafPlugin.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.FeatureController", ["$scope", "jolokia", "workspace", "$routeParams", function ($scope, jolokia, workspace, $routeParams) {
-        $scope.hasFabric = Fabric.hasFabric(workspace);
-        $scope.name = $routeParams.name;
-        $scope.version = $routeParams.version;
-        $scope.bundlesByLocation = {};
-        $scope.props = "properties";
-        updateTableContents();
-        $scope.install = function () {
-            Karaf.installFeature(workspace, jolokia, $scope.name, $scope.version, function () {
-                Core.notification('success', 'Installed feature ' + $scope.name);
-            }, function (response) {
-                Core.notification('error', 'Failed to install feature ' + $scope.name + ' due to ' + response.error);
-            });
-        };
-        $scope.uninstall = function () {
-            Karaf.uninstallFeature(workspace, jolokia, $scope.name, $scope.version, function () {
-                Core.notification('success', 'Uninstalled feature ' + $scope.name);
-            }, function (response) {
-                Core.notification('error', 'Failed to uninstall feature ' + $scope.name + ' due to ' + response.error);
-            });
-        };
-        $scope.toProperties = function (elements) {
-            var answer = '';
-            angular.forEach(elements, function (value, name) {
-                answer += value['Key'] + " = " + value['Value'] + "\n";
-            });
-            return answer.trim();
-        };
-        function populateTable(response) {
-            $scope.row = Karaf.extractFeature(response.value, $scope.name, $scope.version);
-            if ($scope.row) {
-                addBundleDetails($scope.row);
-                var dependencies = [];
-                //TODO - if the version isn't set or is 0.0.0 then maybe we show the highest available?
-                angular.forEach($scope.row.Dependencies, function (version, name) {
-                    angular.forEach(version, function (data, version) {
-                        dependencies.push({
-                            Name: name,
-                            Version: version
-                        });
-                    });
-                });
-                $scope.row.Dependencies = dependencies;
-            }
-            //console.log("row: ", $scope.row);
-            Core.$apply($scope);
-        }
-        function setBundles(response) {
-            var bundleMap = {};
-            Osgi.defaultBundleValues(workspace, $scope, response.values);
-            angular.forEach(response.value, function (bundle) {
-                var location = bundle["Location"];
-                $scope.bundlesByLocation[location] = bundle;
-            });
-        }
-        ;
-        function updateTableContents() {
-            var featureMbean = Karaf.getSelectionFeaturesMBean(workspace);
-            var bundleMbean = Osgi.getSelectionBundleMBean(workspace);
-            var jolokia = workspace.jolokia;
-            if (bundleMbean) {
-                setBundles(jolokia.request({ type: 'exec', mbean: bundleMbean, operation: 'listBundles()' }));
-            }
-            if (featureMbean) {
-                jolokia.request({ type: 'read', mbean: featureMbean }, onSuccess(populateTable));
-            }
-        }
-        function addBundleDetails(feature) {
-            var bundleDetails = [];
-            angular.forEach(feature["Bundles"], function (bundleLocation) {
-                var bundle = $scope.bundlesByLocation[bundleLocation];
-                if (bundle) {
-                    bundle["Installed"] = true;
-                    bundleDetails.push(bundle);
-                }
-                else {
-                    bundleDetails.push({
-                        "Location": bundleLocation,
-                        "Installed": false
-                    });
-                }
-            });
-            feature["BundleDetails"] = bundleDetails;
-        }
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafPlugin.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.FeaturesController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.hasFabric = Fabric.hasFabric(workspace);
-        $scope.responseJson = '';
-        $scope.filter = '';
-        $scope.installedFeatures = [];
-        $scope.features = [];
-        $scope.repositories = [];
-        $scope.selectedRepositoryId = '';
-        $scope.selectedRepository = {};
-        $scope.newRepositoryURI = '';
-        $scope.init = function () {
-            var selectedRepositoryId = $location.search()['repositoryId'];
-            if (selectedRepositoryId) {
-                $scope.selectedRepositoryId = selectedRepositoryId;
-            }
-            var filter = $location.search()['filter'];
-            if (filter) {
-                $scope.filter = filter;
-            }
-        };
-        $scope.init();
-        $scope.$watch('selectedRepository', function (newValue, oldValue) {
-            //log.debug("selectedRepository: ", $scope.selectedRepository);
-            if (newValue !== oldValue) {
-                if (!newValue) {
-                    $scope.selectedRepositoryId = '';
-                }
-                else {
-                    $scope.selectedRepositoryId = newValue['repository'];
-                }
-                $location.search('repositoryId', $scope.selectedRepositoryId);
-            }
-        }, true);
-        $scope.$watch('filter', function (newValue, oldValue) {
-            if (newValue !== oldValue) {
-                $location.search('filter', newValue);
-            }
-        });
-        var featuresMBean = Karaf.getSelectionFeaturesMBean(workspace);
-        Karaf.log.debug("Features mbean: ", featuresMBean);
-        if (featuresMBean) {
-            Core.register(jolokia, $scope, {
-                type: 'read',
-                mbean: featuresMBean
-            }, onSuccess(render));
-        }
-        $scope.inSelectedRepository = function (feature) {
-            if (!$scope.selectedRepository || !('repository' in $scope.selectedRepository)) {
-                return "";
-            }
-            if (!feature || !('RepositoryName' in feature)) {
-                return "";
-            }
-            if (feature['RepositoryName'] === $scope.selectedRepository['repository']) {
-                return "in-selected-repository";
-            }
-            return "";
-        };
-        $scope.isValidRepository = function () {
-            return Core.isBlank($scope.newRepositoryURI);
-        };
-        $scope.installRepository = function () {
-            var repoURL = $scope.newRepositoryURI;
-            Core.notification('info', 'Adding feature repository URL');
-            Karaf.installRepository(workspace, jolokia, repoURL, function () {
-                Core.notification('success', 'Added feature repository URL');
-                $scope.selectedRepository = {};
-                $scope.selectedRepositoryId = '';
-                $scope.responseJson = null;
-                $scope.triggerRefresh();
-            }, function (response) {
-                Karaf.log.error('Failed to add feature repository URL ', repoURL, ' due to ', response.error);
-                Karaf.log.info('stack trace: ', response.stacktrace);
-                Core.$apply($scope);
-            });
-        };
-        $scope.uninstallRepository = function () {
-            var repoURI = $scope.selectedRepository['uri'];
-            Core.notification('info', 'Removing feature repository ' + repoURI);
-            Karaf.uninstallRepository(workspace, jolokia, repoURI, function () {
-                Core.notification('success', 'Removed feature repository ' + repoURI);
-                $scope.responseJson = null;
-                $scope.selectedRepositoryId = '';
-                $scope.selectedRepository = {};
-                $scope.triggerRefresh();
-            }, function (response) {
-                Karaf.log.error('Failed to remove feature repository ', repoURI, ' due to ', response.error);
-                Karaf.log.info('stack trace: ', response.stacktrace);
-                Core.$apply($scope);
-            });
-        };
-        $scope.triggerRefresh = function () {
-            jolokia.request({
-                type: 'read',
-                method: 'POST',
-                mbean: featuresMBean
-            }, onSuccess(render));
-        };
-        $scope.install = function (feature) {
-            if ($scope.hasFabric) {
-                return;
-            }
-            //$('.popover').remove();
-            Core.notification('info', 'Installing feature ' + feature.Name);
-            Karaf.installFeature(workspace, jolokia, feature.Name, feature.Version, function () {
-                Core.notification('success', 'Installed feature ' + feature.Name);
-                $scope.installedFeatures.add(feature);
-                $scope.responseJson = null;
-                $scope.triggerRefresh();
-                //Core.$apply($scope);
-            }, function (response) {
-                Karaf.log.error('Failed to install feature ', feature.Name, ' due to ', response.error);
-                Karaf.log.info('stack trace: ', response.stacktrace);
-                Core.$apply($scope);
-            });
-        };
-        $scope.uninstall = function (feature) {
-            if ($scope.hasFabric) {
-                return;
-            }
-            //$('.popover').remove();
-            Core.notification('info', 'Uninstalling feature ' + feature.Name);
-            Karaf.uninstallFeature(workspace, jolokia, feature.Name, feature.Version, function () {
-                Core.notification('success', 'Uninstalled feature ' + feature.Name);
-                $scope.installedFeatures.remove(feature);
-                $scope.responseJson = null;
-                $scope.triggerRefresh();
-                //Core.$apply($scope);
-            }, function (response) {
-                Karaf.log.error('Failed to uninstall feature ', feature.Name, ' due to ', response.error);
-                Karaf.log.info('stack trace: ', response.stacktrace);
-                Core.$apply($scope);
-            });
-        };
-        $scope.filteredRows = ['Bundles', 'Configurations', 'Configuration Files', 'Dependencies'];
-        $scope.showRow = function (key, value) {
-            if ($scope.filteredRows.any(key)) {
-                return false;
-            }
-            if (angular.isArray(value)) {
-                if (value.length === 0) {
-                    return false;
-                }
-            }
-            if (angular.isString(value)) {
-                if (Core.isBlank(value)) {
-                    return false;
-                }
-            }
-            if (angular.isObject(value)) {
-                if (!value || Object.equal(value, {})) {
-                    return false;
-                }
-            }
-            return true;
-        };
-        $scope.installed = function (installed) {
-            var answer = Core.parseBooleanValue(installed);
-            return answer;
-        };
-        $scope.showValue = function (value) {
-            if (angular.isArray(value)) {
-                var answer = ['<ul class="zebra-list">'];
-                value.forEach(function (v) {
-                    answer.push('<li>' + v + '</li>');
-                });
-                answer.push('</ul>');
-                return answer.join('\n');
-            }
-            if (angular.isObject(value)) {
-                var answer = ['<table class="table">', '<tbody>'];
-                angular.forEach(value, function (value, key) {
-                    answer.push('<tr>');
-                    answer.push('<td>' + key + '</td>');
-                    answer.push('<td>' + value + '</td>');
-                    answer.push('</tr>');
-                });
-                answer.push('</tbody>');
-                answer.push('</table>');
-                return answer.join('\n');
-            }
-            return "" + value;
-        };
-        $scope.getStateStyle = function (feature) {
-            if (Core.parseBooleanValue(feature.Installed)) {
-                return "badge badge-success";
-            }
-            return "badge";
-        };
-        $scope.filterFeature = function (feature) {
-            if (Core.isBlank($scope.filter)) {
-                return true;
-            }
-            if (feature.Id.has($scope.filter)) {
-                return true;
-            }
-            return false;
-        };
-        function render(response) {
-            var responseJson = angular.toJson(response.value);
-            if ($scope.responseJson !== responseJson) {
-                $scope.responseJson = responseJson;
-                //log.debug("Got response: ", response.value);
-                if (response['value']['Features'] === null) {
-                    $scope.featuresError = true;
-                }
-                else {
-                    $scope.featuresError = false;
-                }
-                $scope.features = [];
-                $scope.repositories = [];
-                var features = [];
-                var repositories = [];
-                Karaf.populateFeaturesAndRepos(response.value, features, repositories);
-                var installedFeatures = features.filter(function (f) {
-                    return Core.parseBooleanValue(f.Installed);
-                });
-                var uninstalledFeatures = features.filter(function (f) {
-                    return !Core.parseBooleanValue(f.Installed);
-                });
-                //log.debug("repositories: ", repositories);
-                $scope.installedFeatures = installedFeatures.sortBy(function (f) {
-                    return f['Name'];
-                });
-                uninstalledFeatures = uninstalledFeatures.sortBy(function (f) {
-                    return f['Name'];
-                });
-                repositories.sortBy('id').forEach(function (repo) {
-                    $scope.repositories.push({
-                        repository: repo['id'],
-                        uri: repo['uri'],
-                        features: uninstalledFeatures.filter(function (f) {
-                            return f['RepositoryName'] === repo['id'];
-                        })
-                    });
-                });
-                if (!Core.isBlank($scope.newRepositoryURI)) {
-                    var selectedRepo = repositories.find(function (r) {
-                        return r['uri'] === $scope.newRepositoryURI;
-                    });
-                    if (selectedRepo) {
-                        $scope.selectedRepositoryId = selectedRepo['id'];
-                    }
-                    $scope.newRepositoryURI = '';
-                }
-                if (Core.isBlank($scope.selectedRepositoryId)) {
-                    $scope.selectedRepository = $scope.repositories.first();
-                }
-                else {
-                    $scope.selectedRepository = $scope.repositories.find(function (r) {
-                        return r.repository === $scope.selectedRepositoryId;
-                    });
-                }
-                Core.$apply($scope);
-            }
-        }
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.NavBarController", ["$scope", "workspace", function ($scope, workspace) {
-        $scope.hash = workspace.hash();
-        $scope.isKarafEnabled = workspace.treeContainsDomainAndProperties("org.apache.karaf");
-        $scope.isFeaturesEnabled = Karaf.getSelectionFeaturesMBean(workspace);
-        $scope.isScrEnabled = Karaf.getSelectionScrMBean(workspace);
-        $scope.$on('$routeChangeSuccess', function () {
-            $scope.hash = workspace.hash();
-        });
-        $scope.isActive = function (nav) {
-            return workspace.isLinkActive(nav);
-        };
-        $scope.isPrefixActive = function (nav) {
-            return workspace.isLinkPrefixActive(nav);
-        };
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.ScrComponentController", ["$scope", "$location", "workspace", "jolokia", "$routeParams", function ($scope, $location, workspace, jolokia, $routeParams) {
-        $scope.name = $routeParams.name;
-        populateTable();
-        function populateTable() {
-            $scope.row = Karaf.getComponentByName(workspace, jolokia, $scope.name);
-            Core.$apply($scope);
-        }
-        $scope.activate = function () {
-            Karaf.activateComponent(workspace, jolokia, $scope.row['Name'], function () {
-                console.log("Activated!");
-            }, function () {
-                console.log("Failed to activate!");
-            });
-        };
-        $scope.deactivate = function () {
-            Karaf.deactivateComponent(workspace, jolokia, $scope.row['Name'], function () {
-                console.log("Deactivated!");
-            }, function () {
-                console.log("Failed to deactivate!");
-            });
-        };
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.ScrComponentsController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.component = empty();
-        // caches last jolokia result
-        $scope.result = [];
-        // rows in components table
-        $scope.components = [];
-        // selected components
-        $scope.selectedComponents = [];
-        $scope.scrOptions = {
-            //plugins: [searchProvider],
-            data: 'components',
-            showFilter: false,
-            showColumnMenu: false,
-            filterOptions: {
-                useExternalFilter: false
-            },
-            sortInfo: { fields: ['Name'], directions: ['asc'] },
-            selectedItems: $scope.selectedComponents,
-            rowHeight: 32,
-            selectWithCheckboxOnly: true,
-            columnDefs: [
-                {
-                    field: 'Name',
-                    displayName: 'Name',
-                    cellTemplate: '<div class="ngCellText"><a href="#/osgi/scr-component/{{row.entity.Name}}?p=container">{{row.getProperty(col.field)}}</a></div>',
-                    width: 400
-                },
-                {
-                    field: 'State',
-                    displayName: 'State',
-                    cellTemplate: '<div class="ngCellText">{{row.getProperty(col.field)}}</div>',
-                    width: 200
-                }
-            ]
-        };
-        var scrMBean = Karaf.getSelectionScrMBean(workspace);
-        if (scrMBean) {
-            render(Karaf.getAllComponents(workspace, jolokia));
-        }
-        $scope.activate = function () {
-            $scope.selectedComponents.forEach(function (component) {
-                Karaf.activateComponent(workspace, jolokia, component.Name, function () {
-                    console.log("Activated!");
-                }, function () {
-                    console.log("Failed to activate!");
-                });
-            });
-        };
-        $scope.deactivate = function () {
-            $scope.selectedComponents.forEach(function (component) {
-                Karaf.deactivateComponent(workspace, jolokia, component.Name, function () {
-                    console.log("Deactivated!");
-                }, function () {
-                    console.log("Failed to deactivate!");
-                });
-            });
-        };
-        function empty() {
-            return [
-                { Name: "", Status: false }
-            ];
-        }
-        function render(components) {
-            if (!Object.equal($scope.result, components)) {
-                $scope.components = components;
-                $scope.result = $scope.components;
-                Core.$apply($scope);
-            }
-        }
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.ServerController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.data = {
-            name: "",
-            version: "",
-            state: "",
-            root: "",
-            startLevel: "",
-            framework: "",
-            frameworkVersion: "",
-            location: "",
-            sshPort: "",
-            rmiRegistryPort: "",
-            rmiServerPort: "",
-            pid: ""
-        };
-        $scope.$on('jmxTreeUpdated', reloadFunction);
-        $scope.$watch('workspace.tree', reloadFunction);
-        function reloadFunction() {
-            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
-            // so lets reload, asynchronously just in case
-            setTimeout(loadData, 50);
-        }
-        function loadData() {
-            console.log("Loading Karaf data...");
-            jolokia.search("org.apache.karaf:type=admin,*", onSuccess(render));
-        }
-        function render(response) {
-            // grab the first mbean as there should ideally only be one karaf in the JVM
-            if (angular.isArray(response)) {
-                var mbean = response[0];
-                if (mbean) {
-                    jolokia.getAttribute(mbean, "Instances", onSuccess(function (response) {
-                        onInstances(response, mbean);
-                    }));
-                }
-            }
-        }
-        function onInstances(instances, mbean) {
-            if (instances) {
-                var parsedMBean = Core.parseMBean(mbean);
-                var instanceName = 'root';
-                if ('attributes' in parsedMBean) {
-                    if ('name' in parsedMBean['attributes']) {
-                        instanceName = parsedMBean['attributes']['name'];
-                    }
-                }
-                //log.debug("mbean: ", Core.parseMBean(mbean));
-                //log.debug("Instances: ", instances);
-                // the name is the first child
-                var rootInstance = instances[instanceName];
-                $scope.data.name = rootInstance.Name;
-                $scope.data.state = rootInstance.State;
-                $scope.data.root = rootInstance["Is Root"];
-                $scope.data.location = rootInstance.Location;
-                $scope.data.sshPort = rootInstance["SSH Port"];
-                $scope.data.rmiRegistryPort = rootInstance["RMI Registry Port"];
-                $scope.data.rmiServerPort = rootInstance["RMI Server Port"];
-                $scope.data.pid = rootInstance.Pid;
-                // we need to get these data from the system mbean
-                $scope.data.version = "?";
-                $scope.data.startLevel = "?";
-                $scope.data.framework = "?";
-                $scope.data.frameworkVersion = "?";
-                var systemMbean = "org.apache.karaf:type=system,name=" + rootInstance.Name;
-                // get more data, and its okay to do this synchronously
-                var response = jolokia.request({ type: "read", mbean: systemMbean, attribute: ["StartLevel", "Framework", "Version"] }, onSuccess(null));
-                var obj = response.value;
-                if (obj) {
-                    $scope.data.version = obj.Version;
-                    $scope.data.startLevel = obj.StartLevel;
-                    $scope.data.framework = obj.Framework;
-                }
-                // and the osgi framework version is the bundle version
-                var response2 = jolokia.search("osgi.core:type=bundleState,*", onSuccess(null));
-                if (angular.isArray(response2)) {
-                    var mbean = response2[0];
-                    if (mbean) {
-                        // get more data, and its okay to do this synchronously
-                        var response3 = jolokia.request({ type: 'exec', mbean: mbean, operation: 'getVersion(long)', arguments: [0] }, onSuccess(null));
-                        var obj3 = response3.value;
-                        if (obj3) {
-                            $scope.data.frameworkVersion = obj3;
-                        }
-                    }
-                }
-            }
-            // ensure web page is updated
-            Core.$apply($scope);
-        }
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
 
 /// <reference path="../../includes.ts"/>
 /// <reference path="dockerRegistryInterfaces.ts"/>
@@ -4758,120 +3214,6 @@ var DockerRegistry;
         });
     }]);
 })(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="gitHelpers.ts"/>
-/**
- * @module Git
- * @main Git
- */
-var Git;
-(function (Git) {
-    /**
-     * A default implementation which uses jolokia and the
-     * GitFacadeMXBean over JMX
-     *
-     * @class JolokiaGit
-     * @uses GitRepository
-     *
-     */
-    var JolokiaGit = (function () {
-        function JolokiaGit(mbean, jolokia, localStorage, userDetails, branch) {
-            if (branch === void 0) { branch = "master"; }
-            this.mbean = mbean;
-            this.jolokia = jolokia;
-            this.localStorage = localStorage;
-            this.userDetails = userDetails;
-            this.branch = branch;
-        }
-        JolokiaGit.prototype.getRepositoryLabel = function (fn, error) {
-            return this.jolokia.request({ type: "read", mbean: this.mbean, attribute: ["RepositoryLabel"] }, Core.onSuccess(function (result) {
-                fn(result.value.RepositoryLabel);
-            }, { error: error }));
-        };
-        JolokiaGit.prototype.exists = function (branch, path, fn) {
-            var result;
-            if (angular.isDefined(fn) && fn) {
-                result = this.jolokia.execute(this.mbean, "exists", branch, path, Core.onSuccess(fn));
-            }
-            else {
-                result = this.jolokia.execute(this.mbean, "exists", branch, path);
-            }
-            if (angular.isDefined(result) && result) {
-                return true;
-            }
-            else {
-                return false;
-            }
-        };
-        JolokiaGit.prototype.read = function (branch, path, fn) {
-            return this.jolokia.execute(this.mbean, "read", branch, path, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.write = function (branch, path, commitMessage, contents, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "write", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.writeBase64 = function (branch, path, commitMessage, contents, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "writeBase64", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.createDirectory = function (branch, path, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "createDirectory", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.revertTo = function (branch, objectId, blobPath, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "revertTo", branch, objectId, blobPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.rename = function (branch, oldPath, newPath, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "rename", branch, oldPath, newPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.remove = function (branch, path, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "remove", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.completePath = function (branch, completionText, directoriesOnly, fn) {
-            return this.jolokia.execute(this.mbean, "completePath", branch, completionText, directoriesOnly, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.history = function (branch, objectId, path, limit, fn) {
-            return this.jolokia.execute(this.mbean, "history", branch, objectId, path, limit, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.commitTree = function (commitId, fn) {
-            return this.jolokia.execute(this.mbean, "getCommitTree", commitId, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.commitInfo = function (commitId, fn) {
-            return this.jolokia.execute(this.mbean, "getCommitInfo", commitId, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.diff = function (objectId, baseObjectId, path, fn) {
-            return this.jolokia.execute(this.mbean, "diff", objectId, baseObjectId, path, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.getContent = function (objectId, blobPath, fn) {
-            return this.jolokia.execute(this.mbean, "getContent", objectId, blobPath, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.readJsonChildContent = function (path, nameWildcard, search, fn) {
-            return this.jolokia.execute(this.mbean, "readJsonChildContent", this.branch, path, nameWildcard, search, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.branches = function (fn) {
-            return this.jolokia.execute(this.mbean, "branches", Core.onSuccess(fn));
-        };
-        // TODO move...
-        JolokiaGit.prototype.getUserName = function () {
-            return this.localStorage["gitUserName"] || this.userDetails.username || "anonymous";
-        };
-        JolokiaGit.prototype.getUserEmail = function () {
-            return this.localStorage["gitUserEmail"] || "anonymous@gmail.com";
-        };
-        return JolokiaGit;
-    })();
-    Git.JolokiaGit = JolokiaGit;
-})(Git || (Git = {}));
 
 /// <reference path="../../includes.ts"/>
 /**
@@ -10372,6 +8714,1664 @@ var Camel;
         loadConverters();
     }]);
 })(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Dozer
+ * @main Dozer
+ */
+var Dozer;
+(function (Dozer) {
+    /**
+     * The JMX domain for Dozer
+     * @property jmxDomain
+     * @for Dozer
+     * @type String
+     */
+    Dozer.jmxDomain = 'net.sourceforge.dozer';
+    Dozer.introspectorMBean = "hawtio:type=Introspector";
+    /**
+     * Don't try and load properties for these types
+     * @property excludedPackages
+     * @for Dozer
+     * @type {Array}
+     */
+    Dozer.excludedPackages = [
+        'java.lang',
+        'int',
+        'double',
+        'long'
+    ];
+    /**
+     * Lets map the class names to element names
+     * @property elementNameMappings
+     * @for Dozer
+     * @type {Array}
+     */
+    Dozer.elementNameMappings = {
+        "Mapping": "mapping",
+        "MappingClass": "class",
+        "Field": "field"
+    };
+    Dozer.log = Logger.get("Dozer");
+    /**
+     * Converts the XML string or DOM node to a Dozer model
+     * @method loadDozerModel
+     * @for Dozer
+     * @static
+     * @param {Object} xml
+     * @param {String} pageId
+     * @return {Mappings}
+     */
+    function loadDozerModel(xml, pageId) {
+        var doc = xml;
+        if (angular.isString(xml)) {
+            doc = $.parseXML(xml);
+        }
+        console.log("Has Dozer XML document: " + doc);
+        var model = new Dozer.Mappings(doc);
+        var mappingsElement = doc.documentElement;
+        copyAttributes(model, mappingsElement);
+        $(mappingsElement).children("mapping").each(function (idx, element) {
+            var mapping = createMapping(element);
+            model.mappings.push(mapping);
+        });
+        return model;
+    }
+    Dozer.loadDozerModel = loadDozerModel;
+    function saveToXmlText(model) {
+        // lets copy the original doc then replace the mapping elements
+        var element = model.doc.documentElement.cloneNode(false);
+        appendElement(model.mappings, element, null, 1);
+        Dozer.addTextNode(element, "\n");
+        var xmlText = Core.xmlNodeToString(element);
+        return '<?xml version="1.0" encoding="UTF-8"?>\n' + xmlText;
+    }
+    Dozer.saveToXmlText = saveToXmlText;
+    function findUnmappedFields(workspace, mapping, fn) {
+        // lets find the fields which are unmapped
+        var className = mapping.class_a.value;
+        findProperties(workspace, className, null, function (properties) {
+            var answer = [];
+            angular.forEach(properties, function (property) {
+                console.log("got property " + JSON.stringify(property, null, "  "));
+                var name = property.name;
+                if (name) {
+                    if (mapping.hasFromField(name)) {
+                    }
+                    else {
+                        // TODO auto-detect this property name in the to classes?
+                        answer.push(new Dozer.UnmappedField(name, property));
+                    }
+                }
+            });
+            fn(answer);
+        });
+    }
+    Dozer.findUnmappedFields = findUnmappedFields;
+    /**
+     * Finds the properties on the given class and returns them; and either invokes the given function
+     * or does a sync request and returns them
+     * @method findProperties
+     * @for Dozer
+     * @static
+     * @param {Core.Workspace} workspace
+     * @param {String} className
+     * @param {String} filter
+     * @param {Function} fn
+     * @return {any}
+     */
+    function findProperties(workspace, className, filter, fn) {
+        if (filter === void 0) { filter = null; }
+        if (fn === void 0) { fn = null; }
+        var mbean = getIntrospectorMBean(workspace);
+        if (mbean) {
+            if (filter) {
+                return workspace.jolokia.execute(mbean, "findProperties", className, filter, onSuccess(fn));
+            }
+            else {
+                return workspace.jolokia.execute(mbean, "getProperties", className, onSuccess(fn));
+            }
+        }
+        else {
+            if (fn) {
+                return fn([]);
+            }
+            else {
+                return [];
+            }
+        }
+    }
+    Dozer.findProperties = findProperties;
+    /**
+     * Finds class names matching the given search text and either invokes the function with the results
+     * or does a sync request and returns them.
+     * @method findClassNames
+     * @for Dozer
+     * @static
+     * @param {Core.Workspace} workspace
+     * @param {String} searchText
+     * @param {Number} limit @default 20
+     * @param {Function} fn
+     * @return {any}
+     */
+    function findClassNames(workspace, searchText, limit, fn) {
+        if (limit === void 0) { limit = 20; }
+        if (fn === void 0) { fn = null; }
+        var mbean = getIntrospectorMBean(workspace);
+        if (mbean) {
+            return workspace.jolokia.execute(mbean, "findClassNames", searchText, limit, onSuccess(fn));
+        }
+        else {
+            if (fn) {
+                return fn([]);
+            }
+            else {
+                return [];
+            }
+        }
+    }
+    Dozer.findClassNames = findClassNames;
+    function getIntrospectorMBean(workspace) {
+        // lets hard code this so its easy to use in any JVM
+        return Dozer.introspectorMBean;
+        // return Core.getMBeanTypeObjectName(workspace, "hawtio", "Introspector");
+    }
+    Dozer.getIntrospectorMBean = getIntrospectorMBean;
+    function loadModelFromTree(rootTreeNode, oldModel) {
+        oldModel.mappings = [];
+        angular.forEach(rootTreeNode.childList, function (treeNode) {
+            var mapping = Core.pathGet(treeNode, ["data", "entity"]);
+            if (mapping) {
+                oldModel.mappings.push(mapping);
+            }
+        });
+        return oldModel;
+    }
+    Dozer.loadModelFromTree = loadModelFromTree;
+    function createDozerTree(model) {
+        var id = "mappings";
+        var folder = new Folder(id);
+        folder.addClass = "net-sourceforge-dozer-mappings";
+        folder.domain = Dozer.jmxDomain;
+        folder.typeName = "mappings";
+        folder.entity = model;
+        folder.key = Core.toSafeDomID(id);
+        angular.forEach(model.mappings, function (mapping) {
+            var mappingFolder = createMappingFolder(mapping, folder);
+            folder.children.push(mappingFolder);
+        });
+        return folder;
+    }
+    Dozer.createDozerTree = createDozerTree;
+    function createMappingFolder(mapping, parentFolder) {
+        var mappingName = mapping.name();
+        var mappingFolder = new Folder(mappingName);
+        mappingFolder.addClass = "net-sourceforge-dozer-mapping";
+        mappingFolder.typeName = "mapping";
+        mappingFolder.domain = Dozer.jmxDomain;
+        mappingFolder.key = (parentFolder ? parentFolder.key + "_" : "") + Core.toSafeDomID(mappingName);
+        mappingFolder.parent = parentFolder;
+        mappingFolder.entity = mapping;
+        mappingFolder.icon = Core.url("/app/dozer/img/class.gif");
+        /*
+              mappingFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
+              */
+        angular.forEach(mapping.fields, function (field) {
+            addMappingFieldFolder(field, mappingFolder);
+        });
+        return mappingFolder;
+    }
+    Dozer.createMappingFolder = createMappingFolder;
+    function addMappingFieldFolder(field, mappingFolder) {
+        var name = field.name();
+        var fieldFolder = new Folder(name);
+        fieldFolder.addClass = "net-sourceforge-dozer-field";
+        fieldFolder.typeName = "field";
+        fieldFolder.domain = Dozer.jmxDomain;
+        fieldFolder.key = mappingFolder.key + "_" + Core.toSafeDomID(name);
+        fieldFolder.parent = mappingFolder;
+        fieldFolder.entity = field;
+        fieldFolder.icon = Core.url("/app/dozer/img/attribute.gif");
+        /*
+              fieldFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
+              */
+        mappingFolder.children.push(fieldFolder);
+        return fieldFolder;
+    }
+    Dozer.addMappingFieldFolder = addMappingFieldFolder;
+    function createMapping(element) {
+        var mapping = new Dozer.Mapping();
+        var elementJQ = $(element);
+        mapping.class_a = createMappingClass(elementJQ.children("class-a"));
+        mapping.class_b = createMappingClass(elementJQ.children("class-b"));
+        elementJQ.children("field").each(function (idx, fieldElement) {
+            var field = createField(fieldElement);
+            mapping.fields.push(field);
+        });
+        copyAttributes(mapping, element);
+        return mapping;
+    }
+    function createField(element) {
+        if (element) {
+            var jqe = $(element);
+            var a = jqe.children("a").text();
+            var b = jqe.children("b").text();
+            var field = new Dozer.Field(new Dozer.FieldDefinition(a), new Dozer.FieldDefinition(b));
+            copyAttributes(field, element);
+            return field;
+        }
+        return new Dozer.Field(new Dozer.FieldDefinition(""), new Dozer.FieldDefinition(""));
+    }
+    function createMappingClass(jqElement) {
+        if (jqElement && jqElement[0]) {
+            var element = jqElement[0];
+            var text = element.textContent;
+            if (text) {
+                var mappingClass = new Dozer.MappingClass(text);
+                copyAttributes(mappingClass, element);
+                return mappingClass;
+            }
+        }
+        // lets create a default empty mapping
+        return new Dozer.MappingClass("");
+    }
+    function copyAttributes(object, element) {
+        var attributeMap = element.attributes;
+        for (var i = 0; i < attributeMap.length; i++) {
+            // TODO hacky work around for compiler issue ;)
+            //var attr = attributeMap.item(i);
+            var attMap = attributeMap;
+            var attr = attMap.item(i);
+            if (attr) {
+                var name = attr.localName;
+                var value = attr.value;
+                if (name && !name.startsWith("xmlns")) {
+                    var safeName = Forms.safeIdentifier(name);
+                    object[safeName] = value;
+                }
+            }
+        }
+    }
+    function appendAttributes(object, element, ignorePropertyNames) {
+        angular.forEach(object, function (value, key) {
+            if (ignorePropertyNames.any(key)) {
+            }
+            else {
+                // lets add an attribute value
+                if (value) {
+                    var text = value.toString();
+                    // lets replace any underscores with dashes
+                    var name = key.replace(/_/g, '-');
+                    element.setAttribute(name, text);
+                }
+            }
+        });
+    }
+    Dozer.appendAttributes = appendAttributes;
+    /**
+     * Adds a new child element for this mapping to the given element
+     * @method appendElement
+     * @for Dozer
+     * @static
+     * @param {any} object
+     * @param {any} element
+     * @param {String} elementName
+     * @param {Number} indentLevel
+     * @return the last child element created
+     */
+    function appendElement(object, element, elementName, indentLevel) {
+        if (elementName === void 0) { elementName = null; }
+        if (indentLevel === void 0) { indentLevel = 0; }
+        var answer = null;
+        if (angular.isArray(object)) {
+            angular.forEach(object, function (child) {
+                answer = appendElement(child, element, elementName, indentLevel);
+            });
+        }
+        else if (object) {
+            if (!elementName) {
+                var className = Core.pathGet(object, ["constructor", "name"]);
+                if (!className) {
+                    console.log("WARNING: no class name for value " + object);
+                }
+                else {
+                    elementName = Dozer.elementNameMappings[className];
+                    if (!elementName) {
+                        console.log("WARNING: could not map class name " + className + " to an XML element name");
+                    }
+                }
+            }
+            if (elementName) {
+                if (indentLevel) {
+                    var text = indentText(indentLevel);
+                    Dozer.addTextNode(element, text);
+                }
+                var doc = element.ownerDocument || document;
+                var child = doc.createElement(elementName);
+                // navigate child properties...
+                var fn = object.saveToElement;
+                if (fn) {
+                    fn.apply(object, [child]);
+                }
+                else {
+                    angular.forEach(object, function (value, key) {
+                        console.log("has key " + key + " value " + value);
+                    });
+                }
+                // if we have any element children then add newline text node
+                if ($(child).children().length) {
+                    //var text = indentText(indentLevel - 1);
+                    var text = indentText(indentLevel);
+                    Dozer.addTextNode(child, text);
+                }
+                element.appendChild(child);
+                answer = child;
+            }
+        }
+        return answer;
+    }
+    Dozer.appendElement = appendElement;
+    function nameOf(object) {
+        var text = angular.isObject(object) ? object["value"] : null;
+        if (!text && angular.isString(object)) {
+            text = object;
+        }
+        return text || "?";
+    }
+    Dozer.nameOf = nameOf;
+    function addTextNode(element, text) {
+        if (text) {
+            var doc = element.ownerDocument || document;
+            var child = doc.createTextNode(text);
+            element.appendChild(child);
+        }
+    }
+    Dozer.addTextNode = addTextNode;
+    function indentText(indentLevel) {
+        var text = "\n";
+        for (var i = 0; i < indentLevel; i++) {
+            text += "  ";
+        }
+        return text;
+    }
+})(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Dozer
+ */
+var Dozer;
+(function (Dozer) {
+    /**
+     * @class Mappings
+     */
+    var Mappings = (function () {
+        function Mappings(doc, mappings) {
+            if (mappings === void 0) { mappings = []; }
+            this.doc = doc;
+            this.mappings = mappings;
+        }
+        return Mappings;
+    })();
+    Dozer.Mappings = Mappings;
+    /**
+     * @class Mapping
+     */
+    var Mapping = (function () {
+        function Mapping() {
+            this.fields = [];
+            this.map_id = Core.getUUID();
+            this.class_a = new MappingClass('');
+            this.class_b = new MappingClass('');
+        }
+        Mapping.prototype.name = function () {
+            return Dozer.nameOf(this.class_a) + " -> " + Dozer.nameOf(this.class_b);
+        };
+        Mapping.prototype.hasFromField = function (name) {
+            return this.fields.find(function (f) { return name === f.a.value; });
+        };
+        Mapping.prototype.hasToField = function (name) {
+            return this.fields.find(function (f) { return name === f.b.value; });
+        };
+        Mapping.prototype.saveToElement = function (element) {
+            Dozer.appendElement(this.class_a, element, "class-a", 2);
+            Dozer.appendElement(this.class_b, element, "class-b", 2);
+            Dozer.appendElement(this.fields, element, "field", 2);
+            Dozer.appendAttributes(this, element, ["class_a", "class_b", "fields"]);
+        };
+        return Mapping;
+    })();
+    Dozer.Mapping = Mapping;
+    /**
+     * @class MappingClass
+     */
+    var MappingClass = (function () {
+        function MappingClass(value) {
+            this.value = value;
+        }
+        MappingClass.prototype.saveToElement = function (element) {
+            Dozer.addTextNode(element, this.value);
+            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
+        };
+        return MappingClass;
+    })();
+    Dozer.MappingClass = MappingClass;
+    /**
+     * @class Field
+     */
+    var Field = (function () {
+        function Field(a, b) {
+            this.a = a;
+            this.b = b;
+        }
+        Field.prototype.name = function () {
+            return Dozer.nameOf(this.a) + " -> " + Dozer.nameOf(this.b);
+        };
+        Field.prototype.saveToElement = function (element) {
+            Dozer.appendElement(this.a, element, "a", 3);
+            Dozer.appendElement(this.b, element, "b", 3);
+            Dozer.appendAttributes(this, element, ["a", "b"]);
+        };
+        return Field;
+    })();
+    Dozer.Field = Field;
+    /**
+     * @class FieldDefinition
+     */
+    var FieldDefinition = (function () {
+        function FieldDefinition(value) {
+            this.value = value;
+        }
+        FieldDefinition.prototype.saveToElement = function (element) {
+            Dozer.addTextNode(element, this.value);
+            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
+        };
+        return FieldDefinition;
+    })();
+    Dozer.FieldDefinition = FieldDefinition;
+    /**
+     * @class UnmappedField
+     */
+    var UnmappedField = (function () {
+        function UnmappedField(fromField, property, toField) {
+            if (toField === void 0) { toField = null; }
+            this.fromField = fromField;
+            this.property = property;
+            this.toField = toField;
+        }
+        return UnmappedField;
+    })();
+    Dozer.UnmappedField = UnmappedField;
+})(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Dozer
+ */
+var Dozer;
+(function (Dozer) {
+    /**
+     * Configures the JSON schemas to improve the UI models
+     * @method schemaConfigure
+     * @for Dozer
+     */
+    function schemaConfigure() {
+        io_hawt_dozer_schema_Field["tabs"] = {
+            'Fields': ['a.value', 'b.value'],
+            'From Field': ['a\\..*'],
+            'To Field': ['b\\..*'],
+            'Field Configuration': ['*']
+        };
+        io_hawt_dozer_schema_Mapping["tabs"] = {
+            'Classes': ['class-a.value', 'class-b.value'],
+            'From Class': ['class-a\\..*'],
+            'To Class': ['class-b\\..*'],
+            'Class Configuration': ['*']
+        };
+        // hide the fields table from the class configuration tab
+        io_hawt_dozer_schema_Mapping.properties.fieldOrFieldExclude.hidden = true;
+        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "label"], "From Field");
+        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "label"], "To Field");
+        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "label"], "From Class");
+        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "label"], "To Class");
+        // ignore prefixes in the generated labels
+        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "a", "ignorePrefixInLabel"], true);
+        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "b", "ignorePrefixInLabel"], true);
+        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-a", "ignorePrefixInLabel"], true);
+        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-b", "ignorePrefixInLabel"], true);
+        // add custom widgets
+        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "formTemplate"], classNameWidget("class_a"));
+        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "formTemplate"], classNameWidget("class_b"));
+        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.a.value" ' + 'typeahead="title for title in fromFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
+        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.b.value" ' + 'typeahead="title for title in toFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
+        function classNameWidget(propertyName) {
+            return '<input type="text" ng-model="dozerEntity.' + propertyName + '.value" ' + 'typeahead="title for title in classNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>';
+        }
+    }
+    Dozer.schemaConfigure = schemaConfigure;
+})(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="gitHelpers.ts"/>
+/**
+ * @module Git
+ * @main Git
+ */
+var Git;
+(function (Git) {
+    /**
+     * A default implementation which uses jolokia and the
+     * GitFacadeMXBean over JMX
+     *
+     * @class JolokiaGit
+     * @uses GitRepository
+     *
+     */
+    var JolokiaGit = (function () {
+        function JolokiaGit(mbean, jolokia, localStorage, userDetails, branch) {
+            if (branch === void 0) { branch = "master"; }
+            this.mbean = mbean;
+            this.jolokia = jolokia;
+            this.localStorage = localStorage;
+            this.userDetails = userDetails;
+            this.branch = branch;
+        }
+        JolokiaGit.prototype.getRepositoryLabel = function (fn, error) {
+            return this.jolokia.request({ type: "read", mbean: this.mbean, attribute: ["RepositoryLabel"] }, Core.onSuccess(function (result) {
+                fn(result.value.RepositoryLabel);
+            }, { error: error }));
+        };
+        JolokiaGit.prototype.exists = function (branch, path, fn) {
+            var result;
+            if (angular.isDefined(fn) && fn) {
+                result = this.jolokia.execute(this.mbean, "exists", branch, path, Core.onSuccess(fn));
+            }
+            else {
+                result = this.jolokia.execute(this.mbean, "exists", branch, path);
+            }
+            if (angular.isDefined(result) && result) {
+                return true;
+            }
+            else {
+                return false;
+            }
+        };
+        JolokiaGit.prototype.read = function (branch, path, fn) {
+            return this.jolokia.execute(this.mbean, "read", branch, path, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.write = function (branch, path, commitMessage, contents, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "write", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.writeBase64 = function (branch, path, commitMessage, contents, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "writeBase64", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.createDirectory = function (branch, path, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "createDirectory", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.revertTo = function (branch, objectId, blobPath, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "revertTo", branch, objectId, blobPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.rename = function (branch, oldPath, newPath, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "rename", branch, oldPath, newPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.remove = function (branch, path, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "remove", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.completePath = function (branch, completionText, directoriesOnly, fn) {
+            return this.jolokia.execute(this.mbean, "completePath", branch, completionText, directoriesOnly, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.history = function (branch, objectId, path, limit, fn) {
+            return this.jolokia.execute(this.mbean, "history", branch, objectId, path, limit, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.commitTree = function (commitId, fn) {
+            return this.jolokia.execute(this.mbean, "getCommitTree", commitId, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.commitInfo = function (commitId, fn) {
+            return this.jolokia.execute(this.mbean, "getCommitInfo", commitId, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.diff = function (objectId, baseObjectId, path, fn) {
+            return this.jolokia.execute(this.mbean, "diff", objectId, baseObjectId, path, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.getContent = function (objectId, blobPath, fn) {
+            return this.jolokia.execute(this.mbean, "getContent", objectId, blobPath, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.readJsonChildContent = function (path, nameWildcard, search, fn) {
+            return this.jolokia.execute(this.mbean, "readJsonChildContent", this.branch, path, nameWildcard, search, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.branches = function (fn) {
+            return this.jolokia.execute(this.mbean, "branches", Core.onSuccess(fn));
+        };
+        // TODO move...
+        JolokiaGit.prototype.getUserName = function () {
+            return this.localStorage["gitUserName"] || this.userDetails.username || "anonymous";
+        };
+        JolokiaGit.prototype.getUserEmail = function () {
+            return this.localStorage["gitUserEmail"] || "anonymous@gmail.com";
+        };
+        return JolokiaGit;
+    })();
+    Git.JolokiaGit = JolokiaGit;
+})(Git || (Git = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf.log = Logger.get("Karaf");
+    function setSelect(selection, group) {
+        if (!angular.isDefined(selection)) {
+            return group[0];
+        }
+        var answer = group.findIndex(function (item) {
+            return item.id === selection.id;
+        });
+        if (answer !== -1) {
+            return group[answer];
+        }
+        else {
+            return group[0];
+        }
+    }
+    Karaf.setSelect = setSelect;
+    function installRepository(workspace, jolokia, uri, success, error) {
+        Karaf.log.info("installing URI: ", uri);
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionFeaturesMBean(workspace),
+            operation: 'addRepository(java.lang.String)',
+            arguments: [uri]
+        }, onSuccess(success, { error: error }));
+    }
+    Karaf.installRepository = installRepository;
+    function uninstallRepository(workspace, jolokia, uri, success, error) {
+        Karaf.log.info("uninstalling URI: ", uri);
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionFeaturesMBean(workspace),
+            operation: 'removeRepository(java.lang.String)',
+            arguments: [uri]
+        }, onSuccess(success, { error: error }));
+    }
+    Karaf.uninstallRepository = uninstallRepository;
+    function installFeature(workspace, jolokia, feature, version, success, error) {
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionFeaturesMBean(workspace),
+            operation: 'installFeature(java.lang.String, java.lang.String)',
+            arguments: [feature, version]
+        }, onSuccess(success, { error: error }));
+    }
+    Karaf.installFeature = installFeature;
+    function uninstallFeature(workspace, jolokia, feature, version, success, error) {
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionFeaturesMBean(workspace),
+            operation: 'uninstallFeature(java.lang.String, java.lang.String)',
+            arguments: [feature, version]
+        }, onSuccess(success, { error: error }));
+    }
+    Karaf.uninstallFeature = uninstallFeature;
+    // TODO move to core?
+    function toCollection(values) {
+        var collection = values;
+        if (!angular.isArray(values)) {
+            collection = [values];
+        }
+        return collection;
+    }
+    Karaf.toCollection = toCollection;
+    function featureLinks(workspace, name, version) {
+        return "<a href='" + Core.url("#/karaf/feature/" + name + "/" + version + workspace.hash()) + "'>" + version + "</a>";
+    }
+    Karaf.featureLinks = featureLinks;
+    function extractFeature(attributes, name, version) {
+        var features = [];
+        var repos = [];
+        populateFeaturesAndRepos(attributes, features, repos);
+        return features.find(function (feature) {
+            return feature.Name == name && feature.Version == version;
+        });
+        /*
+        var f = {};
+        angular.forEach(attributes["Features"], (feature) => {
+          angular.forEach(feature, (entry) => {
+            if (entry["Name"] === name && entry["Version"] === version) {
+              var deps = [];
+              populateDependencies(attributes, entry["Dependencies"], deps);
+              f["Name"] = entry["Name"];
+              f["Version"] = entry["Version"];
+              f["Bundles"] = entry["Bundles"];
+              f["Dependencies"] = deps;
+              f["Installed"] = entry["Installed"];
+              f["Configurations"] = entry["Configurations"];
+              f["Configuration Files"] = entry["Configuration Files"];
+              f["Files"] = entry["Configuration Files"];
+            }
+          });
+        });
+        return f;
+        */
+    }
+    Karaf.extractFeature = extractFeature;
+    var platformBundlePatterns = [
+        "^org.apache.aries",
+        "^org.apache.karaf",
+        "^activemq-karaf",
+        "^org.apache.commons",
+        "^org.apache.felix",
+        "^io.fabric8",
+        "^io.fabric8.fab",
+        "^io.fabric8.insight",
+        "^io.fabric8.mq",
+        "^io.fabric8.patch",
+        "^io.fabric8.runtime",
+        "^io.fabric8.security",
+        "^org.apache.geronimo.specs",
+        "^org.apache.servicemix.bundles",
+        "^org.objectweb.asm",
+        "^io.hawt",
+        "^javax.mail",
+        "^javax",
+        "^org.jvnet",
+        "^org.mvel2",
+        "^org.apache.mina.core",
+        "^org.apache.sshd.core",
+        "^org.apache.neethi",
+        "^org.apache.servicemix.specs",
+        "^org.apache.xbean",
+        "^org.apache.santuario.xmlsec",
+        "^biz.aQute.bndlib",
+        "^groovy-all",
+        "^com.google.guava",
+        "jackson-\\w+-asl",
+        "^com.fasterxml.jackson",
+        "^org.ops4j",
+        "^org.springframework",
+        "^bcprov$",
+        "^jline$",
+        "scala-library$",
+        "^org.scala-lang",
+        "^stax2-api$",
+        "^woodstox-core-asl",
+        "^org.jboss.amq.mq-fabric",
+        "^gravia-",
+        "^joda-time$",
+        "^org.apache.ws",
+        "-commands$",
+        "patch.patch",
+        "org.fusesource.insight",
+        "activeio-core",
+        "activemq-osgi",
+        "^org.eclipse.jetty",
+        "org.codehaus.jettison.jettison",
+        "org.jledit.core",
+        "org.fusesource.jansi",
+        "org.eclipse.equinox.region"
+    ];
+    var platformBundleRegex = new RegExp(platformBundlePatterns.join('|'));
+    var camelBundlePatterns = ["^org.apache.camel", "camel-karaf-commands$", "activemq-camel$"];
+    var camelBundleRegex = new RegExp(camelBundlePatterns.join('|'));
+    var cxfBundlePatterns = ["^org.apache.cxf"];
+    var cxfBundleRegex = new RegExp(cxfBundlePatterns.join('|'));
+    var activemqBundlePatterns = ["^org.apache.activemq", "activemq-camel$"];
+    var activemqBundleRegex = new RegExp(activemqBundlePatterns.join('|'));
+    function isPlatformBundle(symbolicName) {
+        return platformBundleRegex.test(symbolicName);
+    }
+    Karaf.isPlatformBundle = isPlatformBundle;
+    function isActiveMQBundle(symbolicName) {
+        return activemqBundleRegex.test(symbolicName);
+    }
+    Karaf.isActiveMQBundle = isActiveMQBundle;
+    function isCamelBundle(symbolicName) {
+        return camelBundleRegex.test(symbolicName);
+    }
+    Karaf.isCamelBundle = isCamelBundle;
+    function isCxfBundle(symbolicName) {
+        return cxfBundleRegex.test(symbolicName);
+    }
+    Karaf.isCxfBundle = isCxfBundle;
+    function populateFeaturesAndRepos(attributes, features, repositories) {
+        var fullFeatures = attributes["Features"];
+        angular.forEach(attributes["Repositories"], function (repo) {
+            repositories.push({
+                id: repo["Name"],
+                uri: repo["Uri"]
+            });
+            if (!fullFeatures) {
+                return;
+            }
+            angular.forEach(repo["Features"], function (feature) {
+                angular.forEach(feature, function (entry) {
+                    if (fullFeatures[entry['Name']] !== undefined) {
+                        var f = Object.extended(fullFeatures[entry['Name']][entry['Version']]).clone();
+                        f["Id"] = entry["Name"] + "/" + entry["Version"];
+                        f["RepositoryName"] = repo["Name"];
+                        f["RepositoryURI"] = repo["Uri"];
+                        features.push(f);
+                    }
+                });
+            });
+        });
+    }
+    Karaf.populateFeaturesAndRepos = populateFeaturesAndRepos;
+    function createScrComponentsView(workspace, jolokia, components) {
+        var result = [];
+        angular.forEach(components, function (component) {
+            result.push({
+                Name: component,
+                State: getComponentStateDescription(getComponentState(workspace, jolokia, component))
+            });
+        });
+        return result;
+    }
+    Karaf.createScrComponentsView = createScrComponentsView;
+    function getComponentStateDescription(state) {
+        switch (state) {
+            case 2:
+                return "Enabled";
+            case 4:
+                return "Unsatisfied";
+            case 8:
+                return "Activating";
+            case 16:
+                return "Active";
+            case 32:
+                return "Registered";
+            case 64:
+                return "Factory";
+            case 128:
+                return "Deactivating";
+            case 256:
+                return "Destroying";
+            case 1024:
+                return "Disabling";
+            case 2048:
+                return "Disposing";
+        }
+        return "Unknown";
+    }
+    Karaf.getComponentStateDescription = getComponentStateDescription;
+    ;
+    function getAllComponents(workspace, jolokia) {
+        var scrMBean = getSelectionScrMBean(workspace);
+        var response = jolokia.request({
+            type: 'read',
+            mbean: scrMBean,
+            arguments: []
+        });
+        //Check if the MBean provides the Components attribute.
+        if (!('Components' in response.value)) {
+            response = jolokia.request({
+                type: 'exec',
+                mbean: scrMBean,
+                operation: 'listComponents()'
+            });
+            return createScrComponentsView(workspace, jolokia, response.value);
+        }
+        return response.value['Components'].values;
+    }
+    Karaf.getAllComponents = getAllComponents;
+    function getComponentByName(workspace, jolokia, componentName) {
+        var components = getAllComponents(workspace, jolokia);
+        return components.find(function (c) {
+            return c.Name == componentName;
+        });
+    }
+    Karaf.getComponentByName = getComponentByName;
+    function isComponentActive(workspace, jolokia, component) {
+        var response = jolokia.request({
+            type: 'exec',
+            mbean: getSelectionScrMBean(workspace),
+            operation: 'isComponentActive(java.lang.String)',
+            arguments: [component]
+        });
+        return response.value;
+    }
+    Karaf.isComponentActive = isComponentActive;
+    function getComponentState(workspace, jolokia, component) {
+        var response = jolokia.request({
+            type: 'exec',
+            mbean: getSelectionScrMBean(workspace),
+            operation: 'componentState(java.lang.String)',
+            arguments: [component]
+        });
+        return response.value;
+    }
+    Karaf.getComponentState = getComponentState;
+    function activateComponent(workspace, jolokia, component, success, error) {
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionScrMBean(workspace),
+            operation: 'activateComponent(java.lang.String)',
+            arguments: [component]
+        }, onSuccess(success, { error: error }));
+    }
+    Karaf.activateComponent = activateComponent;
+    function deactivateComponent(workspace, jolokia, component, success, error) {
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionScrMBean(workspace),
+            operation: 'deactiveateComponent(java.lang.String)',
+            arguments: [component]
+        }, onSuccess(success, { error: error }));
+    }
+    Karaf.deactivateComponent = deactivateComponent;
+    function populateDependencies(attributes, dependencies, features) {
+        angular.forEach(dependencies, function (feature) {
+            angular.forEach(feature, function (entry) {
+                var enhancedFeature = extractFeature(attributes, entry["Name"], entry["Version"]);
+                enhancedFeature["id"] = entry["Name"] + "/" + entry["Version"];
+                //enhancedFeature["repository"] = repo["Name"];
+                features.push(enhancedFeature);
+            });
+        });
+    }
+    Karaf.populateDependencies = populateDependencies;
+    function getSelectionFeaturesMBean(workspace) {
+        if (workspace) {
+            var featuresStuff = workspace.mbeanTypesToDomain["features"] || {};
+            var karaf = featuresStuff["org.apache.karaf"] || {};
+            var mbean = karaf.objectName;
+            if (mbean) {
+                return mbean;
+            }
+            // lets navigate to the tree item based on paths
+            var folder = workspace.tree.navigate("org.apache.karaf", "features");
+            if (!folder) {
+                // sometimes the features mbean is inside the 'root' folder
+                folder = workspace.tree.navigate("org.apache.karaf");
+                if (folder) {
+                    var children = folder.children;
+                    folder = null;
+                    angular.forEach(children, function (child) {
+                        if (!folder) {
+                            folder = child.navigate("features");
+                        }
+                    });
+                }
+            }
+            if (folder) {
+                var children = folder.children;
+                if (children) {
+                    var node = children[0];
+                    if (node) {
+                        return node.objectName;
+                    }
+                }
+                return folder.objectName;
+            }
+        }
+        return null;
+    }
+    Karaf.getSelectionFeaturesMBean = getSelectionFeaturesMBean;
+    function getSelectionScrMBean(workspace) {
+        if (workspace) {
+            var scrStuff = workspace.mbeanTypesToDomain["scr"] || {};
+            var karaf = scrStuff["org.apache.karaf"] || {};
+            var mbean = karaf.objectName;
+            if (mbean) {
+                return mbean;
+            }
+            // lets navigate to the tree item based on paths
+            var folder = workspace.tree.navigate("org.apache.karaf", "scr");
+            if (!folder) {
+                // sometimes the features mbean is inside the 'root' folder
+                folder = workspace.tree.navigate("org.apache.karaf");
+                if (folder) {
+                    var children = folder.children;
+                    folder = null;
+                    angular.forEach(children, function (child) {
+                        if (!folder) {
+                            folder = child.navigate("scr");
+                        }
+                    });
+                }
+            }
+            if (folder) {
+                var children = folder.children;
+                if (children) {
+                    var node = children[0];
+                    if (node) {
+                        return node.objectName;
+                    }
+                }
+                return folder.objectName;
+            }
+        }
+        return null;
+    }
+    Karaf.getSelectionScrMBean = getSelectionScrMBean;
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/**
+ * @module Karaf
+ * @main Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    var pluginName = 'karaf';
+    Karaf._module = angular.module(pluginName, ['bootstrap', 'ngResource', 'hawtioCore']);
+    Karaf._module.config(["$routeProvider", function ($routeProvider) {
+        $routeProvider.when('/osgi/server', { templateUrl: 'app/karaf/html/server.html' }).when('/osgi/features', { templateUrl: 'app/karaf/html/features.html', reloadOnSearch: false }).when('/osgi/scr-components', { templateUrl: 'app/karaf/html/scr-components.html' }).when('/osgi/scr-component/:name', { templateUrl: 'app/karaf/html/scr-component.html' }).when('/osgi/feature/:name/:version', { templateUrl: 'app/karaf/html/feature.html' });
+    }]);
+    Karaf._module.run(["workspace", "viewRegistry", "helpRegistry", function (workspace, viewRegistry, helpRegistry) {
+        helpRegistry.addUserDoc('karaf', 'app/karaf/doc/help.md', function () {
+            return workspace.treeContainsDomainAndProperties('org.apache.karaf');
+        });
+    }]);
+    hawtioPluginLoader.addModule(pluginName);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafPlugin.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.FeatureController", ["$scope", "jolokia", "workspace", "$routeParams", function ($scope, jolokia, workspace, $routeParams) {
+        $scope.hasFabric = Fabric.hasFabric(workspace);
+        $scope.name = $routeParams.name;
+        $scope.version = $routeParams.version;
+        $scope.bundlesByLocation = {};
+        $scope.props = "properties";
+        updateTableContents();
+        $scope.install = function () {
+            Karaf.installFeature(workspace, jolokia, $scope.name, $scope.version, function () {
+                Core.notification('success', 'Installed feature ' + $scope.name);
+            }, function (response) {
+                Core.notification('error', 'Failed to install feature ' + $scope.name + ' due to ' + response.error);
+            });
+        };
+        $scope.uninstall = function () {
+            Karaf.uninstallFeature(workspace, jolokia, $scope.name, $scope.version, function () {
+                Core.notification('success', 'Uninstalled feature ' + $scope.name);
+            }, function (response) {
+                Core.notification('error', 'Failed to uninstall feature ' + $scope.name + ' due to ' + response.error);
+            });
+        };
+        $scope.toProperties = function (elements) {
+            var answer = '';
+            angular.forEach(elements, function (value, name) {
+                answer += value['Key'] + " = " + value['Value'] + "\n";
+            });
+            return answer.trim();
+        };
+        function populateTable(response) {
+            $scope.row = Karaf.extractFeature(response.value, $scope.name, $scope.version);
+            if ($scope.row) {
+                addBundleDetails($scope.row);
+                var dependencies = [];
+                //TODO - if the version isn't set or is 0.0.0 then maybe we show the highest available?
+                angular.forEach($scope.row.Dependencies, function (version, name) {
+                    angular.forEach(version, function (data, version) {
+                        dependencies.push({
+                            Name: name,
+                            Version: version
+                        });
+                    });
+                });
+                $scope.row.Dependencies = dependencies;
+            }
+            //console.log("row: ", $scope.row);
+            Core.$apply($scope);
+        }
+        function setBundles(response) {
+            var bundleMap = {};
+            Osgi.defaultBundleValues(workspace, $scope, response.values);
+            angular.forEach(response.value, function (bundle) {
+                var location = bundle["Location"];
+                $scope.bundlesByLocation[location] = bundle;
+            });
+        }
+        ;
+        function updateTableContents() {
+            var featureMbean = Karaf.getSelectionFeaturesMBean(workspace);
+            var bundleMbean = Osgi.getSelectionBundleMBean(workspace);
+            var jolokia = workspace.jolokia;
+            if (bundleMbean) {
+                setBundles(jolokia.request({ type: 'exec', mbean: bundleMbean, operation: 'listBundles()' }));
+            }
+            if (featureMbean) {
+                jolokia.request({ type: 'read', mbean: featureMbean }, onSuccess(populateTable));
+            }
+        }
+        function addBundleDetails(feature) {
+            var bundleDetails = [];
+            angular.forEach(feature["Bundles"], function (bundleLocation) {
+                var bundle = $scope.bundlesByLocation[bundleLocation];
+                if (bundle) {
+                    bundle["Installed"] = true;
+                    bundleDetails.push(bundle);
+                }
+                else {
+                    bundleDetails.push({
+                        "Location": bundleLocation,
+                        "Installed": false
+                    });
+                }
+            });
+            feature["BundleDetails"] = bundleDetails;
+        }
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafPlugin.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.FeaturesController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.hasFabric = Fabric.hasFabric(workspace);
+        $scope.responseJson = '';
+        $scope.filter = '';
+        $scope.installedFeatures = [];
+        $scope.features = [];
+        $scope.repositories = [];
+        $scope.selectedRepositoryId = '';
+        $scope.selectedRepository = {};
+        $scope.newRepositoryURI = '';
+        $scope.init = function () {
+            var selectedRepositoryId = $location.search()['repositoryId'];
+            if (selectedRepositoryId) {
+                $scope.selectedRepositoryId = selectedRepositoryId;
+            }
+            var filter = $location.search()['filter'];
+            if (filter) {
+                $scope.filter = filter;
+            }
+        };
+        $scope.init();
+        $scope.$watch('selectedRepository', function (newValue, oldValue) {
+            //log.debug("selectedRepository: ", $scope.selectedRepository);
+            if (newValue !== oldValue) {
+                if (!newValue) {
+                    $scope.selectedRepositoryId = '';
+                }
+                else {
+                    $scope.selectedRepositoryId = newValue['repository'];
+                }
+                $location.search('repositoryId', $scope.selectedRepositoryId);
+            }
+        }, true);
+        $scope.$watch('filter', function (newValue, oldValue) {
+            if (newValue !== oldValue) {
+                $location.search('filter', newValue);
+            }
+        });
+        var featuresMBean = Karaf.getSelectionFeaturesMBean(workspace);
+        Karaf.log.debug("Features mbean: ", featuresMBean);
+        if (featuresMBean) {
+            Core.register(jolokia, $scope, {
+                type: 'read',
+                mbean: featuresMBean
+            }, onSuccess(render));
+        }
+        $scope.inSelectedRepository = function (feature) {
+            if (!$scope.selectedRepository || !('repository' in $scope.selectedRepository)) {
+                return "";
+            }
+            if (!feature || !('RepositoryName' in feature)) {
+                return "";
+            }
+            if (feature['RepositoryName'] === $scope.selectedRepository['repository']) {
+                return "in-selected-repository";
+            }
+            return "";
+        };
+        $scope.isValidRepository = function () {
+            return Core.isBlank($scope.newRepositoryURI);
+        };
+        $scope.installRepository = function () {
+            var repoURL = $scope.newRepositoryURI;
+            Core.notification('info', 'Adding feature repository URL');
+            Karaf.installRepository(workspace, jolokia, repoURL, function () {
+                Core.notification('success', 'Added feature repository URL');
+                $scope.selectedRepository = {};
+                $scope.selectedRepositoryId = '';
+                $scope.responseJson = null;
+                $scope.triggerRefresh();
+            }, function (response) {
+                Karaf.log.error('Failed to add feature repository URL ', repoURL, ' due to ', response.error);
+                Karaf.log.info('stack trace: ', response.stacktrace);
+                Core.$apply($scope);
+            });
+        };
+        $scope.uninstallRepository = function () {
+            var repoURI = $scope.selectedRepository['uri'];
+            Core.notification('info', 'Removing feature repository ' + repoURI);
+            Karaf.uninstallRepository(workspace, jolokia, repoURI, function () {
+                Core.notification('success', 'Removed feature repository ' + repoURI);
+                $scope.responseJson = null;
+                $scope.selectedRepositoryId = '';
+                $scope.selectedRepository = {};
+                $scope.triggerRefresh();
+            }, function (response) {
+                Karaf.log.error('Failed to remove feature repository ', repoURI, ' due to ', response.error);
+                Karaf.log.info('stack trace: ', response.stacktrace);
+                Core.$apply($scope);
+            });
+        };
+        $scope.triggerRefresh = function () {
+            jolokia.request({
+                type: 'read',
+                method: 'POST',
+                mbean: featuresMBean
+            }, onSuccess(render));
+        };
+        $scope.install = function (feature) {
+            if ($scope.hasFabric) {
+                return;
+            }
+            //$('.popover').remove();
+            Core.notification('info', 'Installing feature ' + feature.Name);
+            Karaf.installFeature(workspace, jolokia, feature.Name, feature.Version, function () {
+                Core.notification('success', 'Installed feature ' + feature.Name);
+                $scope.installedFeatures.add(feature);
+                $scope.responseJson = null;
+                $scope.triggerRefresh();
+                //Core.$apply($scope);
+            }, function (response) {
+                Karaf.log.error('Failed to install feature ', feature.Name, ' due to ', response.error);
+                Karaf.log.info('stack trace: ', response.stacktrace);
+                Core.$apply($scope);
+            });
+        };
+        $scope.uninstall = function (feature) {
+            if ($scope.hasFabric) {
+                return;
+            }
+            //$('.popover').remove();
+            Core.notification('info', 'Uninstalling feature ' + feature.Name);
+            Karaf.uninstallFeature(workspace, jolokia, feature.Name, feature.Version, function () {
+                Core.notification('success', 'Uninstalled feature ' + feature.Name);
+                $scope.installedFeatures.remove(feature);
+                $scope.responseJson = null;
+                $scope.triggerRefresh();
+                //Core.$apply($scope);
+            }, function (response) {
+                Karaf.log.error('Failed to uninstall feature ', feature.Name, ' due to ', response.error);
+                Karaf.log.info('stack trace: ', response.stacktrace);
+                Core.$apply($scope);
+            });
+        };
+        $scope.filteredRows = ['Bundles', 'Configurations', 'Configuration Files', 'Dependencies'];
+        $scope.showRow = function (key, value) {
+            if ($scope.filteredRows.any(key)) {
+                return false;
+            }
+            if (angular.isArray(value)) {
+                if (value.length === 0) {
+                    return false;
+                }
+            }
+            if (angular.isString(value)) {
+                if (Core.isBlank(value)) {
+                    return false;
+                }
+            }
+            if (angular.isObject(value)) {
+                if (!value || Object.equal(value, {})) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        $scope.installed = function (installed) {
+            var answer = Core.parseBooleanValue(installed);
+            return answer;
+        };
+        $scope.showValue = function (value) {
+            if (angular.isArray(value)) {
+                var answer = ['<ul class="zebra-list">'];
+                value.forEach(function (v) {
+                    answer.push('<li>' + v + '</li>');
+                });
+                answer.push('</ul>');
+                return answer.join('\n');
+            }
+            if (angular.isObject(value)) {
+                var answer = ['<table class="table">', '<tbody>'];
+                angular.forEach(value, function (value, key) {
+                    answer.push('<tr>');
+                    answer.push('<td>' + key + '</td>');
+                    answer.push('<td>' + value + '</td>');
+                    answer.push('</tr>');
+                });
+                answer.push('</tbody>');
+                answer.push('</table>');
+                return answer.join('\n');
+            }
+            return "" + value;
+        };
+        $scope.getStateStyle = function (feature) {
+            if (Core.parseBooleanValue(feature.Installed)) {
+                return "badge badge-success";
+            }
+            return "badge";
+        };
+        $scope.filterFeature = function (feature) {
+            if (Core.isBlank($scope.filter)) {
+                return true;
+            }
+            if (feature.Id.has($scope.filter)) {
+                return true;
+            }
+            return false;
+        };
+        function render(response) {
+            var responseJson = angular.toJson(response.value);
+            if ($scope.responseJson !== responseJson) {
+                $scope.responseJson = responseJson;
+                //log.debug("Got response: ", response.value);
+                if (response['value']['Features'] === null) {
+                    $scope.featuresError = true;
+                }
+                else {
+                    $scope.featuresError = false;
+                }
+                $scope.features = [];
+                $scope.repositories = [];
+                var features = [];
+                var repositories = [];
+                Karaf.populateFeaturesAndRepos(response.value, features, repositories);
+                var installedFeatures = features.filter(function (f) {
+                    return Core.parseBooleanValue(f.Installed);
+                });
+                var uninstalledFeatures = features.filter(function (f) {
+                    return !Core.parseBooleanValue(f.Installed);
+                });
+                //log.debug("repositories: ", repositories);
+                $scope.installedFeatures = installedFeatures.sortBy(function (f) {
+                    return f['Name'];
+                });
+                uninstalledFeatures = uninstalledFeatures.sortBy(function (f) {
+                    return f['Name'];
+                });
+                repositories.sortBy('id').forEach(function (repo) {
+                    $scope.repositories.push({
+                        repository: repo['id'],
+                        uri: repo['uri'],
+                        features: uninstalledFeatures.filter(function (f) {
+                            return f['RepositoryName'] === repo['id'];
+                        })
+                    });
+                });
+                if (!Core.isBlank($scope.newRepositoryURI)) {
+                    var selectedRepo = repositories.find(function (r) {
+                        return r['uri'] === $scope.newRepositoryURI;
+                    });
+                    if (selectedRepo) {
+                        $scope.selectedRepositoryId = selectedRepo['id'];
+                    }
+                    $scope.newRepositoryURI = '';
+                }
+                if (Core.isBlank($scope.selectedRepositoryId)) {
+                    $scope.selectedRepository = $scope.repositories.first();
+                }
+                else {
+                    $scope.selectedRepository = $scope.repositories.find(function (r) {
+                        return r.repository === $scope.selectedRepositoryId;
+                    });
+                }
+                Core.$apply($scope);
+            }
+        }
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.NavBarController", ["$scope", "workspace", function ($scope, workspace) {
+        $scope.hash = workspace.hash();
+        $scope.isKarafEnabled = workspace.treeContainsDomainAndProperties("org.apache.karaf");
+        $scope.isFeaturesEnabled = Karaf.getSelectionFeaturesMBean(workspace);
+        $scope.isScrEnabled = Karaf.getSelectionScrMBean(workspace);
+        $scope.$on('$routeChangeSuccess', function () {
+            $scope.hash = workspace.hash();
+        });
+        $scope.isActive = function (nav) {
+            return workspace.isLinkActive(nav);
+        };
+        $scope.isPrefixActive = function (nav) {
+            return workspace.isLinkPrefixActive(nav);
+        };
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.ScrComponentController", ["$scope", "$location", "workspace", "jolokia", "$routeParams", function ($scope, $location, workspace, jolokia, $routeParams) {
+        $scope.name = $routeParams.name;
+        populateTable();
+        function populateTable() {
+            $scope.row = Karaf.getComponentByName(workspace, jolokia, $scope.name);
+            Core.$apply($scope);
+        }
+        $scope.activate = function () {
+            Karaf.activateComponent(workspace, jolokia, $scope.row['Name'], function () {
+                console.log("Activated!");
+            }, function () {
+                console.log("Failed to activate!");
+            });
+        };
+        $scope.deactivate = function () {
+            Karaf.deactivateComponent(workspace, jolokia, $scope.row['Name'], function () {
+                console.log("Deactivated!");
+            }, function () {
+                console.log("Failed to deactivate!");
+            });
+        };
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.ScrComponentsController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.component = empty();
+        // caches last jolokia result
+        $scope.result = [];
+        // rows in components table
+        $scope.components = [];
+        // selected components
+        $scope.selectedComponents = [];
+        $scope.scrOptions = {
+            //plugins: [searchProvider],
+            data: 'components',
+            showFilter: false,
+            showColumnMenu: false,
+            filterOptions: {
+                useExternalFilter: false
+            },
+            sortInfo: { fields: ['Name'], directions: ['asc'] },
+            selectedItems: $scope.selectedComponents,
+            rowHeight: 32,
+            selectWithCheckboxOnly: true,
+            columnDefs: [
+                {
+                    field: 'Name',
+                    displayName: 'Name',
+                    cellTemplate: '<div class="ngCellText"><a href="#/osgi/scr-component/{{row.entity.Name}}?p=container">{{row.getProperty(col.field)}}</a></div>',
+                    width: 400
+                },
+                {
+                    field: 'State',
+                    displayName: 'State',
+                    cellTemplate: '<div class="ngCellText">{{row.getProperty(col.field)}}</div>',
+                    width: 200
+                }
+            ]
+        };
+        var scrMBean = Karaf.getSelectionScrMBean(workspace);
+        if (scrMBean) {
+            render(Karaf.getAllComponents(workspace, jolokia));
+        }
+        $scope.activate = function () {
+            $scope.selectedComponents.forEach(function (component) {
+                Karaf.activateComponent(workspace, jolokia, component.Name, function () {
+                    console.log("Activated!");
+                }, function () {
+                    console.log("Failed to activate!");
+                });
+            });
+        };
+        $scope.deactivate = function () {
+            $scope.selectedComponents.forEach(function (component) {
+                Karaf.deactivateComponent(workspace, jolokia, component.Name, function () {
+                    console.log("Deactivated!");
+                }, function () {
+                    console.log("Failed to deactivate!");
+                });
+            });
+        };
+        function empty() {
+            return [
+                { Name: "", Status: false }
+            ];
+        }
+        function render(components) {
+            if (!Object.equal($scope.result, components)) {
+                $scope.components = components;
+                $scope.result = $scope.components;
+                Core.$apply($scope);
+            }
+        }
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.ServerController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.data = {
+            name: "",
+            version: "",
+            state: "",
+            root: "",
+            startLevel: "",
+            framework: "",
+            frameworkVersion: "",
+            location: "",
+            sshPort: "",
+            rmiRegistryPort: "",
+            rmiServerPort: "",
+            pid: ""
+        };
+        $scope.$on('jmxTreeUpdated', reloadFunction);
+        $scope.$watch('workspace.tree', reloadFunction);
+        function reloadFunction() {
+            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
+            // so lets reload, asynchronously just in case
+            setTimeout(loadData, 50);
+        }
+        function loadData() {
+            console.log("Loading Karaf data...");
+            jolokia.search("org.apache.karaf:type=admin,*", onSuccess(render));
+        }
+        function render(response) {
+            // grab the first mbean as there should ideally only be one karaf in the JVM
+            if (angular.isArray(response)) {
+                var mbean = response[0];
+                if (mbean) {
+                    jolokia.getAttribute(mbean, "Instances", onSuccess(function (response) {
+                        onInstances(response, mbean);
+                    }));
+                }
+            }
+        }
+        function onInstances(instances, mbean) {
+            if (instances) {
+                var parsedMBean = Core.parseMBean(mbean);
+                var instanceName = 'root';
+                if ('attributes' in parsedMBean) {
+                    if ('name' in parsedMBean['attributes']) {
+                        instanceName = parsedMBean['attributes']['name'];
+                    }
+                }
+                //log.debug("mbean: ", Core.parseMBean(mbean));
+                //log.debug("Instances: ", instances);
+                // the name is the first child
+                var rootInstance = instances[instanceName];
+                $scope.data.name = rootInstance.Name;
+                $scope.data.state = rootInstance.State;
+                $scope.data.root = rootInstance["Is Root"];
+                $scope.data.location = rootInstance.Location;
+                $scope.data.sshPort = rootInstance["SSH Port"];
+                $scope.data.rmiRegistryPort = rootInstance["RMI Registry Port"];
+                $scope.data.rmiServerPort = rootInstance["RMI Server Port"];
+                $scope.data.pid = rootInstance.Pid;
+                // we need to get these data from the system mbean
+                $scope.data.version = "?";
+                $scope.data.startLevel = "?";
+                $scope.data.framework = "?";
+                $scope.data.frameworkVersion = "?";
+                var systemMbean = "org.apache.karaf:type=system,name=" + rootInstance.Name;
+                // get more data, and its okay to do this synchronously
+                var response = jolokia.request({ type: "read", mbean: systemMbean, attribute: ["StartLevel", "Framework", "Version"] }, onSuccess(null));
+                var obj = response.value;
+                if (obj) {
+                    $scope.data.version = obj.Version;
+                    $scope.data.startLevel = obj.StartLevel;
+                    $scope.data.framework = obj.Framework;
+                }
+                // and the osgi framework version is the bundle version
+                var response2 = jolokia.search("osgi.core:type=bundleState,*", onSuccess(null));
+                if (angular.isArray(response2)) {
+                    var mbean = response2[0];
+                    if (mbean) {
+                        // get more data, and its okay to do this synchronously
+                        var response3 = jolokia.request({ type: 'exec', mbean: mbean, operation: 'getVersion(long)', arguments: [0] }, onSuccess(null));
+                        var obj3 = response3.value;
+                        if (obj3) {
+                            $scope.data.frameworkVersion = obj3;
+                        }
+                    }
+                }
+            }
+            // ensure web page is updated
+            Core.$apply($scope);
+        }
+    }]);
+})(Karaf || (Karaf = {}));
 
 /// <reference path="../../includes.ts"/>
 /**
@@ -16738,7 +16738,6 @@ $templateCache.put("plugins/osgi/html/pid-details.html","<div>\n  <h4 title=\"{{
 $templateCache.put("plugins/osgi/html/pid.html","<div class=\"controller-section\" ng-controller=\"Osgi.PidController\">\n  <div ng-include src=\"\'app/osgi/html/pid-details.html\'\"></div>\n</div>\n");
 $templateCache.put("plugins/osgi/html/services.html","<script type=\"text/ng-template\" id=\"osgiServiceTemplate\">\n  <table>\n    <tr>\n      <th>Using Bundles</th>\n    </tr>\n    <tr>\n      <td>\n        <ul>\n          <li ng-repeat=\"b in row.UsingBundles\">\n            <a href=\'#/osgi/bundle/{{b.Identifier}}{{hash}}\'>{{b.SymbolicName}}</a>\n          </li>\n        </ul>\n      </td>\n    </tr>\n  </table>\n</script>\n\n<div class=\"controller-section\" ng-controller=\"Osgi.ServiceController\">\n\n  <table cellpadding=\"0\" cellspacing=\"0\" border=\"0\"\n         class=\"table table-condensed table-striped table-bordered table-hover\"\n         id=\"grid\">\n    <thead>\n    <tr>\n      <th></th>\n      <th>ID</th>\n      <th>Bundle</th>\n      <th>Object Class(es)</th>\n    </tr>\n    </thead>\n    <tbody>\n  </table>\n</div>\n");
 $templateCache.put("plugins/osgi/html/svc-dependencies.html","<style type=\"text/css\">\n\n    div#pop-up {\n        display: none;\n        position:absolute;\n        color: white;\n        font-size: 14px;\n        background: rgba(0,0,0,0.6);\n        padding: 5px 10px 5px 10px;\n        -moz-border-radius: 8px 8px;\n        border-radius: 8px 8px;\n    }\n\n    div#pop-up-title {\n        font-size: 15px;\n        margin-bottom: 4px;\n        font-weight: bolder;\n    }\n    div#pop-up-content {\n        font-size: 12px;\n    }\n\n    rect.graphbox {\n        fill: #DDD;\n    }\n\n    rect.graphbox.frame {\n        stroke: #222;\n        stroke-width: 2px\n    }\n\n    path.link {\n        fill: none;\n        stroke: #666;\n        stroke-width: 1.5px;\n    }\n\n    path.link.registered {\n        stroke: #444;\n    }\n\n    path.link.inuse {\n        stroke-dasharray: 0,2 1;\n    }\n\n    circle {\n        fill: #black;\n    }\n\n    circle.service {\n        fill: blue;\n    }\n\n    circle.bundle {\n        fill: black;\n    }\n\n    circle.package {\n        fill: gray;\n    }\n\n    text {\n        font: 10px sans-serif;\n        pointer-events: none;\n    }\n\n    text.shadow {\n        stroke: #fff;\n        stroke-width: 3px;\n        stroke-opacity: .8;\n    }\n\n</style>\n\n<div ng-controller=\"Osgi.ServiceDependencyController\">\n\n    <div class=\"pull-left\">\n        <form class=\"form-inline no-bottom-margin\">\n            <fieldset>\n                <div class=\"control-group inline-block\">\n                    <input type=\"text\" class=\"search-query\" placeholder=\"Filter Bundle Symbolic Name...\" ng-model=\"bundleFilter\">\n                    <input type=\"text\" class=\"search-query\" placeholder=\"Filter Package Name...\" ng-model=\"packageFilter\" ng-change=\"updatePkgFilter()\">\n                    <label class=\"radio\" for=\"showServices\">\n                        <input id=\"showServices\" type=\"radio\" value=\"services\" ng-model=\"selectView\"> Show Services\n                    </label>\n                    <label class=\"radio\" for=\"showPackages\">\n                        <input id=\"showPackages\" type=\"radio\" value=\"packages\" ng-model=\"selectView\" ng-disabled=\"disablePkg\"> Show Packages\n                    </label>\n                    <label class=\"checkbox\" for=\"hideUnused\">\n                        <input id=\"hideUnused\" type=\"checkbox\" ng-model=\"hideUnused\"> Hide Unused\n                    </label>\n                    <button class=\"btn btn-primary\" ng-click=\"updateGraph()\" title=\"Apply the selected criteria to the Graph.\">Apply</button>\n                </div>\n            </fieldset>\n        </form>\n    </div>\n\n  <div ng-hide=\"inDashboard\" class=\"add-link\">\n    <a ng-href=\"{{addToDashboardLink()}}\" title=\"Add this view to a Dashboard\"><i class=\"icon-share\"></i></a>\n  </div>\n\n    <div id=\"pop-up\">\n        <div id=\"pop-up-title\"></div>\n        <div id=\"pop-up-content\"></div>\n    </div>\n\n  <div class=\"row-fluid\">\n    <div class=\"span12 canvas\" style=\"min-height: 800px\">\n      <div hawtio-force-graph graph=\"graph\" link-distance=\"100\" charge=\"-300\" nodesize=\"6\"></div>\n    </div>\n  </div>\n\n</div>\n");
-$templateCache.put("plugins/wiki/exemplar/document.html","<h2>This is a title</h2>\n\n<p>Here are some notes</p>");
 $templateCache.put("plugins/wiki/html/camelCanvas.html","<div ng-controller=\"Wiki.CamelController\">\n\n  <div class=\"wiki-fixed\" ng-controller=\"Wiki.CamelCanvasController\">\n    <ng-include src=\"\'app/wiki/html/camelNavBar.html\'\"></ng-include>\n\n    <script type=\"text/ng-template\"\n            id=\"nodeTemplate\">\n      <div class=\"component window\"\n           id=\"{{id}}\"\n           title=\"{{node.tooltip}}\">\n        <div class=\"window-inner {{node.type}}\">\n          <img class=\"nodeIcon\"\n               title=\"Click and drag to create a connection\"\n               src=\"{{node.imageUrl}}\">\n          <span class=\"nodeText\"\n                title=\"{{node.label}}\">{{node.label}}</span>\n        </div>\n      </div>\n    </script>\n\n\n    <div class=\"row-fluid\">\n      <div class=\"span12\">\n        <ul class=\"nav nav-tabs\">\n          <li ng-class=\"{active : true}\">\n            <a ng-href=\'{{startLink}}/camel/canvas/{{pageId}}\' title=\"Edit the diagram in a draggy droppy way\"\n               data-placement=\"bottom\">\n              <i class=\"icon-picture\"></i> Canvas</a></li>\n          <li ng-class=\"{active : false}\">\n            <a ng-href=\'{{startLink}}/camel/properties/{{pageId}}\' title=\"Switch to the tree based view\"\n               data-placement=\"bottom\">\n              <i class=\"icon-sitemap\"></i> Tree</a></li>\n\n          <li class=\"pull-right\">\n            <a href=\'\' title=\"Add new pattern node connecting to this pattern\" ng-click=\"addDialog.open()\"\n               data-placement=\"bottom\">\n              <i class=\"icon-plus\"></i> Add</a></li>\n\n          <li class=\"pull-right\">\n            <a href=\'\' title=\"Automatically layout the diagram \" ng-click=\"doLayout()\"\n               data-placement=\"bottom\">\n              <i class=\"icon-magic\"></i> Layout</a></li>\n\n          <li class=\"pull-right\" style=\"margin-top: 0; margin-bottom: 0;\">\n            </li>\n\n          <!--\n          <li class=\"pull-right\">\n            <a href=\'\' title=\"Edit the properties for the selected node\" ng-disabled=\"!selectedFolder\"\n               ng-click=\"propertiesDialog.open()\"\n               data-placement=\"bottom\">\n              <i class=\"icon-edit\"></i> Properties</a></li>\n              -->\n        </ul>\n\n        <div class=\"modal-large\">\n          <div modal=\"addDialog.show\" close=\"addDialog.close()\" ng-options=\"addDialog.options\">\n            <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"addAndCloseDialog()\">\n              <div class=\"modal-header\"><h4>Add Node</h4></div>\n              <div class=\"modal-body\">\n                <tabset>\n                  <tab heading=\"Patterns\">\n                    <div hawtio-tree=\"paletteTree\" hideRoot=\"true\" onSelect=\"onPaletteSelect\"\n                         activateNodes=\"paletteActivations\"></div>\n                  </tab>\n                  <tab heading=\"Endpoints\">\n                    <div hawtio-tree=\"componentTree\" hideRoot=\"true\" onSelect=\"onComponentSelect\"\n                         activateNodes=\"componentActivations\"></div>\n                  </tab>\n                </tabset>\n              </div>\n              <div class=\"modal-footer\">\n                <input id=\"submit\" class=\"btn btn-primary add\" type=\"submit\" ng-disabled=\"!selectedPaletteNode && !selectedComponentNode\"\n                       value=\"Add\">\n                <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"addDialog.close()\">Cancel</button>\n              </div>\n            </form>\n          </div>\n        </div>\n\n\n        <!--\n        <div modal=\"propertiesDialog.show\" close=\"propertiesDialog.close()\" ng-options=\"propertiesDialog.options\">\n          <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"updatePropertiesAndCloseDialog()\">\n            <div class=\"modal-header\"><h4>Properties</h4></div>\n            <div class=\"modal-body\">\n\n              <div ng-show=\"!selectedEndpoint\"> -->\n                <!-- pattern form --> <!--\n                <div simple-form name=\"formEditor\" entity=\'nodeData\' data=\'nodeModel\' schema=\"schema\"\n                     onsubmit=\"updatePropertiesAndCloseDialog\"></div>\n              </div>\n              <div ng-show=\"selectedEndpoint\"> -->\n                <!-- endpoint form -->\n                <!--\n                <div class=\"control-group\">\n                  <label class=\"control-label\" for=\"endpointPath\">Endpoint</label>\n\n                  <div class=\"controls\">\n                    <input id=\"endpointPath\" class=\"span10\" type=\"text\" ng-model=\"endpointPath\" placeholder=\"name\"\n                           typeahead=\"title for title in endpointCompletions($viewValue) | filter:$viewValue\"\n                           typeahead-editable=\'true\'\n                           min-length=\"1\">\n                  </div>\n                </div>\n                <div simple-form name=\"formEditor\" entity=\'endpointParameters\' data=\'endpointSchema\'\n                     schema=\"schema\"></div>\n              </div>\n\n\n            </div>\n            <div class=\"modal-footer\">\n              <input class=\"btn btn-primary add\" type=\"submit\" ng-click=\"updatePropertiesAndCloseDialog()\" value=\"OK\">\n              <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"propertiesDialog.close()\">Cancel</button>\n            </div>\n          </form>\n        </div>\n        -->\n\n      </div>\n    </div>\n\n    <div class=\"row-fluid\">\n    </div>\n\n    <div class=\"panes gridStyle\">\n      <div class=\"left-pane\">\n        <div class=\"camel-viewport camel-canvas\">\n          <div style=\"position: relative;\" class=\"canvas\"></div>\n        </div>\n      </div>\n      <div class=\"right-pane\">\n        <div class=\"camel-props\">\n          <div class=\"button-bar\">\n            <div class=\"centered\">\n              <form class=\"form-inline\">\n                <label>Route: </label>\n                <select ng-model=\"selectedRouteId\" ng-options=\"routeId for routeId in routeIds\"></select>\n              </form>\n              <div class=\"btn-group\">\n                <button class=\"btn\"\n                        title=\"{{getDeleteTitle()}}\"\n                        ng-click=\"removeNode()\"\n                        data-placement=\"bottom\">\n                    <i class=\"icon-remove\"></i> Delete {{getDeleteTarget()}}</button>\n                <button class=\"btn\"\n                        title=\"Apply any changes to the endpoint properties\"\n                        ng-disabled=\"!isFormDirty()\"\n                        ng-click=\"updateProperties()\">\n                    <i class=\"icon-ok\"></i> Apply</button>\n                <!-- TODO Would be good to have this too\n                <button class=\"btn\"\n                        title=\"Clear any changes to the endpoint properties\"\n                        ng-disabled=\"!isFormDirty()\"\n                        ng-click=\"resetForms()\">\n                  <i class=\"icon-remove\"></i> Cancel</button> -->\n              </div>\n            </div>\n          </div>\n          <div class=\"prop-viewport\">\n\n            <div>\n              <!-- pattern form -->\n              <div ng-show=\"!selectedEndpoint\">\n                <div simple-form\n                     name=\"formEditor\"\n                     entity=\'nodeData\'\n                     data=\'nodeModel\'\n                     schema=\"schema\"\n                     onsubmit=\"updateProperties\"></div>\n              </div>\n\n              <!-- endpoint form -->\n              <div class=\"endpoint-props\" ng-show=\"selectedEndpoint\">\n                <p>Endpoint</p>\n                <form name=\"endpointForm\">\n                  <div class=\"control-group\">\n                    <label class=\"control-label\" for=\"endpointPath\">URI:</label>\n\n                    <div class=\"controls\">\n                      <input id=\"endpointPath\" class=\"span10\" type=\"text\" ng-model=\"endpointPath\" placeholder=\"name\"\n                             typeahead=\"title for title in endpointCompletions($viewValue) | filter:$viewValue\"\n                             typeahead-editable=\'true\'\n                             min-length=\"1\">\n                    </div>\n                  </div>\n                </form>\n\n                <div simple-form\n                     name=\"formEditor\"\n                     entity=\'endpointParameters\'\n                     data=\'endpointSchema\'\n                     schema=\"schema\"\n                     onsubmit=\"updateProperties\"></div>\n              </div>\n\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/camelDiagram.html","<div ng-include=\"diagramTemplate\"></div>\n");
 $templateCache.put("plugins/wiki/html/camelNavBar.html","<div class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs connected\">\n      <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href)}\'>\n        <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n      </li>\n\n      <!--\n              <li class=\"pull-right\">\n                <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this camel configuration\"\n                   data-placement=\"bottom\">\n                  <i class=\"icon-edit\"></i> Edit</a></li>\n              <li class=\"pull-right\" ng-show=\"sourceLink()\">\n      -->\n      <li class=\"pull-right\">\n        <a href=\"\" id=\"saveButton\" ng-disabled=\"!modified\" ng-click=\"save()\"\n           ng-class=\"{\'nav-primary\' : modified}\"\n           title=\"Saves the Camel document\">\n          <i class=\"icon-save\"></i> Save</a>\n      </li>\n      <li class=\"pull-right\">\n        <a href=\"\" id=\"cancelButton\" ng-click=\"cancel()\"\n           title=\"Discards any updates\">\n          <i class=\"icon-remove\"></i> Cancel</a>\n      </li>\n\n      <li class=\"pull-right\">\n        <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n           data-placement=\"bottom\">\n          <i class=\"icon-file-alt\"></i> Source</a>\n      </li>\n    </ul>\n  </div>\n</div>\n");
@@ -16765,6 +16764,7 @@ $templateCache.put("plugins/wiki/html/sourceView.html","<textarea id=\"source\" 
 $templateCache.put("plugins/wiki/html/viewBook.html","<div ng-controller=\"Wiki.ViewController\">\n\n  <script type=\"text/ng-template\" id=\"fileCellTemplate.html\">\n    <div class=\"ngCellText\"\n         title=\"{{fileName(row.entity)}} - Last Modified: {{row.entity.lastModified | date:\'medium\'}}, Size: {{row.entity.length}}\">\n      <a href=\"{{childLink(row.entity)}}\" class=\"file-name\">\n        <span class=\"file-icon\"\n              ng-class=\"fileClass(row.entity)\"\n              ng-bind-html-unsafe=\"fileIconHtml(row)\">\n\n              </span>{{fileName(row.entity)}}\n      </a>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"fileColumnTemplate.html\">\n\n    <div class=\"ngHeaderSortColumn {{col.headerClass}}\"\n         ng-style=\"{\'cursor\': col.cursor}\"\n         ng-class=\"{ \'ngSorted\': !noSortVisible }\">\n\n      <div class=\"ngHeaderText\" ng-hide=\"pageId === \'/\'\">\n        <a ng-href=\"{{parentLink()}}\"\n           class=\"wiki-file-list-up\"\n           title=\"Open the parent folder\">\n          <i class=\"icon-level-up\"></i> Up a directory\n        </a>\n      </div>\n    </div>\n\n  </script>\n\n  <ng-include src=\"\'app/wiki/html/viewNavBar.html\'\"></ng-include>\n\n  <div class=\"wiki-fixed form-horizontal\">\n    <div class=\"row-fluid\">\n      <div class=\"tocify\" wiki-href-adjuster>\n        <!-- TODO we maybe want a more flexible way to find the links to include than the current link-filter -->\n        <div hawtio-toc-display get-contents=\"getContents(filename, cb)\"\n             html=\"html\" link-filter=\"[file-extension]\">\n        </div>\n      </div>\n      <div class=\"toc-content\" id=\"toc-content\"></div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/viewNavBar.html","<div ng-hide=\"inDashboard\" class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs\">\n      <li ng-show=\"branches.length || branch\">\n        <div hawtio-drop-down=\"branchMenuConfig\"></div>\n      </li>\n      <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href) && !objectId}\'>\n        <a class=\"breadcrumb-link\" ng-href=\"{{link.href}}\">\n          <span class=\"contained c-medium\">{{link.name}}</span>\n        </a>\n      </li>\n      <li ng-show=\"objectId\">\n        <a ng-href=\"{{historyLink}}{{hash}}\">History</a>\n      </li>\n      <li ng-show=\"objectId\" class=\"active\">\n        <a>{{objectId}}</a>\n      </li>\n\n      <li class=\"pull-right dropdown\">\n        <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\">\n          Actions <span class=\"caret\"></span>\n        </a>\n        <ul class=\"dropdown-menu\">\n          <li ng-show=\"sourceLink()\">\n            <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n               data-placement=\"bottom\">\n              <i class=\"icon-file-alt\"></i> Source</a>\n          </li>\n          <li>\n            <a ng-href=\"{{historyLink}}{{hash}}\" ng-hide=\"!historyLink\" title=\"View the history of this file\"\n               data-placement=\"bottom\">\n              <i class=\"icon-comments-alt\"></i> History</a>\n          </li>\n          <!--\n          <li class=\"divider\">\n          </li>\n          -->\n          <li ng-hide=\"gridOptions.selectedItems.length !== 1\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"rename\">\n            <a ng-click=\"openRenameDialog()\"\n               title=\"Rename the selected document\"\n               data-placement=\"bottom\">\n              <i class=\"icon-adjust\"></i> Rename</a>\n          </li>\n          <li ng-hide=\"!gridOptions.selectedItems.length\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"rename\">\n            <a ng-click=\"openMoveDialog()\"\n               title=\"move the selected documents to a new folder\"\n               data-placement=\"bottom\">\n              <i class=\"icon-move\"></i> Move</a>\n          </li>\n          <!--\n          <li class=\"divider\">\n          </li>\n          -->\n          <li ng-hide=\"!gridOptions.selectedItems.length\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"remove\">\n            <a ng-click=\"openDeleteDialog()\"\n               title=\"Delete the selected document(s)\"\n               data-placement=\"bottom\">\n              <i class=\"icon-remove\"></i> Delete</a>\n          </li>\n          <li class=\"divider\" ng-show=\"childActions.length\">\n          </li>\n          <li ng-repeat=\"childAction in childActions\">\n            <a ng-click=\"childAction.doAction()\"\n               title=\"{{childAction.title}}\"\n               data-placement=\"bottom\">\n              <i class=\"{{childAction.icon}}\"></i> {{childAction.name}}</a>\n          </li>\n        </ul>\n      </li>\n      <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n        <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this page\"\n           data-placement=\"bottom\">\n          <i class=\"icon-edit\"></i> Edit</a>\n      </li>\n      <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n        <a ng-href=\"{{createLink()}}{{hash}}\"\n           title=\"Create new page\"\n           data-placement=\"bottom\">\n          <i class=\"icon-plus\"></i> Create</a>\n      </li>\n      <li class=\"pull-right\">\n        <div class=\"btn-group\" \n             ng-hide=\"!children || profile\">\n          <a class=\"btn btn-small\"\n             ng-disabled=\"mode == ViewMode.List\"\n             href=\"\" \n             ng-click=\"setViewMode(ViewMode.List)\">\n            <i class=\"icon-list\"></i></a>\n          <a class=\"btn btn-small\" \n             ng-disabled=\"mode == ViewMode.Icon\"\n             href=\"\" \n             ng-click=\"setViewMode(ViewMode.Icon)\">\n            <i class=\"icon-th-large\"></i></a>\n        </div>\n      </li>\n      <li class=\"pull-right\">\n        <a href=\"\" ng-hide=\"children || profile\" title=\"Add to dashboard\" ng-href=\"{{createDashboardLink()}}\"\n           data-placement=\"bottom\">\n          <i class=\"icon-share\"></i>\n        </a>\n      </li>\n    </ul>\n  </div>\n</div>\n\n\n");
 $templateCache.put("plugins/wiki/html/viewPage.html","<div ng-controller=\"Wiki.ViewController\">\n  <script type=\"text/ng-template\" id=\"fileCellTemplate.html\">\n    <div class=\"ngCellText\"\n         title=\"{{fileName(row.entity)}} - Last Modified: {{row.entity.lastModified | date:\'medium\'}}, Size: {{row.entity.length}}\">\n      <a href=\"{{childLink(row.entity)}}\" class=\"file-name\" hawtio-file-drop=\"{{row.entity.fileName}}\" download-url=\"{{row.entity.downloadURL}}\">\n        <span class=\"file-icon\"\n              ng-class=\"fileClass(row.entity)\"\n              compile=\"fileIconHtml(row)\">\n        </span>{{fileName(row.entity)}}\n      </a>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"fileColumnTemplate.html\">\n    <div class=\"ngHeaderSortColumn {{col.headerClass}}\"\n         ng-style=\"{\'cursor\': col.cursor}\"\n         ng-class=\"{ \'ngSorted\': !noSortVisible }\">\n      <div class=\"ngHeaderText\" ng-hide=\"pageId === \'/\'\">\n        <a ng-href=\"{{parentLink()}}\"\n           class=\"wiki-file-list-up\"\n           title=\"Open the parent folder\">\n          <i class=\"icon-level-up\"></i> Up a directory\n        </a>\n      </div>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"imageTemplate.html\">\n    <img src=\"{{imageURL}}\">\n  </script>\n\n  <ng-include src=\"\'app/wiki/html/viewNavBar.html\'\"></ng-include>\n\n  <!-- Icon View -->\n  <div ng-show=\"mode == ViewMode.Icon\" class=\"wiki-fixed\">\n    <div ng-hide=\"!showAppHeader\">\n      <div class=\"row-fluid\">\n        <div class=\"span12\">\n          <div kubernetes-json=\"kubernetesJson\"></div>\n        </div>\n      </div>\n    </div>\n    <div ng-hide=\"!html\" wiki-href-adjuster wiki-title-linker>\n      <div class=\"row-fluid\" style=\"margin-left: 10px\">\n        <div class=\"span12\">\n          <div compile=\"html\"></div>\n        </div>\n      </div>\n    </div>\n    <div class=\"row-fluid\" ng-show=\"html && children\">\n      <div class=\"span12 wiki-icon-view-header\">\n        <h5>Directories and Files</h5>\n      </div>\n    </div>\n    <div class=\"row-fluid\" ng-hide=\"!directory\">\n      <div class=\"span12\" ng-controller=\"Wiki.FileDropController\">\n        <div class=\"wiki-icon-view\" nv-file-drop nv-file-over uploader=\"uploader\" over-class=\"ready-drop\">\n          <div class=\"column-box mouse-pointer well\"\n               ng-repeat=\"child in children\" \n               ng-class=\"isInGroup(gridOptions.selectedItems, child, \'selected\', \'\')\"\n               ng-click=\"toggleSelectionFromGroup(gridOptions.selectedItems, child)\">\n            <div class=\"row-fluid\">\n              <div class=\"span2\" hawtio-file-drop=\"{{child.fileName}}\" download-url=\"{{child.downloadURL}}\">\n                  <span class=\"app-logo\" ng-class=\"fileClass(child)\" compile=\"fileIconHtml(child)\"></span>\n              </div>\n              <div class=\"span10\">\n                <h3>\n                  <a href=\"{{childLink(child)}}\">{{child.displayName || child.name}}</a>\n                </h3>\n              </div>\n            </div>\n            <div class=\"row-fluid\" ng-show=\"child.summary\">\n              <div class=\"span12\">\n                <p compile=\"marked(child.summary)\"></p>\n              </div>\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n  <!-- end Icon view -->\n\n  <!-- start List view -->\n  <div ng-show=\"mode == ViewMode.List\" class=\"wiki-fixed\">\n    <hawtio-pane position=\"left\" width=\"300\">\n      <div ng-controller=\"Wiki.FileDropController\">\n        <div class=\"wiki-list-view\" nv-file-drop nv-file-over uploader=\"uploader\" over-class=\"ready-drop\">\n          <div class=\"wiki-grid\" hawtio-list=\"gridOptions\"></div>\n        </div>\n      </div>\n    </hawtio-pane>\n    <div class=\"row-fluid\">\n      <div ng-class=\"span12\">\n        <div ng-hide=\"!showProfileHeader\">\n          <div class=\"row-fluid\">\n            <div class=\"span12\">\n              <div fabric-profile-details version-id=\"versionId\" profile-id=\"profileId\"></div>\n              <p></p>\n            </div>\n          </div>\n        </div>\n        <div ng-hide=\"!showAppHeader\">\n          <div class=\"row-fluid\">\n            <div class=\"span12\">\n              <div kubernetes-json=\"kubernetesJson\" children=\"children\"></div>\n            </div>\n          </div>\n        </div>\n        <div ng-hide=\"!html\" wiki-href-adjuster wiki-title-linker>\n          <div class=\"row-fluid\" style=\"margin-left: 10px\">\n            <div class=\"span12\">\n              <div compile=\"html\"></div>\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n  <!-- end List view -->\n  <div ng-include=\"sourceView\" class=\"editor-autoresize\"></div>\n</div>\n");
+$templateCache.put("plugins/wiki/exemplar/document.html","<h2>This is a title</h2>\n\n<p>Here are some notes</p>");
 $templateCache.put("plugins/wiki/html/modal/deleteDialog.html","<div>\n  <form class=\"form-horizontal\" ng-submit=\"deleteAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Delete Document</h4></div>\n    <div class=\"modal-body\">\n      <div class=\"control-group\">\n        <p>You are about to delete\n          <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                        when=\"{\'1\': \'this document!\', \'other\': \'these {} documents!\'}\">\n          </ng-pluralize>\n        </p>\n\n        <div ng-bind-html-unsafe=\"selectedFileHtml\"></div>\n        <p class=\"alert alert-danger\" ng-show=\"warning\" ng-bind-html-unsafe=\"warning\">\n        </p>\n      </div>\n    </div>\n    <div class=\"modal-footer\">\n      <input class=\"btn btn-primary\" type=\"submit\"\n             value=\"Delete\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"close()\">Cancel</button>\n    </div>\n  </form>\n</div>\n");
 $templateCache.put("plugins/wiki/html/modal/moveDialog.html","<div>\n    <form class=\"form-horizontal\" ng-submit=\"moveAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Move Document</h4></div>\n    <div class=\"modal-body\">\n      <div class=\"control-group\">\n        <label class=\"control-label\" for=\"moveFolder\">Folder</label>\n\n        <div class=\"controls\">\n          <input type=\"text\" id=\"moveFolder\" ng-model=\"move.moveFolder\"\n                 typeahead=\"title for title in folderNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'>\n        </div>\n      </div>\n    </div>\n    <div class=\"modal-footer\">\n      <input class=\"btn btn-primary\" type=\"submit\"\n             ng-disabled=\"!move.moveFolder\"\n             value=\"Move\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"close()\">Cancel</button>\n    </div>\n  </form>\n</div>");
 $templateCache.put("plugins/wiki/html/modal/renameDialog.html","<div>\n  <form class=\"form-horizontal\" ng-submit=\"renameAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Rename Document</h4></div>\n    <div class=\"modal-body\">\n      <div class=\"control-group\">\n        <label class=\"control-label\" for=\"renameFileName\">Name</label>\n\n        <div class=\"controls\">\n          <input type=\"text\" id=\"renameFileName\" ng-model=\"rename.newFileName\">\n        </div>\n      </div>\n\n      <div class=\"control-group\">\n        <div ng-show=\"fileExists.exists\" class=\"alert\">\n          Please choose a different name as <b>{{fileExists.name}}</b> already exists\n        </div>\n      </div>\n    </div>\n    <div class=\"modal-footer\">\n      <input class=\"btn btn-primary\" type=\"submit\"\n             ng-disabled=\"!fileName || fileExists.exists\"\n             value=\"Rename\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"close()\">Cancel</button>\n    </div>\n  </form>\n</div>\n");}]); hawtioPluginLoader.addModule("hawtio-wiki-templates");
