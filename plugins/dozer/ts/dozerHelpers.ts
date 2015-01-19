@@ -123,9 +123,9 @@ module Dozer {
     var mbean = getIntrospectorMBean(workspace);
     if (mbean) {
       if (filter) {
-        return workspace.jolokia.execute(mbean, "findProperties", className, filter, onSuccess(fn));
+        return workspace.jolokia.execute(mbean, "findProperties", className, filter, Core.onSuccess(fn));
       } else {
-        return workspace.jolokia.execute(mbean, "getProperties", className, onSuccess(fn));
+        return workspace.jolokia.execute(mbean, "getProperties", className, Core.onSuccess(fn));
       }
     } else {
       if (fn) {
@@ -151,7 +151,7 @@ module Dozer {
   export function findClassNames(workspace: Workspace, searchText: string, limit = 20, fn = null) {
     var mbean = getIntrospectorMBean(workspace);
     if (mbean) {
-      return workspace.jolokia.execute(mbean, "findClassNames", searchText, limit, onSuccess(fn));
+      return workspace.jolokia.execute(mbean, "findClassNames", searchText, limit, Core.onSuccess(fn));
     } else {
       if (fn) {
         return fn([]);

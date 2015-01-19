@@ -63,7 +63,7 @@ module Karaf {
     if (featuresMBean) {
       Core.register(jolokia, $scope, {
         type: 'read', mbean: featuresMBean
-      }, onSuccess(render));
+      }, Core.onSuccess(render));
     }
 
     $scope.inSelectedRepository = (feature) => {
@@ -120,7 +120,7 @@ module Karaf {
         type: 'read',
         method: 'POST',
         mbean: featuresMBean
-      }, onSuccess(render));
+      }, Core.onSuccess(render));
     };
 
     $scope.install = (feature) => {

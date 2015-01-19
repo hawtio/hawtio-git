@@ -1,4 +1,5 @@
 /// <reference path="../../includes.ts"/>
+/// <reference path="../../camel/ts/camelHelpers.ts"/>
 /// <reference path="../../git/ts/gitHelpers.ts"/>
 /// <reference path="wikiHelpers.ts"/>
 
@@ -506,7 +507,7 @@ module Wiki {
             // now lets try load the form JSON so we can then render the form
             $scope.sourceView = null;
             if (form === "/") {
-              onFormSchema(_jsonSchema);
+              onFormSchema(Camel._jsonSchema);
             } else {
               $scope.git = wikiRepository.getPage($scope.branch, form, $scope.objectId, (details) => {
                 onFormSchema(Wiki.parseJson(details.text));

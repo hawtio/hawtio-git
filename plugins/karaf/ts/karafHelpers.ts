@@ -27,7 +27,7 @@ module Karaf {
       type: 'exec', mbean: getSelectionFeaturesMBean(workspace),
       operation: 'addRepository(java.lang.String)',
       arguments: [uri]
-    }, onSuccess(success, { error: error }));
+    }, Core.onSuccess(success, { error: error }));
   }
 
   export function uninstallRepository(workspace, jolokia, uri, success, error) {
@@ -36,7 +36,7 @@ module Karaf {
       type: 'exec', mbean: getSelectionFeaturesMBean(workspace),
       operation: 'removeRepository(java.lang.String)',
       arguments: [uri]
-    }, onSuccess(success, { error: error }));
+    }, Core.onSuccess(success, { error: error }));
   }
 
   export function installFeature(workspace, jolokia, feature, version, success, error) {
@@ -46,7 +46,7 @@ module Karaf {
               operation: 'installFeature(java.lang.String, java.lang.String)',
               arguments: [feature, version]
             },
-            onSuccess(success, { error: error }));
+            Core.onSuccess(success, { error: error }));
   }
 
   export function uninstallFeature(workspace, jolokia, feature, version, success, error) {
@@ -56,7 +56,7 @@ module Karaf {
               operation: 'uninstallFeature(java.lang.String, java.lang.String)',
               arguments: [feature, version]
             },
-            onSuccess(success, { error: error }));
+            Core.onSuccess(success, { error: error }));
   }
 
   // TODO move to core?
@@ -306,7 +306,7 @@ module Karaf {
                 operation: 'activateComponent(java.lang.String)',
                 arguments: [component]
             },
-            onSuccess(success, { error: error }));
+            Core.onSuccess(success, { error: error }));
     }
 
     export function deactivateComponent(workspace, jolokia, component, success, error) {
@@ -316,7 +316,7 @@ module Karaf {
                 operation: 'deactiveateComponent(java.lang.String)',
                 arguments: [component]
             },
-            onSuccess(success, { error: error }));
+            Core.onSuccess(success, { error: error }));
     }
 
   export function populateDependencies(attributes, dependencies, features) {

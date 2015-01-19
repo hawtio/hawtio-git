@@ -1,4 +1,5 @@
 /// <reference path="../../includes.ts"/>
+/// <reference path="../../camel/ts/camelHelpers.ts"/>
 /// <reference path="../../git/ts/gitHelpers.ts"/>
 /// <reference path="wikiHelpers.ts"/>
 /// <reference path="wikiPlugin.ts"/>
@@ -47,7 +48,7 @@ module Wiki {
        */
     ];
 
-    var routeModel = _apacheCamelModel.definitions.route;
+    var routeModel = Camel._apacheCamelModel.definitions.route;
     routeModel["_id"] = "route";
 
     $scope.addDialog = new UI.Dialog();
@@ -61,7 +62,7 @@ module Wiki {
     $scope.paletteActivations = ["Routing_aggregate"];
 
     // load $scope.paletteTree
-    angular.forEach(_apacheCamelModel.definitions, (value, key) => {
+    angular.forEach(Camel._apacheCamelModel.definitions, (value, key) => {
       if (value.group) {
         var group = (key === "route") ? $scope.paletteTree : $scope.paletteTree.getOrElse(value.group);
         if (!group.key) {

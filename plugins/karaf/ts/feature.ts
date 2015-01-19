@@ -84,7 +84,7 @@ module Karaf {
             if (featureMbean) {
                 jolokia.request(
                     {type: 'read', mbean: featureMbean},
-                    onSuccess(populateTable));
+                    Core.onSuccess(populateTable));
             }
         }
 

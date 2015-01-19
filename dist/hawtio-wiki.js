@@ -8487,6 +8487,120 @@ var Camel;
 })(Camel || (Camel = {}));
 
 /// <reference path="../../includes.ts"/>
+/// <reference path="gitHelpers.ts"/>
+/**
+ * @module Git
+ * @main Git
+ */
+var Git;
+(function (Git) {
+    /**
+     * A default implementation which uses jolokia and the
+     * GitFacadeMXBean over JMX
+     *
+     * @class JolokiaGit
+     * @uses GitRepository
+     *
+     */
+    var JolokiaGit = (function () {
+        function JolokiaGit(mbean, jolokia, localStorage, userDetails, branch) {
+            if (branch === void 0) { branch = "master"; }
+            this.mbean = mbean;
+            this.jolokia = jolokia;
+            this.localStorage = localStorage;
+            this.userDetails = userDetails;
+            this.branch = branch;
+        }
+        JolokiaGit.prototype.getRepositoryLabel = function (fn, error) {
+            return this.jolokia.request({ type: "read", mbean: this.mbean, attribute: ["RepositoryLabel"] }, Core.onSuccess(function (result) {
+                fn(result.value.RepositoryLabel);
+            }, { error: error }));
+        };
+        JolokiaGit.prototype.exists = function (branch, path, fn) {
+            var result;
+            if (angular.isDefined(fn) && fn) {
+                result = this.jolokia.execute(this.mbean, "exists", branch, path, Core.onSuccess(fn));
+            }
+            else {
+                result = this.jolokia.execute(this.mbean, "exists", branch, path);
+            }
+            if (angular.isDefined(result) && result) {
+                return true;
+            }
+            else {
+                return false;
+            }
+        };
+        JolokiaGit.prototype.read = function (branch, path, fn) {
+            return this.jolokia.execute(this.mbean, "read", branch, path, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.write = function (branch, path, commitMessage, contents, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "write", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.writeBase64 = function (branch, path, commitMessage, contents, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "writeBase64", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.createDirectory = function (branch, path, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "createDirectory", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.revertTo = function (branch, objectId, blobPath, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "revertTo", branch, objectId, blobPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.rename = function (branch, oldPath, newPath, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "rename", branch, oldPath, newPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.remove = function (branch, path, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "remove", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.completePath = function (branch, completionText, directoriesOnly, fn) {
+            return this.jolokia.execute(this.mbean, "completePath", branch, completionText, directoriesOnly, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.history = function (branch, objectId, path, limit, fn) {
+            return this.jolokia.execute(this.mbean, "history", branch, objectId, path, limit, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.commitTree = function (commitId, fn) {
+            return this.jolokia.execute(this.mbean, "getCommitTree", commitId, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.commitInfo = function (commitId, fn) {
+            return this.jolokia.execute(this.mbean, "getCommitInfo", commitId, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.diff = function (objectId, baseObjectId, path, fn) {
+            return this.jolokia.execute(this.mbean, "diff", objectId, baseObjectId, path, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.getContent = function (objectId, blobPath, fn) {
+            return this.jolokia.execute(this.mbean, "getContent", objectId, blobPath, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.readJsonChildContent = function (path, nameWildcard, search, fn) {
+            return this.jolokia.execute(this.mbean, "readJsonChildContent", this.branch, path, nameWildcard, search, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.branches = function (fn) {
+            return this.jolokia.execute(this.mbean, "branches", Core.onSuccess(fn));
+        };
+        // TODO move...
+        JolokiaGit.prototype.getUserName = function () {
+            return this.localStorage["gitUserName"] || this.userDetails.username || "anonymous";
+        };
+        JolokiaGit.prototype.getUserEmail = function () {
+            return this.localStorage["gitUserEmail"] || "anonymous@gmail.com";
+        };
+        return JolokiaGit;
+    })();
+    Git.JolokiaGit = JolokiaGit;
+})(Git || (Git = {}));
+
+/// <reference path="../../includes.ts"/>
 
 /// <reference path="../../includes.ts"/>
 /// <reference path="dockerRegistryInterfaces.ts"/>
@@ -8827,10 +8941,10 @@ var Dozer;
         var mbean = getIntrospectorMBean(workspace);
         if (mbean) {
             if (filter) {
-                return workspace.jolokia.execute(mbean, "findProperties", className, filter, onSuccess(fn));
+                return workspace.jolokia.execute(mbean, "findProperties", className, filter, Core.onSuccess(fn));
             }
             else {
-                return workspace.jolokia.execute(mbean, "getProperties", className, onSuccess(fn));
+                return workspace.jolokia.execute(mbean, "getProperties", className, Core.onSuccess(fn));
             }
         }
         else {
@@ -8860,7 +8974,7 @@ var Dozer;
         if (fn === void 0) { fn = null; }
         var mbean = getIntrospectorMBean(workspace);
         if (mbean) {
-            return workspace.jolokia.execute(mbean, "findClassNames", searchText, limit, onSuccess(fn));
+            return workspace.jolokia.execute(mbean, "findClassNames", searchText, limit, Core.onSuccess(fn));
         }
         else {
             if (fn) {
@@ -9253,120 +9367,6 @@ var Dozer;
 })(Dozer || (Dozer = {}));
 
 /// <reference path="../../includes.ts"/>
-/// <reference path="gitHelpers.ts"/>
-/**
- * @module Git
- * @main Git
- */
-var Git;
-(function (Git) {
-    /**
-     * A default implementation which uses jolokia and the
-     * GitFacadeMXBean over JMX
-     *
-     * @class JolokiaGit
-     * @uses GitRepository
-     *
-     */
-    var JolokiaGit = (function () {
-        function JolokiaGit(mbean, jolokia, localStorage, userDetails, branch) {
-            if (branch === void 0) { branch = "master"; }
-            this.mbean = mbean;
-            this.jolokia = jolokia;
-            this.localStorage = localStorage;
-            this.userDetails = userDetails;
-            this.branch = branch;
-        }
-        JolokiaGit.prototype.getRepositoryLabel = function (fn, error) {
-            return this.jolokia.request({ type: "read", mbean: this.mbean, attribute: ["RepositoryLabel"] }, Core.onSuccess(function (result) {
-                fn(result.value.RepositoryLabel);
-            }, { error: error }));
-        };
-        JolokiaGit.prototype.exists = function (branch, path, fn) {
-            var result;
-            if (angular.isDefined(fn) && fn) {
-                result = this.jolokia.execute(this.mbean, "exists", branch, path, Core.onSuccess(fn));
-            }
-            else {
-                result = this.jolokia.execute(this.mbean, "exists", branch, path);
-            }
-            if (angular.isDefined(result) && result) {
-                return true;
-            }
-            else {
-                return false;
-            }
-        };
-        JolokiaGit.prototype.read = function (branch, path, fn) {
-            return this.jolokia.execute(this.mbean, "read", branch, path, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.write = function (branch, path, commitMessage, contents, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "write", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.writeBase64 = function (branch, path, commitMessage, contents, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "writeBase64", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.createDirectory = function (branch, path, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "createDirectory", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.revertTo = function (branch, objectId, blobPath, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "revertTo", branch, objectId, blobPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.rename = function (branch, oldPath, newPath, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "rename", branch, oldPath, newPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.remove = function (branch, path, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "remove", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.completePath = function (branch, completionText, directoriesOnly, fn) {
-            return this.jolokia.execute(this.mbean, "completePath", branch, completionText, directoriesOnly, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.history = function (branch, objectId, path, limit, fn) {
-            return this.jolokia.execute(this.mbean, "history", branch, objectId, path, limit, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.commitTree = function (commitId, fn) {
-            return this.jolokia.execute(this.mbean, "getCommitTree", commitId, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.commitInfo = function (commitId, fn) {
-            return this.jolokia.execute(this.mbean, "getCommitInfo", commitId, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.diff = function (objectId, baseObjectId, path, fn) {
-            return this.jolokia.execute(this.mbean, "diff", objectId, baseObjectId, path, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.getContent = function (objectId, blobPath, fn) {
-            return this.jolokia.execute(this.mbean, "getContent", objectId, blobPath, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.readJsonChildContent = function (path, nameWildcard, search, fn) {
-            return this.jolokia.execute(this.mbean, "readJsonChildContent", this.branch, path, nameWildcard, search, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.branches = function (fn) {
-            return this.jolokia.execute(this.mbean, "branches", Core.onSuccess(fn));
-        };
-        // TODO move...
-        JolokiaGit.prototype.getUserName = function () {
-            return this.localStorage["gitUserName"] || this.userDetails.username || "anonymous";
-        };
-        JolokiaGit.prototype.getUserEmail = function () {
-            return this.localStorage["gitUserEmail"] || "anonymous@gmail.com";
-        };
-        return JolokiaGit;
-    })();
-    Git.JolokiaGit = JolokiaGit;
-})(Git || (Git = {}));
-
-/// <reference path="../../includes.ts"/>
 /**
  * @module Karaf
  */
@@ -9395,7 +9395,7 @@ var Karaf;
             mbean: getSelectionFeaturesMBean(workspace),
             operation: 'addRepository(java.lang.String)',
             arguments: [uri]
-        }, onSuccess(success, { error: error }));
+        }, Core.onSuccess(success, { error: error }));
     }
     Karaf.installRepository = installRepository;
     function uninstallRepository(workspace, jolokia, uri, success, error) {
@@ -9405,7 +9405,7 @@ var Karaf;
             mbean: getSelectionFeaturesMBean(workspace),
             operation: 'removeRepository(java.lang.String)',
             arguments: [uri]
-        }, onSuccess(success, { error: error }));
+        }, Core.onSuccess(success, { error: error }));
     }
     Karaf.uninstallRepository = uninstallRepository;
     function installFeature(workspace, jolokia, feature, version, success, error) {
@@ -9414,7 +9414,7 @@ var Karaf;
             mbean: getSelectionFeaturesMBean(workspace),
             operation: 'installFeature(java.lang.String, java.lang.String)',
             arguments: [feature, version]
-        }, onSuccess(success, { error: error }));
+        }, Core.onSuccess(success, { error: error }));
     }
     Karaf.installFeature = installFeature;
     function uninstallFeature(workspace, jolokia, feature, version, success, error) {
@@ -9423,7 +9423,7 @@ var Karaf;
             mbean: getSelectionFeaturesMBean(workspace),
             operation: 'uninstallFeature(java.lang.String, java.lang.String)',
             arguments: [feature, version]
-        }, onSuccess(success, { error: error }));
+        }, Core.onSuccess(success, { error: error }));
     }
     Karaf.uninstallFeature = uninstallFeature;
     // TODO move to core?
@@ -9660,7 +9660,7 @@ var Karaf;
             mbean: getSelectionScrMBean(workspace),
             operation: 'activateComponent(java.lang.String)',
             arguments: [component]
-        }, onSuccess(success, { error: error }));
+        }, Core.onSuccess(success, { error: error }));
     }
     Karaf.activateComponent = activateComponent;
     function deactivateComponent(workspace, jolokia, component, success, error) {
@@ -9669,7 +9669,7 @@ var Karaf;
             mbean: getSelectionScrMBean(workspace),
             operation: 'deactiveateComponent(java.lang.String)',
             arguments: [component]
-        }, onSuccess(success, { error: error }));
+        }, Core.onSuccess(success, { error: error }));
     }
     Karaf.deactivateComponent = deactivateComponent;
     function populateDependencies(attributes, dependencies, features) {
@@ -9851,7 +9851,7 @@ var Karaf;
                 setBundles(jolokia.request({ type: 'exec', mbean: bundleMbean, operation: 'listBundles()' }));
             }
             if (featureMbean) {
-                jolokia.request({ type: 'read', mbean: featureMbean }, onSuccess(populateTable));
+                jolokia.request({ type: 'read', mbean: featureMbean }, Core.onSuccess(populateTable));
             }
         }
         function addBundleDetails(feature) {
@@ -9925,7 +9925,7 @@ var Karaf;
             Core.register(jolokia, $scope, {
                 type: 'read',
                 mbean: featuresMBean
-            }, onSuccess(render));
+            }, Core.onSuccess(render));
         }
         $scope.inSelectedRepository = function (feature) {
             if (!$scope.selectedRepository || !('repository' in $scope.selectedRepository)) {
@@ -9977,7 +9977,7 @@ var Karaf;
                 type: 'read',
                 method: 'POST',
                 mbean: featuresMBean
-            }, onSuccess(render));
+            }, Core.onSuccess(render));
         };
         $scope.install = function (feature) {
             if ($scope.hasFabric) {
@@ -10305,14 +10305,14 @@ var Karaf;
         }
         function loadData() {
             console.log("Loading Karaf data...");
-            jolokia.search("org.apache.karaf:type=admin,*", onSuccess(render));
+            jolokia.search("org.apache.karaf:type=admin,*", Core.onSuccess(render));
         }
         function render(response) {
             // grab the first mbean as there should ideally only be one karaf in the JVM
             if (angular.isArray(response)) {
                 var mbean = response[0];
                 if (mbean) {
-                    jolokia.getAttribute(mbean, "Instances", onSuccess(function (response) {
+                    jolokia.getAttribute(mbean, "Instances", Core.onSuccess(function (response) {
                         onInstances(response, mbean);
                     }));
                 }
@@ -10346,7 +10346,7 @@ var Karaf;
                 $scope.data.frameworkVersion = "?";
                 var systemMbean = "org.apache.karaf:type=system,name=" + rootInstance.Name;
                 // get more data, and its okay to do this synchronously
-                var response = jolokia.request({ type: "read", mbean: systemMbean, attribute: ["StartLevel", "Framework", "Version"] }, onSuccess(null));
+                var response = jolokia.request({ type: "read", mbean: systemMbean, attribute: ["StartLevel", "Framework", "Version"] }, Core.onSuccess(null));
                 var obj = response.value;
                 if (obj) {
                     $scope.data.version = obj.Version;
@@ -10354,12 +10354,12 @@ var Karaf;
                     $scope.data.framework = obj.Framework;
                 }
                 // and the osgi framework version is the bundle version
-                var response2 = jolokia.search("osgi.core:type=bundleState,*", onSuccess(null));
+                var response2 = jolokia.search("osgi.core:type=bundleState,*", Core.onSuccess(null));
                 if (angular.isArray(response2)) {
                     var mbean = response2[0];
                     if (mbean) {
                         // get more data, and its okay to do this synchronously
-                        var response3 = jolokia.request({ type: 'exec', mbean: mbean, operation: 'getVersion(long)', arguments: [0] }, onSuccess(null));
+                        var response3 = jolokia.request({ type: 'exec', mbean: mbean, operation: 'getVersion(long)', arguments: [0] }, Core.onSuccess(null));
                         var obj3 = response3.value;
                         if (obj3) {
                             $scope.data.frameworkVersion = obj3;
@@ -13241,6 +13241,7 @@ var Wiki;
 })(Wiki || (Wiki = {}));
 
 /// <reference path="../../includes.ts"/>
+/// <reference path="../../camel/ts/camelHelpers.ts"/>
 /// <reference path="../../git/ts/gitHelpers.ts"/>
 /// <reference path="wikiHelpers.ts"/>
 /// <reference path="wikiPlugin.ts"/>
@@ -13276,7 +13277,7 @@ var Wiki;
                 href: function () { return Wiki.startLink($scope.branch) + "/camel/properties/" + $scope.pageId; }
             },
         ];
-        var routeModel = _apacheCamelModel.definitions.route;
+        var routeModel = Camel._apacheCamelModel.definitions.route;
         routeModel["_id"] = "route";
         $scope.addDialog = new UI.Dialog();
         // TODO doesn't seem that angular-ui uses these?
@@ -13286,7 +13287,7 @@ var Wiki;
         $scope.paletteTree = new Folder("Palette");
         $scope.paletteActivations = ["Routing_aggregate"];
         // load $scope.paletteTree
-        angular.forEach(_apacheCamelModel.definitions, function (value, key) {
+        angular.forEach(Camel._apacheCamelModel.definitions, function (value, key) {
             if (value.group) {
                 var group = (key === "route") ? $scope.paletteTree : $scope.paletteTree.getOrElse(value.group);
                 if (!group.key) {
@@ -15077,6 +15078,7 @@ var Wiki;
 })(Wiki || (Wiki = {}));
 
 /// <reference path="../../includes.ts"/>
+/// <reference path="../../camel/ts/camelHelpers.ts"/>
 /// <reference path="../../git/ts/gitHelpers.ts"/>
 /// <reference path="wikiHelpers.ts"/>
 /**
@@ -15173,7 +15175,7 @@ var Wiki;
                 // now lets try load the form defintion JSON so we can then render the form
                 $scope.sourceView = null;
                 if (form === "/") {
-                    onFormSchema(_jsonSchema);
+                    onFormSchema(Camel._jsonSchema);
                 }
                 else {
                     $scope.git = wikiRepository.getPage($scope.branch, form, $scope.objectId, function (details) {
@@ -15615,6 +15617,7 @@ var Wiki;
 })(Wiki || (Wiki = {}));
 
 /// <reference path="../../includes.ts"/>
+/// <reference path="../../camel/ts/camelHelpers.ts"/>
 /// <reference path="../../git/ts/gitHelpers.ts"/>
 /// <reference path="wikiHelpers.ts"/>
 /**
@@ -16091,7 +16094,7 @@ var Wiki;
                         // now lets try load the form JSON so we can then render the form
                         $scope.sourceView = null;
                         if (form === "/") {
-                            onFormSchema(_jsonSchema);
+                            onFormSchema(Camel._jsonSchema);
                         }
                         else {
                             $scope.git = wikiRepository.getPage($scope.branch, form, $scope.objectId, function (details) {

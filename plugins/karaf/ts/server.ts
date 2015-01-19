@@ -33,7 +33,7 @@ module Karaf {
 
     function loadData() {
       console.log("Loading Karaf data...");
-      jolokia.search("org.apache.karaf:type=admin,*", onSuccess(render));
+      jolokia.search("org.apache.karaf:type=admin,*", Core.onSuccess(render));
     }
 
     function render(response) {
@@ -41,7 +41,7 @@ module Karaf {
       if (angular.isArray(response)) {
         var mbean = response[0];
         if (mbean) {
-          jolokia.getAttribute(mbean, "Instances", onSuccess((response) => {
+          jolokia.getAttribute(mbean, "Instances", Core.onSuccess((response) => {
             onInstances(response, mbean);
           }));
         }
@@ -82,7 +82,7 @@ module Karaf {
         var systemMbean = "org.apache.karaf:type=system,name=" + rootInstance.Name;
         // get more data, and its okay to do this synchronously
         var response = jolokia.request({type: "read", mbean: systemMbean,
-          attribute: ["StartLevel", "Framework", "Version"]}, onSuccess(null));
+          attribute: ["StartLevel", "Framework", "Version"]}, Core.onSuccess(null));
 
         var obj = response.value;
         if (obj) {
@@ -92,12 +92,12 @@ module Karaf {
         }
 
         // and the osgi framework version is the bundle version
-        var response2 = jolokia.search("osgi.core:type=bundleState,*", onSuccess(null));
+        var response2 = jolokia.search("osgi.core:type=bundleState,*", Core.onSuccess(null));
         if (angular.isArray(response2)) {
           var mbean = response2[0];
           if (mbean) {
             // get more data, and its okay to do this synchronously
-            var response3 = jolokia.request({type: 'exec', mbean: mbean, operation: 'getVersion(long)', arguments: [0]}, onSuccess(null));
+            var response3 = jolokia.request({type: 'exec', mbean: mbean, operation: 'getVersion(long)', arguments: [0]}, Core.onSuccess(null));
             var obj3 = response3.value;
             if (obj3) {
               $scope.data.frameworkVersion = obj3;
