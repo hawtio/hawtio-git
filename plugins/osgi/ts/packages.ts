@@ -9,6 +9,44 @@ module Osgi {
   export var PackagesController = _module.controller("Osgi.PackagesController", ["$scope", "$filter", "workspace", "$templateCache", "$compile", ($scope, $filter:ng.IFilterService, workspace:Workspace, $templateCache:ng.ITemplateCacheService, $compile:ng.IAttributes) => {
     var dateFilter = $filter('date');
 
+    $scope.packages = [];
+    $scope.selectedItems = [];
+
+    $scope.mygrid = {
+      data: 'packages',
+      showFilter: false,
+      showColumnMenu: false,
+      filterOptions: {
+        filterText: "",
+        useExternalFilter: false
+      },
+      selectedItems: $scope.selectedItems,
+      rowHeight: 32,
+      selectWithCheckboxOnly: true,
+      columnDefs: [
+        {
+          field: 'Name',
+          displayName: 'Name',
+          width: "***"
+          //width: 300
+        },
+        {
+          field: 'VersionLink',
+          displayName: 'Version',
+          width: "***"
+          //width: 300
+        },
+        {
+          field: 'RemovalPending',
+          displayName: 'Removal Pending',
+          width: "***"
+          //width: 300
+        }
+      ]
+    };
+
+
+/*
     $scope.widget = new DataTable.TableWidget($scope, $templateCache, $compile, [
       <DataTable.TableColumnConfig> {
         "mDataProp": null,
@@ -24,6 +62,7 @@ module Osgi {
       disableAddColumns: true
     });
 
+*/
     $scope.$watch('workspace.selection', function() {
       updateTableContents();
     });
@@ -59,7 +98,7 @@ module Osgi {
             p["ImportingBundles"][key] = bundleMap[b];
           });
         });
-        $scope.widget.populateTable(packages);
+        $scope.packages = packages;
         Core.$apply($scope);
        };
       workspace.jolokia.request({

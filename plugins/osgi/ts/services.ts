@@ -10,6 +10,42 @@ module Osgi {
 
     var dateFilter = $filter('date');
 
+    $scope.services = [];
+    $scope.selectedItems = [];
+
+    $scope.mygrid = {
+      data: 'services',
+      showFilter: false,
+      showColumnMenu: false,
+      filterOptions: {
+        filterText: "",
+        useExternalFilter: false
+      },
+      selectedItems: $scope.selectedItems,
+      rowHeight: 32,
+      selectWithCheckboxOnly: true,
+      columnDefs: [
+        {
+          field: 'Identifier',
+          displayName: 'ID',
+          width: "***"
+          //width: 300
+        },
+        {
+          field: 'BundleIdentifier',
+          displayName: 'Bundle',
+          width: "***"
+          //width: 300
+        },
+        {
+          field: 'objectClass',
+          displayName: 'Object Class(es)',
+          width: "***"
+          //width: 300
+        }
+      ]
+    };
+/*
     $scope.widget = new DataTable.TableWidget($scope, $templateCache, $compile, [
       <DataTable.TableColumnConfig> {
         "mDataProp": null,
@@ -23,6 +59,7 @@ module Osgi {
       rowDetailTemplateId: 'osgiServiceTemplate',
       disableAddColumns: true
     });
+*/
 
     $scope.$watch('workspace.selection', function() {
       var mbean = getSelectionServiceMBean(workspace);
@@ -65,7 +102,7 @@ module Osgi {
             s["UsingBundles"][key] = bundleMap[b];
           });
         });
-        $scope.widget.populateTable(services);
+        $scope.services = services;
         Core.$apply($scope);
       };
       workspace.jolokia.request({
