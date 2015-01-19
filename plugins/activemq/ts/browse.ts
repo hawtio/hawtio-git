@@ -257,7 +257,7 @@ module ActiveMQ {
     function createHeaderHtml(message) {
       var headers = createHeaders(message);
       var properties = createProperties(message);
-      var headerKeys = Object.extended(headers).keys();
+      var headerKeys = _.keys(headers);
 
       function sort(a, b) {
         if (a > b) return 1;
@@ -265,7 +265,7 @@ module ActiveMQ {
         return 0;
       }
 
-      var propertiesKeys = Object.extended(properties).keys().sort(sort);
+      var propertiesKeys = _.keys(properties).sort(sort);
 
       var jmsHeaders = headerKeys.filter((key) => {
         return key.startsWith("JMS");

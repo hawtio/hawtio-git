@@ -82,7 +82,7 @@ module Karaf {
         }
 
         function render(components) {
-            if (!Object.equal($scope.result, components)) {
+            if (!angular.equals($scope.result, components)) {
                 $scope.components = components
                 $scope.result = $scope.components;
                 Core.$apply($scope);

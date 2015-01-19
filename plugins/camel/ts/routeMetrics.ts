@@ -111,7 +111,7 @@ module Camel {
       var mbean = getSelectionCamelRouteMetrics(workspace);
       if (mbean) {
         var query = {type: 'exec', mbean: mbean, operation: 'dumpStatisticsAsJson'};
-        scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateRouteStatistics, query));
+        Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateRouteStatistics, query));
       } else {
         $scope.initDone = true;
 

@@ -317,7 +317,7 @@ module Camel {
           // TODO: have the icons indent, there is some CSS ninja crack to do this
 
           var query = {type: 'exec', mbean: routeMBean, operation: 'dumpRouteStatsAsXml(boolean,boolean)', arguments: [false, true]};
-          scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateProfileMessages, query));
+          Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateProfileMessages, query));
        }
 
     }]);

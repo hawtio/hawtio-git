@@ -155,7 +155,7 @@ module Osgi {
     }
 
     function render(response) {
-      if (!Object.equal($scope.result, response.value)) {
+      if (!angular.equals($scope.result, response.value)) {
         $scope.selected.length = 0;
         $scope.result = response.value;
         $scope.bundles = [];

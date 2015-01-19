@@ -105,7 +105,7 @@ module Camel {
 
         jolokia.request(query, Core.onSuccess(onAttributes));
 
-        scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(onAttributes, query));
+        Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(onAttributes, query));
 
         // and list of converters
         jolokia.request({type: 'exec', mbean: mbean, operation: 'listTypeConverters'}, Core.onSuccess(onConverters));

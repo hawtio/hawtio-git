@@ -182,7 +182,7 @@ module Karaf {
       }
 
       if (angular.isObject(value)) {
-        if (!value || Object.equal(value, {})) {
+        if (!value || angular.equals(value, {})) {
           return false;
         }
       }

@@ -2288,7 +2288,7 @@ var ActiveMQ;
         function createHeaderHtml(message) {
             var headers = createHeaders(message);
             var properties = createProperties(message);
-            var headerKeys = Object.extended(headers).keys();
+            var headerKeys = _.keys(headers);
             function sort(a, b) {
                 if (a > b)
                     return 1;
@@ -2296,7 +2296,7 @@ var ActiveMQ;
                     return -1;
                 return 0;
             }
-            var propertiesKeys = Object.extended(properties).keys().sort(sort);
+            var propertiesKeys = _.keys(properties).sort(sort);
             var jmsHeaders = headerKeys.filter(function (key) {
                 return key.startsWith("JMS");
             }).sort(sort);
@@ -2713,7 +2713,7 @@ var ActiveMQ;
                     if ('canonicalName' in o) {
                         objectName = o['canonicalName'];
                     }
-                    entries = Object.extended(o['keyPropertyList']).clone();
+                    entries = _.cloneDeep(o['keyPropertyList']);
                 }
                 entries["_id"] = objectName;
                 entries["status"] = status;
@@ -2985,6 +2985,235 @@ var ActiveMQ;
         }
     }]);
 })(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryInterfaces.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.context = '/docker-registry';
+    DockerRegistry.hash = UrlHelpers.join('#', DockerRegistry.context);
+    DockerRegistry.defaultRoute = UrlHelpers.join(DockerRegistry.hash, 'list');
+    DockerRegistry.basePath = UrlHelpers.join('app', DockerRegistry.context);
+    DockerRegistry.templatePath = UrlHelpers.join(DockerRegistry.basePath, 'html');
+    DockerRegistry.pluginName = 'DockerRegistry';
+    DockerRegistry.log = Logger.get(DockerRegistry.pluginName);
+    DockerRegistry.SEARCH_FRAGMENT = '/v1/search';
+    /**
+     * Fetch the available docker images in the registry, can only
+     * be called after app initialization
+     */
+    function getDockerImageRepositories(callback) {
+        var DockerRegistryRestURL = HawtioCore.injector.get("DockerRegistryRestURL");
+        var $http = HawtioCore.injector.get("$http");
+        DockerRegistryRestURL.then(function (restURL) {
+            $http.get(UrlHelpers.join(restURL, DockerRegistry.SEARCH_FRAGMENT)).success(function (data) {
+                callback(restURL, data);
+            }).error(function (data) {
+                DockerRegistry.log.debug("Error fetching image repositories:", data);
+                callback(restURL, null);
+            });
+        });
+    }
+    DockerRegistry.getDockerImageRepositories = getDockerImageRepositories;
+    function completeDockerRegistry() {
+        var $q = HawtioCore.injector.get("$q");
+        var $rootScope = HawtioCore.injector.get("$rootScope");
+        var deferred = $q.defer();
+        getDockerImageRepositories(function (restURL, repositories) {
+            if (repositories && repositories.results) {
+                // log.debug("Got back repositories: ", repositories);
+                var results = repositories.results;
+                results = results.sortBy(function (res) {
+                    return res.name;
+                }).first(15);
+                results = results.map(function (res) {
+                    return res.name;
+                });
+                // log.debug("Results: ", results);
+                deferred.resolve(results);
+            }
+            else {
+                // log.debug("didn't get back anything, bailing");
+                deferred.reject([]);
+            }
+        });
+        return deferred.promise;
+    }
+    DockerRegistry.completeDockerRegistry = completeDockerRegistry;
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry._module = angular.module(DockerRegistry.pluginName, ['hawtioCore', 'ngResource']);
+    DockerRegistry.controller = PluginHelpers.createControllerFunction(DockerRegistry._module, DockerRegistry.pluginName);
+    DockerRegistry.route = PluginHelpers.createRoutingFunction(DockerRegistry.templatePath);
+    DockerRegistry._module.config(['$routeProvider', function ($routeProvider) {
+        $routeProvider.when(UrlHelpers.join(DockerRegistry.context, 'list'), DockerRegistry.route('list.html', false));
+    }]);
+    DockerRegistry._module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', function (jolokiaUrl, jolokia, $q, $rootScope) {
+        var answer = $q.defer();
+        jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined, Core.onSuccess(function (response) {
+            var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
+            DockerRegistry.log.debug("Discovered docker registry API URL: ", proxified);
+            answer.resolve(proxified);
+            Core.$apply($rootScope);
+        }, {
+            error: function (response) {
+                DockerRegistry.log.debug("error fetching docker registry API details: ", response);
+                answer.reject(response);
+                Core.$apply($rootScope);
+            }
+        }));
+        return answer.promise;
+    }]);
+    DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
+        DockerRegistry.log.debug("Running");
+        viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
+        workspace.topLevelTabs.push({
+            id: 'docker-registry',
+            content: 'Images',
+            isValid: function (workspace) { return workspace.treeContainsDomainAndProperties(Fabric.jmxDomain, { type: 'KubernetesManager' }); },
+            isActive: function (workspace) { return workspace.isLinkActive('docker-registry'); },
+            href: function () { return DockerRegistry.defaultRoute; }
+        });
+    }]);
+    hawtioPluginLoader.addModule(DockerRegistry.pluginName);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.TopLevel = DockerRegistry.controller("TopLevel", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
+        $scope.repositories = [];
+        $scope.fetched = false;
+        $scope.restURL = '';
+        DockerRegistry.getDockerImageRepositories(function (restURL, repositories) {
+            $scope.restURL = restURL;
+            $scope.fetched = true;
+            if (repositories) {
+                $scope.repositories = repositories.results;
+                var previous = angular.toJson($scope.repositories);
+                $scope.fetch = PollHelpers.setupPolling($scope, function (next) {
+                    var searchURL = UrlHelpers.join($scope.restURL, DockerRegistry.SEARCH_FRAGMENT);
+                    $http.get(searchURL).success(function (repositories) {
+                        if (repositories && repositories.results) {
+                            if (previous !== angular.toJson(repositories.results)) {
+                                $scope.repositories = repositories.results;
+                                previous = angular.toJson($scope.repositories);
+                            }
+                        }
+                        next();
+                    });
+                });
+                $scope.fetch();
+            }
+            else {
+                DockerRegistry.log.debug("Failed initial fetch of image repositories");
+            }
+        });
+        $scope.$watchCollection('repositories', function (repositories) {
+            if (!Core.isBlank($scope.restURL)) {
+                if (!repositories || repositories.length === 0) {
+                    $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
+                    return;
+                }
+                // we've a new list of repositories, let's refresh our info on 'em
+                var outstanding = repositories.length;
+                function maybeNotify() {
+                    outstanding = outstanding - 1;
+                    if (outstanding <= 0) {
+                        $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
+                    }
+                }
+                repositories.forEach(function (repository) {
+                    var tagURL = UrlHelpers.join($scope.restURL, 'v1/repositories/' + repository.name + '/tags');
+                    // we'll give it half a second as sometimes tag info isn't instantly available
+                    $timeout(function () {
+                        DockerRegistry.log.debug("Fetching tags from URL: ", tagURL);
+                        $http.get(tagURL).success(function (tags) {
+                            DockerRegistry.log.debug("Got tags: ", tags, " for image repository: ", repository.name);
+                            repository.tags = tags;
+                            maybeNotify();
+                        }).error(function (data) {
+                            DockerRegistry.log.debug("Error fetching data for image repository: ", repository.name, " error: ", data);
+                            maybeNotify();
+                        });
+                    }, 500);
+                });
+            }
+        });
+    }]);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.TagController = DockerRegistry.controller("TagController", ["$scope", function ($scope) {
+        $scope.selectImage = function (imageID) {
+            $scope.$emit("DockerRegistry.SelectedImageID", imageID);
+        };
+    }]);
+    DockerRegistry.ListController = DockerRegistry.controller("ListController", ["$scope", "$templateCache", "$http", function ($scope, $templateCache, $http) {
+        $scope.imageRepositories = [];
+        $scope.selectedImage = undefined;
+        $scope.tableConfig = {
+            data: 'imageRepositories',
+            showSelectionCheckbox: true,
+            enableRowClickSelection: false,
+            multiSelect: true,
+            selectedItems: [],
+            filterOptions: {
+                filterText: ''
+            },
+            columnDefs: [
+                { field: 'name', displayName: 'Name', defaultSort: true },
+                { field: 'description', displayName: 'Description' },
+                { field: 'tags', displayName: 'Tags', cellTemplate: $templateCache.get("tagsTemplate.html") }
+            ]
+        };
+        $scope.deletePrompt = function (selectedRepositories) {
+            UI.multiItemConfirmActionDialog({
+                collection: selectedRepositories,
+                index: 'name',
+                onClose: function (result) {
+                    if (result) {
+                        selectedRepositories.forEach(function (repository) {
+                            var deleteURL = UrlHelpers.join($scope.restURL, '/v1/repositories/' + repository.name + '/');
+                            DockerRegistry.log.debug("Using URL: ", deleteURL);
+                            $http.delete(deleteURL).success(function (data) {
+                                DockerRegistry.log.debug("Deleted repository: ", repository.name);
+                            }).error(function (data) {
+                                DockerRegistry.log.debug("Failed to delete repository: ", repository.name);
+                            });
+                        });
+                    }
+                },
+                title: 'Delete Repositories?',
+                action: 'The following repositories will be deleted:',
+                okText: 'Delete',
+                okClass: 'btn-danger',
+                custom: 'This operation is permanent once completed!',
+                customClass: 'alert alert-warning'
+            }).open();
+        };
+        $scope.$on("DockerRegistry.SelectedImageID", function ($event, imageID) {
+            var imageJsonURL = UrlHelpers.join($scope.restURL, '/v1/images/' + imageID + '/json');
+            $http.get(imageJsonURL).success(function (image) {
+                DockerRegistry.log.debug("Got image: ", image);
+                $scope.selectedImage = image;
+            });
+        });
+        $scope.$on('DockerRegistry.Repositories', function ($event, restURL, repositories) {
+            $scope.imageRepositories = repositories;
+        });
+    }]);
+})(DockerRegistry || (DockerRegistry = {}));
 
 /// <reference path="../../includes.ts"/>
 /**
@@ -7165,7 +7394,7 @@ var Camel;
             // TODO: have cellFilter with bar grey-scale for highlighting the scales between the numbers
             // TODO: have the icons indent, there is some CSS ninja crack to do this
             var query = { type: 'exec', mbean: routeMBean, operation: 'dumpRouteStatsAsXml(boolean,boolean)', arguments: [false, true] };
-            scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateProfileMessages, query));
+            Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateProfileMessages, query));
         }
     }]);
 })(Camel || (Camel = {}));
@@ -7448,7 +7677,7 @@ var Camel;
             var mbean = Camel.getSelectionCamelRouteMetrics(workspace);
             if (mbean) {
                 var query = { type: 'exec', mbean: mbean, operation: 'dumpStatisticsAsJson' };
-                scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateRouteStatistics, query));
+                Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateRouteStatistics, query));
             }
             else {
                 $scope.initDone = true;
@@ -8476,7 +8705,7 @@ var Camel;
                 // grab attributes in real time
                 var query = { type: "read", mbean: mbean, attribute: ["AttemptCounter", "FailedCounter", "HitCounter", "MissCounter", "NumberOfTypeConverters", "StatisticsEnabled"] };
                 jolokia.request(query, Core.onSuccess(onAttributes));
-                scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(onAttributes, query));
+                Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(onAttributes, query));
                 // and list of converters
                 jolokia.request({ type: 'exec', mbean: mbean, operation: 'listTypeConverters' }, Core.onSuccess(onConverters));
             }
@@ -8485,235 +8714,6 @@ var Camel;
         loadConverters();
     }]);
 })(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryInterfaces.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.context = '/docker-registry';
-    DockerRegistry.hash = UrlHelpers.join('#', DockerRegistry.context);
-    DockerRegistry.defaultRoute = UrlHelpers.join(DockerRegistry.hash, 'list');
-    DockerRegistry.basePath = UrlHelpers.join('app', DockerRegistry.context);
-    DockerRegistry.templatePath = UrlHelpers.join(DockerRegistry.basePath, 'html');
-    DockerRegistry.pluginName = 'DockerRegistry';
-    DockerRegistry.log = Logger.get(DockerRegistry.pluginName);
-    DockerRegistry.SEARCH_FRAGMENT = '/v1/search';
-    /**
-     * Fetch the available docker images in the registry, can only
-     * be called after app initialization
-     */
-    function getDockerImageRepositories(callback) {
-        var DockerRegistryRestURL = HawtioCore.injector.get("DockerRegistryRestURL");
-        var $http = HawtioCore.injector.get("$http");
-        DockerRegistryRestURL.then(function (restURL) {
-            $http.get(UrlHelpers.join(restURL, DockerRegistry.SEARCH_FRAGMENT)).success(function (data) {
-                callback(restURL, data);
-            }).error(function (data) {
-                DockerRegistry.log.debug("Error fetching image repositories:", data);
-                callback(restURL, null);
-            });
-        });
-    }
-    DockerRegistry.getDockerImageRepositories = getDockerImageRepositories;
-    function completeDockerRegistry() {
-        var $q = HawtioCore.injector.get("$q");
-        var $rootScope = HawtioCore.injector.get("$rootScope");
-        var deferred = $q.defer();
-        getDockerImageRepositories(function (restURL, repositories) {
-            if (repositories && repositories.results) {
-                // log.debug("Got back repositories: ", repositories);
-                var results = repositories.results;
-                results = results.sortBy(function (res) {
-                    return res.name;
-                }).first(15);
-                results = results.map(function (res) {
-                    return res.name;
-                });
-                // log.debug("Results: ", results);
-                deferred.resolve(results);
-            }
-            else {
-                // log.debug("didn't get back anything, bailing");
-                deferred.reject([]);
-            }
-        });
-        return deferred.promise;
-    }
-    DockerRegistry.completeDockerRegistry = completeDockerRegistry;
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry._module = angular.module(DockerRegistry.pluginName, ['hawtioCore', 'ngResource']);
-    DockerRegistry.controller = PluginHelpers.createControllerFunction(DockerRegistry._module, DockerRegistry.pluginName);
-    DockerRegistry.route = PluginHelpers.createRoutingFunction(DockerRegistry.templatePath);
-    DockerRegistry._module.config(['$routeProvider', function ($routeProvider) {
-        $routeProvider.when(UrlHelpers.join(DockerRegistry.context, 'list'), DockerRegistry.route('list.html', false));
-    }]);
-    DockerRegistry._module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', function (jolokiaUrl, jolokia, $q, $rootScope) {
-        var answer = $q.defer();
-        jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined, Core.onSuccess(function (response) {
-            var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
-            DockerRegistry.log.debug("Discovered docker registry API URL: ", proxified);
-            answer.resolve(proxified);
-            Core.$apply($rootScope);
-        }, {
-            error: function (response) {
-                DockerRegistry.log.debug("error fetching docker registry API details: ", response);
-                answer.reject(response);
-                Core.$apply($rootScope);
-            }
-        }));
-        return answer.promise;
-    }]);
-    DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
-        DockerRegistry.log.debug("Running");
-        viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
-        workspace.topLevelTabs.push({
-            id: 'docker-registry',
-            content: 'Images',
-            isValid: function (workspace) { return workspace.treeContainsDomainAndProperties(Fabric.jmxDomain, { type: 'KubernetesManager' }); },
-            isActive: function (workspace) { return workspace.isLinkActive('docker-registry'); },
-            href: function () { return DockerRegistry.defaultRoute; }
-        });
-    }]);
-    hawtioPluginLoader.addModule(DockerRegistry.pluginName);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.TopLevel = DockerRegistry.controller("TopLevel", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
-        $scope.repositories = [];
-        $scope.fetched = false;
-        $scope.restURL = '';
-        DockerRegistry.getDockerImageRepositories(function (restURL, repositories) {
-            $scope.restURL = restURL;
-            $scope.fetched = true;
-            if (repositories) {
-                $scope.repositories = repositories.results;
-                var previous = angular.toJson($scope.repositories);
-                $scope.fetch = PollHelpers.setupPolling($scope, function (next) {
-                    var searchURL = UrlHelpers.join($scope.restURL, DockerRegistry.SEARCH_FRAGMENT);
-                    $http.get(searchURL).success(function (repositories) {
-                        if (repositories && repositories.results) {
-                            if (previous !== angular.toJson(repositories.results)) {
-                                $scope.repositories = repositories.results;
-                                previous = angular.toJson($scope.repositories);
-                            }
-                        }
-                        next();
-                    });
-                });
-                $scope.fetch();
-            }
-            else {
-                DockerRegistry.log.debug("Failed initial fetch of image repositories");
-            }
-        });
-        $scope.$watchCollection('repositories', function (repositories) {
-            if (!Core.isBlank($scope.restURL)) {
-                if (!repositories || repositories.length === 0) {
-                    $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
-                    return;
-                }
-                // we've a new list of repositories, let's refresh our info on 'em
-                var outstanding = repositories.length;
-                function maybeNotify() {
-                    outstanding = outstanding - 1;
-                    if (outstanding <= 0) {
-                        $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
-                    }
-                }
-                repositories.forEach(function (repository) {
-                    var tagURL = UrlHelpers.join($scope.restURL, 'v1/repositories/' + repository.name + '/tags');
-                    // we'll give it half a second as sometimes tag info isn't instantly available
-                    $timeout(function () {
-                        DockerRegistry.log.debug("Fetching tags from URL: ", tagURL);
-                        $http.get(tagURL).success(function (tags) {
-                            DockerRegistry.log.debug("Got tags: ", tags, " for image repository: ", repository.name);
-                            repository.tags = tags;
-                            maybeNotify();
-                        }).error(function (data) {
-                            DockerRegistry.log.debug("Error fetching data for image repository: ", repository.name, " error: ", data);
-                            maybeNotify();
-                        });
-                    }, 500);
-                });
-            }
-        });
-    }]);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.TagController = DockerRegistry.controller("TagController", ["$scope", function ($scope) {
-        $scope.selectImage = function (imageID) {
-            $scope.$emit("DockerRegistry.SelectedImageID", imageID);
-        };
-    }]);
-    DockerRegistry.ListController = DockerRegistry.controller("ListController", ["$scope", "$templateCache", "$http", function ($scope, $templateCache, $http) {
-        $scope.imageRepositories = [];
-        $scope.selectedImage = undefined;
-        $scope.tableConfig = {
-            data: 'imageRepositories',
-            showSelectionCheckbox: true,
-            enableRowClickSelection: false,
-            multiSelect: true,
-            selectedItems: [],
-            filterOptions: {
-                filterText: ''
-            },
-            columnDefs: [
-                { field: 'name', displayName: 'Name', defaultSort: true },
-                { field: 'description', displayName: 'Description' },
-                { field: 'tags', displayName: 'Tags', cellTemplate: $templateCache.get("tagsTemplate.html") }
-            ]
-        };
-        $scope.deletePrompt = function (selectedRepositories) {
-            UI.multiItemConfirmActionDialog({
-                collection: selectedRepositories,
-                index: 'name',
-                onClose: function (result) {
-                    if (result) {
-                        selectedRepositories.forEach(function (repository) {
-                            var deleteURL = UrlHelpers.join($scope.restURL, '/v1/repositories/' + repository.name + '/');
-                            DockerRegistry.log.debug("Using URL: ", deleteURL);
-                            $http.delete(deleteURL).success(function (data) {
-                                DockerRegistry.log.debug("Deleted repository: ", repository.name);
-                            }).error(function (data) {
-                                DockerRegistry.log.debug("Failed to delete repository: ", repository.name);
-                            });
-                        });
-                    }
-                },
-                title: 'Delete Repositories?',
-                action: 'The following repositories will be deleted:',
-                okText: 'Delete',
-                okClass: 'btn-danger',
-                custom: 'This operation is permanent once completed!',
-                customClass: 'alert alert-warning'
-            }).open();
-        };
-        $scope.$on("DockerRegistry.SelectedImageID", function ($event, imageID) {
-            var imageJsonURL = UrlHelpers.join($scope.restURL, '/v1/images/' + imageID + '/json');
-            $http.get(imageJsonURL).success(function (image) {
-                DockerRegistry.log.debug("Got image: ", image);
-                $scope.selectedImage = image;
-            });
-        });
-        $scope.$on('DockerRegistry.Repositories', function ($event, restURL, repositories) {
-            $scope.imageRepositories = repositories;
-        });
-    }]);
-})(DockerRegistry || (DockerRegistry = {}));
 
 /// <reference path="../../includes.ts"/>
 /**
@@ -9368,1013 +9368,6 @@ var Git;
 
 /// <reference path="../../includes.ts"/>
 /**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf.log = Logger.get("Karaf");
-    function setSelect(selection, group) {
-        if (!angular.isDefined(selection)) {
-            return group[0];
-        }
-        var answer = group.findIndex(function (item) {
-            return item.id === selection.id;
-        });
-        if (answer !== -1) {
-            return group[answer];
-        }
-        else {
-            return group[0];
-        }
-    }
-    Karaf.setSelect = setSelect;
-    function installRepository(workspace, jolokia, uri, success, error) {
-        Karaf.log.info("installing URI: ", uri);
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionFeaturesMBean(workspace),
-            operation: 'addRepository(java.lang.String)',
-            arguments: [uri]
-        }, Core.onSuccess(success, { error: error }));
-    }
-    Karaf.installRepository = installRepository;
-    function uninstallRepository(workspace, jolokia, uri, success, error) {
-        Karaf.log.info("uninstalling URI: ", uri);
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionFeaturesMBean(workspace),
-            operation: 'removeRepository(java.lang.String)',
-            arguments: [uri]
-        }, Core.onSuccess(success, { error: error }));
-    }
-    Karaf.uninstallRepository = uninstallRepository;
-    function installFeature(workspace, jolokia, feature, version, success, error) {
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionFeaturesMBean(workspace),
-            operation: 'installFeature(java.lang.String, java.lang.String)',
-            arguments: [feature, version]
-        }, Core.onSuccess(success, { error: error }));
-    }
-    Karaf.installFeature = installFeature;
-    function uninstallFeature(workspace, jolokia, feature, version, success, error) {
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionFeaturesMBean(workspace),
-            operation: 'uninstallFeature(java.lang.String, java.lang.String)',
-            arguments: [feature, version]
-        }, Core.onSuccess(success, { error: error }));
-    }
-    Karaf.uninstallFeature = uninstallFeature;
-    // TODO move to core?
-    function toCollection(values) {
-        var collection = values;
-        if (!angular.isArray(values)) {
-            collection = [values];
-        }
-        return collection;
-    }
-    Karaf.toCollection = toCollection;
-    function featureLinks(workspace, name, version) {
-        return "<a href='" + Core.url("#/karaf/feature/" + name + "/" + version + workspace.hash()) + "'>" + version + "</a>";
-    }
-    Karaf.featureLinks = featureLinks;
-    function extractFeature(attributes, name, version) {
-        var features = [];
-        var repos = [];
-        populateFeaturesAndRepos(attributes, features, repos);
-        return features.find(function (feature) {
-            return feature.Name == name && feature.Version == version;
-        });
-        /*
-        var f = {};
-        angular.forEach(attributes["Features"], (feature) => {
-          angular.forEach(feature, (entry) => {
-            if (entry["Name"] === name && entry["Version"] === version) {
-              var deps = [];
-              populateDependencies(attributes, entry["Dependencies"], deps);
-              f["Name"] = entry["Name"];
-              f["Version"] = entry["Version"];
-              f["Bundles"] = entry["Bundles"];
-              f["Dependencies"] = deps;
-              f["Installed"] = entry["Installed"];
-              f["Configurations"] = entry["Configurations"];
-              f["Configuration Files"] = entry["Configuration Files"];
-              f["Files"] = entry["Configuration Files"];
-            }
-          });
-        });
-        return f;
-        */
-    }
-    Karaf.extractFeature = extractFeature;
-    var platformBundlePatterns = [
-        "^org.apache.aries",
-        "^org.apache.karaf",
-        "^activemq-karaf",
-        "^org.apache.commons",
-        "^org.apache.felix",
-        "^io.fabric8",
-        "^io.fabric8.fab",
-        "^io.fabric8.insight",
-        "^io.fabric8.mq",
-        "^io.fabric8.patch",
-        "^io.fabric8.runtime",
-        "^io.fabric8.security",
-        "^org.apache.geronimo.specs",
-        "^org.apache.servicemix.bundles",
-        "^org.objectweb.asm",
-        "^io.hawt",
-        "^javax.mail",
-        "^javax",
-        "^org.jvnet",
-        "^org.mvel2",
-        "^org.apache.mina.core",
-        "^org.apache.sshd.core",
-        "^org.apache.neethi",
-        "^org.apache.servicemix.specs",
-        "^org.apache.xbean",
-        "^org.apache.santuario.xmlsec",
-        "^biz.aQute.bndlib",
-        "^groovy-all",
-        "^com.google.guava",
-        "jackson-\\w+-asl",
-        "^com.fasterxml.jackson",
-        "^org.ops4j",
-        "^org.springframework",
-        "^bcprov$",
-        "^jline$",
-        "scala-library$",
-        "^org.scala-lang",
-        "^stax2-api$",
-        "^woodstox-core-asl",
-        "^org.jboss.amq.mq-fabric",
-        "^gravia-",
-        "^joda-time$",
-        "^org.apache.ws",
-        "-commands$",
-        "patch.patch",
-        "org.fusesource.insight",
-        "activeio-core",
-        "activemq-osgi",
-        "^org.eclipse.jetty",
-        "org.codehaus.jettison.jettison",
-        "org.jledit.core",
-        "org.fusesource.jansi",
-        "org.eclipse.equinox.region"
-    ];
-    var platformBundleRegex = new RegExp(platformBundlePatterns.join('|'));
-    var camelBundlePatterns = ["^org.apache.camel", "camel-karaf-commands$", "activemq-camel$"];
-    var camelBundleRegex = new RegExp(camelBundlePatterns.join('|'));
-    var cxfBundlePatterns = ["^org.apache.cxf"];
-    var cxfBundleRegex = new RegExp(cxfBundlePatterns.join('|'));
-    var activemqBundlePatterns = ["^org.apache.activemq", "activemq-camel$"];
-    var activemqBundleRegex = new RegExp(activemqBundlePatterns.join('|'));
-    function isPlatformBundle(symbolicName) {
-        return platformBundleRegex.test(symbolicName);
-    }
-    Karaf.isPlatformBundle = isPlatformBundle;
-    function isActiveMQBundle(symbolicName) {
-        return activemqBundleRegex.test(symbolicName);
-    }
-    Karaf.isActiveMQBundle = isActiveMQBundle;
-    function isCamelBundle(symbolicName) {
-        return camelBundleRegex.test(symbolicName);
-    }
-    Karaf.isCamelBundle = isCamelBundle;
-    function isCxfBundle(symbolicName) {
-        return cxfBundleRegex.test(symbolicName);
-    }
-    Karaf.isCxfBundle = isCxfBundle;
-    function populateFeaturesAndRepos(attributes, features, repositories) {
-        var fullFeatures = attributes["Features"];
-        angular.forEach(attributes["Repositories"], function (repo) {
-            repositories.push({
-                id: repo["Name"],
-                uri: repo["Uri"]
-            });
-            if (!fullFeatures) {
-                return;
-            }
-            angular.forEach(repo["Features"], function (feature) {
-                angular.forEach(feature, function (entry) {
-                    if (fullFeatures[entry['Name']] !== undefined) {
-                        var f = Object.extended(fullFeatures[entry['Name']][entry['Version']]).clone();
-                        f["Id"] = entry["Name"] + "/" + entry["Version"];
-                        f["RepositoryName"] = repo["Name"];
-                        f["RepositoryURI"] = repo["Uri"];
-                        features.push(f);
-                    }
-                });
-            });
-        });
-    }
-    Karaf.populateFeaturesAndRepos = populateFeaturesAndRepos;
-    function createScrComponentsView(workspace, jolokia, components) {
-        var result = [];
-        angular.forEach(components, function (component) {
-            result.push({
-                Name: component,
-                State: getComponentStateDescription(getComponentState(workspace, jolokia, component))
-            });
-        });
-        return result;
-    }
-    Karaf.createScrComponentsView = createScrComponentsView;
-    function getComponentStateDescription(state) {
-        switch (state) {
-            case 2:
-                return "Enabled";
-            case 4:
-                return "Unsatisfied";
-            case 8:
-                return "Activating";
-            case 16:
-                return "Active";
-            case 32:
-                return "Registered";
-            case 64:
-                return "Factory";
-            case 128:
-                return "Deactivating";
-            case 256:
-                return "Destroying";
-            case 1024:
-                return "Disabling";
-            case 2048:
-                return "Disposing";
-        }
-        return "Unknown";
-    }
-    Karaf.getComponentStateDescription = getComponentStateDescription;
-    ;
-    function getAllComponents(workspace, jolokia) {
-        var scrMBean = getSelectionScrMBean(workspace);
-        var response = jolokia.request({
-            type: 'read',
-            mbean: scrMBean,
-            arguments: []
-        });
-        //Check if the MBean provides the Components attribute.
-        if (!('Components' in response.value)) {
-            response = jolokia.request({
-                type: 'exec',
-                mbean: scrMBean,
-                operation: 'listComponents()'
-            });
-            return createScrComponentsView(workspace, jolokia, response.value);
-        }
-        return response.value['Components'].values;
-    }
-    Karaf.getAllComponents = getAllComponents;
-    function getComponentByName(workspace, jolokia, componentName) {
-        var components = getAllComponents(workspace, jolokia);
-        return components.find(function (c) {
-            return c.Name == componentName;
-        });
-    }
-    Karaf.getComponentByName = getComponentByName;
-    function isComponentActive(workspace, jolokia, component) {
-        var response = jolokia.request({
-            type: 'exec',
-            mbean: getSelectionScrMBean(workspace),
-            operation: 'isComponentActive(java.lang.String)',
-            arguments: [component]
-        });
-        return response.value;
-    }
-    Karaf.isComponentActive = isComponentActive;
-    function getComponentState(workspace, jolokia, component) {
-        var response = jolokia.request({
-            type: 'exec',
-            mbean: getSelectionScrMBean(workspace),
-            operation: 'componentState(java.lang.String)',
-            arguments: [component]
-        });
-        return response.value;
-    }
-    Karaf.getComponentState = getComponentState;
-    function activateComponent(workspace, jolokia, component, success, error) {
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionScrMBean(workspace),
-            operation: 'activateComponent(java.lang.String)',
-            arguments: [component]
-        }, Core.onSuccess(success, { error: error }));
-    }
-    Karaf.activateComponent = activateComponent;
-    function deactivateComponent(workspace, jolokia, component, success, error) {
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionScrMBean(workspace),
-            operation: 'deactiveateComponent(java.lang.String)',
-            arguments: [component]
-        }, Core.onSuccess(success, { error: error }));
-    }
-    Karaf.deactivateComponent = deactivateComponent;
-    function populateDependencies(attributes, dependencies, features) {
-        angular.forEach(dependencies, function (feature) {
-            angular.forEach(feature, function (entry) {
-                var enhancedFeature = extractFeature(attributes, entry["Name"], entry["Version"]);
-                enhancedFeature["id"] = entry["Name"] + "/" + entry["Version"];
-                //enhancedFeature["repository"] = repo["Name"];
-                features.push(enhancedFeature);
-            });
-        });
-    }
-    Karaf.populateDependencies = populateDependencies;
-    function getSelectionFeaturesMBean(workspace) {
-        if (workspace) {
-            var featuresStuff = workspace.mbeanTypesToDomain["features"] || {};
-            var karaf = featuresStuff["org.apache.karaf"] || {};
-            var mbean = karaf.objectName;
-            if (mbean) {
-                return mbean;
-            }
-            // lets navigate to the tree item based on paths
-            var folder = workspace.tree.navigate("org.apache.karaf", "features");
-            if (!folder) {
-                // sometimes the features mbean is inside the 'root' folder
-                folder = workspace.tree.navigate("org.apache.karaf");
-                if (folder) {
-                    var children = folder.children;
-                    folder = null;
-                    angular.forEach(children, function (child) {
-                        if (!folder) {
-                            folder = child.navigate("features");
-                        }
-                    });
-                }
-            }
-            if (folder) {
-                var children = folder.children;
-                if (children) {
-                    var node = children[0];
-                    if (node) {
-                        return node.objectName;
-                    }
-                }
-                return folder.objectName;
-            }
-        }
-        return null;
-    }
-    Karaf.getSelectionFeaturesMBean = getSelectionFeaturesMBean;
-    function getSelectionScrMBean(workspace) {
-        if (workspace) {
-            var scrStuff = workspace.mbeanTypesToDomain["scr"] || {};
-            var karaf = scrStuff["org.apache.karaf"] || {};
-            var mbean = karaf.objectName;
-            if (mbean) {
-                return mbean;
-            }
-            // lets navigate to the tree item based on paths
-            var folder = workspace.tree.navigate("org.apache.karaf", "scr");
-            if (!folder) {
-                // sometimes the features mbean is inside the 'root' folder
-                folder = workspace.tree.navigate("org.apache.karaf");
-                if (folder) {
-                    var children = folder.children;
-                    folder = null;
-                    angular.forEach(children, function (child) {
-                        if (!folder) {
-                            folder = child.navigate("scr");
-                        }
-                    });
-                }
-            }
-            if (folder) {
-                var children = folder.children;
-                if (children) {
-                    var node = children[0];
-                    if (node) {
-                        return node.objectName;
-                    }
-                }
-                return folder.objectName;
-            }
-        }
-        return null;
-    }
-    Karaf.getSelectionScrMBean = getSelectionScrMBean;
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/**
- * @module Karaf
- * @main Karaf
- */
-var Karaf;
-(function (Karaf) {
-    var pluginName = 'karaf';
-    Karaf._module = angular.module(pluginName, ['bootstrap', 'ngResource', 'hawtioCore']);
-    Karaf._module.config(["$routeProvider", function ($routeProvider) {
-        $routeProvider.when('/osgi/server', { templateUrl: 'app/karaf/html/server.html' }).when('/osgi/features', { templateUrl: 'app/karaf/html/features.html', reloadOnSearch: false }).when('/osgi/scr-components', { templateUrl: 'app/karaf/html/scr-components.html' }).when('/osgi/scr-component/:name', { templateUrl: 'app/karaf/html/scr-component.html' }).when('/osgi/feature/:name/:version', { templateUrl: 'app/karaf/html/feature.html' });
-    }]);
-    Karaf._module.run(["workspace", "viewRegistry", "helpRegistry", function (workspace, viewRegistry, helpRegistry) {
-        helpRegistry.addUserDoc('karaf', 'app/karaf/doc/help.md', function () {
-            return workspace.treeContainsDomainAndProperties('org.apache.karaf');
-        });
-    }]);
-    hawtioPluginLoader.addModule(pluginName);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafPlugin.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.FeatureController", ["$scope", "jolokia", "workspace", "$routeParams", function ($scope, jolokia, workspace, $routeParams) {
-        $scope.hasFabric = Fabric.hasFabric(workspace);
-        $scope.name = $routeParams.name;
-        $scope.version = $routeParams.version;
-        $scope.bundlesByLocation = {};
-        $scope.props = "properties";
-        updateTableContents();
-        $scope.install = function () {
-            Karaf.installFeature(workspace, jolokia, $scope.name, $scope.version, function () {
-                Core.notification('success', 'Installed feature ' + $scope.name);
-            }, function (response) {
-                Core.notification('error', 'Failed to install feature ' + $scope.name + ' due to ' + response.error);
-            });
-        };
-        $scope.uninstall = function () {
-            Karaf.uninstallFeature(workspace, jolokia, $scope.name, $scope.version, function () {
-                Core.notification('success', 'Uninstalled feature ' + $scope.name);
-            }, function (response) {
-                Core.notification('error', 'Failed to uninstall feature ' + $scope.name + ' due to ' + response.error);
-            });
-        };
-        $scope.toProperties = function (elements) {
-            var answer = '';
-            angular.forEach(elements, function (value, name) {
-                answer += value['Key'] + " = " + value['Value'] + "\n";
-            });
-            return answer.trim();
-        };
-        function populateTable(response) {
-            $scope.row = Karaf.extractFeature(response.value, $scope.name, $scope.version);
-            if ($scope.row) {
-                addBundleDetails($scope.row);
-                var dependencies = [];
-                //TODO - if the version isn't set or is 0.0.0 then maybe we show the highest available?
-                angular.forEach($scope.row.Dependencies, function (version, name) {
-                    angular.forEach(version, function (data, version) {
-                        dependencies.push({
-                            Name: name,
-                            Version: version
-                        });
-                    });
-                });
-                $scope.row.Dependencies = dependencies;
-            }
-            //console.log("row: ", $scope.row);
-            Core.$apply($scope);
-        }
-        function setBundles(response) {
-            var bundleMap = {};
-            Osgi.defaultBundleValues(workspace, $scope, response.values);
-            angular.forEach(response.value, function (bundle) {
-                var location = bundle["Location"];
-                $scope.bundlesByLocation[location] = bundle;
-            });
-        }
-        ;
-        function updateTableContents() {
-            var featureMbean = Karaf.getSelectionFeaturesMBean(workspace);
-            var bundleMbean = Osgi.getSelectionBundleMBean(workspace);
-            var jolokia = workspace.jolokia;
-            if (bundleMbean) {
-                setBundles(jolokia.request({ type: 'exec', mbean: bundleMbean, operation: 'listBundles()' }));
-            }
-            if (featureMbean) {
-                jolokia.request({ type: 'read', mbean: featureMbean }, Core.onSuccess(populateTable));
-            }
-        }
-        function addBundleDetails(feature) {
-            var bundleDetails = [];
-            angular.forEach(feature["Bundles"], function (bundleLocation) {
-                var bundle = $scope.bundlesByLocation[bundleLocation];
-                if (bundle) {
-                    bundle["Installed"] = true;
-                    bundleDetails.push(bundle);
-                }
-                else {
-                    bundleDetails.push({
-                        "Location": bundleLocation,
-                        "Installed": false
-                    });
-                }
-            });
-            feature["BundleDetails"] = bundleDetails;
-        }
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafPlugin.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.FeaturesController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.hasFabric = Fabric.hasFabric(workspace);
-        $scope.responseJson = '';
-        $scope.filter = '';
-        $scope.installedFeatures = [];
-        $scope.features = [];
-        $scope.repositories = [];
-        $scope.selectedRepositoryId = '';
-        $scope.selectedRepository = {};
-        $scope.newRepositoryURI = '';
-        $scope.init = function () {
-            var selectedRepositoryId = $location.search()['repositoryId'];
-            if (selectedRepositoryId) {
-                $scope.selectedRepositoryId = selectedRepositoryId;
-            }
-            var filter = $location.search()['filter'];
-            if (filter) {
-                $scope.filter = filter;
-            }
-        };
-        $scope.init();
-        $scope.$watch('selectedRepository', function (newValue, oldValue) {
-            //log.debug("selectedRepository: ", $scope.selectedRepository);
-            if (newValue !== oldValue) {
-                if (!newValue) {
-                    $scope.selectedRepositoryId = '';
-                }
-                else {
-                    $scope.selectedRepositoryId = newValue['repository'];
-                }
-                $location.search('repositoryId', $scope.selectedRepositoryId);
-            }
-        }, true);
-        $scope.$watch('filter', function (newValue, oldValue) {
-            if (newValue !== oldValue) {
-                $location.search('filter', newValue);
-            }
-        });
-        var featuresMBean = Karaf.getSelectionFeaturesMBean(workspace);
-        Karaf.log.debug("Features mbean: ", featuresMBean);
-        if (featuresMBean) {
-            Core.register(jolokia, $scope, {
-                type: 'read',
-                mbean: featuresMBean
-            }, Core.onSuccess(render));
-        }
-        $scope.inSelectedRepository = function (feature) {
-            if (!$scope.selectedRepository || !('repository' in $scope.selectedRepository)) {
-                return "";
-            }
-            if (!feature || !('RepositoryName' in feature)) {
-                return "";
-            }
-            if (feature['RepositoryName'] === $scope.selectedRepository['repository']) {
-                return "in-selected-repository";
-            }
-            return "";
-        };
-        $scope.isValidRepository = function () {
-            return Core.isBlank($scope.newRepositoryURI);
-        };
-        $scope.installRepository = function () {
-            var repoURL = $scope.newRepositoryURI;
-            Core.notification('info', 'Adding feature repository URL');
-            Karaf.installRepository(workspace, jolokia, repoURL, function () {
-                Core.notification('success', 'Added feature repository URL');
-                $scope.selectedRepository = {};
-                $scope.selectedRepositoryId = '';
-                $scope.responseJson = null;
-                $scope.triggerRefresh();
-            }, function (response) {
-                Karaf.log.error('Failed to add feature repository URL ', repoURL, ' due to ', response.error);
-                Karaf.log.info('stack trace: ', response.stacktrace);
-                Core.$apply($scope);
-            });
-        };
-        $scope.uninstallRepository = function () {
-            var repoURI = $scope.selectedRepository['uri'];
-            Core.notification('info', 'Removing feature repository ' + repoURI);
-            Karaf.uninstallRepository(workspace, jolokia, repoURI, function () {
-                Core.notification('success', 'Removed feature repository ' + repoURI);
-                $scope.responseJson = null;
-                $scope.selectedRepositoryId = '';
-                $scope.selectedRepository = {};
-                $scope.triggerRefresh();
-            }, function (response) {
-                Karaf.log.error('Failed to remove feature repository ', repoURI, ' due to ', response.error);
-                Karaf.log.info('stack trace: ', response.stacktrace);
-                Core.$apply($scope);
-            });
-        };
-        $scope.triggerRefresh = function () {
-            jolokia.request({
-                type: 'read',
-                method: 'POST',
-                mbean: featuresMBean
-            }, Core.onSuccess(render));
-        };
-        $scope.install = function (feature) {
-            if ($scope.hasFabric) {
-                return;
-            }
-            //$('.popover').remove();
-            Core.notification('info', 'Installing feature ' + feature.Name);
-            Karaf.installFeature(workspace, jolokia, feature.Name, feature.Version, function () {
-                Core.notification('success', 'Installed feature ' + feature.Name);
-                $scope.installedFeatures.add(feature);
-                $scope.responseJson = null;
-                $scope.triggerRefresh();
-                //Core.$apply($scope);
-            }, function (response) {
-                Karaf.log.error('Failed to install feature ', feature.Name, ' due to ', response.error);
-                Karaf.log.info('stack trace: ', response.stacktrace);
-                Core.$apply($scope);
-            });
-        };
-        $scope.uninstall = function (feature) {
-            if ($scope.hasFabric) {
-                return;
-            }
-            //$('.popover').remove();
-            Core.notification('info', 'Uninstalling feature ' + feature.Name);
-            Karaf.uninstallFeature(workspace, jolokia, feature.Name, feature.Version, function () {
-                Core.notification('success', 'Uninstalled feature ' + feature.Name);
-                $scope.installedFeatures.remove(feature);
-                $scope.responseJson = null;
-                $scope.triggerRefresh();
-                //Core.$apply($scope);
-            }, function (response) {
-                Karaf.log.error('Failed to uninstall feature ', feature.Name, ' due to ', response.error);
-                Karaf.log.info('stack trace: ', response.stacktrace);
-                Core.$apply($scope);
-            });
-        };
-        $scope.filteredRows = ['Bundles', 'Configurations', 'Configuration Files', 'Dependencies'];
-        $scope.showRow = function (key, value) {
-            if ($scope.filteredRows.any(key)) {
-                return false;
-            }
-            if (angular.isArray(value)) {
-                if (value.length === 0) {
-                    return false;
-                }
-            }
-            if (angular.isString(value)) {
-                if (Core.isBlank(value)) {
-                    return false;
-                }
-            }
-            if (angular.isObject(value)) {
-                if (!value || Object.equal(value, {})) {
-                    return false;
-                }
-            }
-            return true;
-        };
-        $scope.installed = function (installed) {
-            var answer = Core.parseBooleanValue(installed);
-            return answer;
-        };
-        $scope.showValue = function (value) {
-            if (angular.isArray(value)) {
-                var answer = ['<ul class="zebra-list">'];
-                value.forEach(function (v) {
-                    answer.push('<li>' + v + '</li>');
-                });
-                answer.push('</ul>');
-                return answer.join('\n');
-            }
-            if (angular.isObject(value)) {
-                var answer = ['<table class="table">', '<tbody>'];
-                angular.forEach(value, function (value, key) {
-                    answer.push('<tr>');
-                    answer.push('<td>' + key + '</td>');
-                    answer.push('<td>' + value + '</td>');
-                    answer.push('</tr>');
-                });
-                answer.push('</tbody>');
-                answer.push('</table>');
-                return answer.join('\n');
-            }
-            return "" + value;
-        };
-        $scope.getStateStyle = function (feature) {
-            if (Core.parseBooleanValue(feature.Installed)) {
-                return "badge badge-success";
-            }
-            return "badge";
-        };
-        $scope.filterFeature = function (feature) {
-            if (Core.isBlank($scope.filter)) {
-                return true;
-            }
-            if (feature.Id.has($scope.filter)) {
-                return true;
-            }
-            return false;
-        };
-        function render(response) {
-            var responseJson = angular.toJson(response.value);
-            if ($scope.responseJson !== responseJson) {
-                $scope.responseJson = responseJson;
-                //log.debug("Got response: ", response.value);
-                if (response['value']['Features'] === null) {
-                    $scope.featuresError = true;
-                }
-                else {
-                    $scope.featuresError = false;
-                }
-                $scope.features = [];
-                $scope.repositories = [];
-                var features = [];
-                var repositories = [];
-                Karaf.populateFeaturesAndRepos(response.value, features, repositories);
-                var installedFeatures = features.filter(function (f) {
-                    return Core.parseBooleanValue(f.Installed);
-                });
-                var uninstalledFeatures = features.filter(function (f) {
-                    return !Core.parseBooleanValue(f.Installed);
-                });
-                //log.debug("repositories: ", repositories);
-                $scope.installedFeatures = installedFeatures.sortBy(function (f) {
-                    return f['Name'];
-                });
-                uninstalledFeatures = uninstalledFeatures.sortBy(function (f) {
-                    return f['Name'];
-                });
-                repositories.sortBy('id').forEach(function (repo) {
-                    $scope.repositories.push({
-                        repository: repo['id'],
-                        uri: repo['uri'],
-                        features: uninstalledFeatures.filter(function (f) {
-                            return f['RepositoryName'] === repo['id'];
-                        })
-                    });
-                });
-                if (!Core.isBlank($scope.newRepositoryURI)) {
-                    var selectedRepo = repositories.find(function (r) {
-                        return r['uri'] === $scope.newRepositoryURI;
-                    });
-                    if (selectedRepo) {
-                        $scope.selectedRepositoryId = selectedRepo['id'];
-                    }
-                    $scope.newRepositoryURI = '';
-                }
-                if (Core.isBlank($scope.selectedRepositoryId)) {
-                    $scope.selectedRepository = $scope.repositories.first();
-                }
-                else {
-                    $scope.selectedRepository = $scope.repositories.find(function (r) {
-                        return r.repository === $scope.selectedRepositoryId;
-                    });
-                }
-                Core.$apply($scope);
-            }
-        }
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.NavBarController", ["$scope", "workspace", function ($scope, workspace) {
-        $scope.hash = workspace.hash();
-        $scope.isKarafEnabled = workspace.treeContainsDomainAndProperties("org.apache.karaf");
-        $scope.isFeaturesEnabled = Karaf.getSelectionFeaturesMBean(workspace);
-        $scope.isScrEnabled = Karaf.getSelectionScrMBean(workspace);
-        $scope.$on('$routeChangeSuccess', function () {
-            $scope.hash = workspace.hash();
-        });
-        $scope.isActive = function (nav) {
-            return workspace.isLinkActive(nav);
-        };
-        $scope.isPrefixActive = function (nav) {
-            return workspace.isLinkPrefixActive(nav);
-        };
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.ScrComponentController", ["$scope", "$location", "workspace", "jolokia", "$routeParams", function ($scope, $location, workspace, jolokia, $routeParams) {
-        $scope.name = $routeParams.name;
-        populateTable();
-        function populateTable() {
-            $scope.row = Karaf.getComponentByName(workspace, jolokia, $scope.name);
-            Core.$apply($scope);
-        }
-        $scope.activate = function () {
-            Karaf.activateComponent(workspace, jolokia, $scope.row['Name'], function () {
-                console.log("Activated!");
-            }, function () {
-                console.log("Failed to activate!");
-            });
-        };
-        $scope.deactivate = function () {
-            Karaf.deactivateComponent(workspace, jolokia, $scope.row['Name'], function () {
-                console.log("Deactivated!");
-            }, function () {
-                console.log("Failed to deactivate!");
-            });
-        };
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.ScrComponentsController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.component = empty();
-        // caches last jolokia result
-        $scope.result = [];
-        // rows in components table
-        $scope.components = [];
-        // selected components
-        $scope.selectedComponents = [];
-        $scope.scrOptions = {
-            //plugins: [searchProvider],
-            data: 'components',
-            showFilter: false,
-            showColumnMenu: false,
-            filterOptions: {
-                useExternalFilter: false
-            },
-            sortInfo: { fields: ['Name'], directions: ['asc'] },
-            selectedItems: $scope.selectedComponents,
-            rowHeight: 32,
-            selectWithCheckboxOnly: true,
-            columnDefs: [
-                {
-                    field: 'Name',
-                    displayName: 'Name',
-                    cellTemplate: '<div class="ngCellText"><a href="#/osgi/scr-component/{{row.entity.Name}}?p=container">{{row.getProperty(col.field)}}</a></div>',
-                    width: 400
-                },
-                {
-                    field: 'State',
-                    displayName: 'State',
-                    cellTemplate: '<div class="ngCellText">{{row.getProperty(col.field)}}</div>',
-                    width: 200
-                }
-            ]
-        };
-        var scrMBean = Karaf.getSelectionScrMBean(workspace);
-        if (scrMBean) {
-            render(Karaf.getAllComponents(workspace, jolokia));
-        }
-        $scope.activate = function () {
-            $scope.selectedComponents.forEach(function (component) {
-                Karaf.activateComponent(workspace, jolokia, component.Name, function () {
-                    console.log("Activated!");
-                }, function () {
-                    console.log("Failed to activate!");
-                });
-            });
-        };
-        $scope.deactivate = function () {
-            $scope.selectedComponents.forEach(function (component) {
-                Karaf.deactivateComponent(workspace, jolokia, component.Name, function () {
-                    console.log("Deactivated!");
-                }, function () {
-                    console.log("Failed to deactivate!");
-                });
-            });
-        };
-        function empty() {
-            return [
-                { Name: "", Status: false }
-            ];
-        }
-        function render(components) {
-            if (!Object.equal($scope.result, components)) {
-                $scope.components = components;
-                $scope.result = $scope.components;
-                Core.$apply($scope);
-            }
-        }
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.ServerController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.data = {
-            name: "",
-            version: "",
-            state: "",
-            root: "",
-            startLevel: "",
-            framework: "",
-            frameworkVersion: "",
-            location: "",
-            sshPort: "",
-            rmiRegistryPort: "",
-            rmiServerPort: "",
-            pid: ""
-        };
-        $scope.$on('jmxTreeUpdated', reloadFunction);
-        $scope.$watch('workspace.tree', reloadFunction);
-        function reloadFunction() {
-            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
-            // so lets reload, asynchronously just in case
-            setTimeout(loadData, 50);
-        }
-        function loadData() {
-            console.log("Loading Karaf data...");
-            jolokia.search("org.apache.karaf:type=admin,*", Core.onSuccess(render));
-        }
-        function render(response) {
-            // grab the first mbean as there should ideally only be one karaf in the JVM
-            if (angular.isArray(response)) {
-                var mbean = response[0];
-                if (mbean) {
-                    jolokia.getAttribute(mbean, "Instances", Core.onSuccess(function (response) {
-                        onInstances(response, mbean);
-                    }));
-                }
-            }
-        }
-        function onInstances(instances, mbean) {
-            if (instances) {
-                var parsedMBean = Core.parseMBean(mbean);
-                var instanceName = 'root';
-                if ('attributes' in parsedMBean) {
-                    if ('name' in parsedMBean['attributes']) {
-                        instanceName = parsedMBean['attributes']['name'];
-                    }
-                }
-                //log.debug("mbean: ", Core.parseMBean(mbean));
-                //log.debug("Instances: ", instances);
-                // the name is the first child
-                var rootInstance = instances[instanceName];
-                $scope.data.name = rootInstance.Name;
-                $scope.data.state = rootInstance.State;
-                $scope.data.root = rootInstance["Is Root"];
-                $scope.data.location = rootInstance.Location;
-                $scope.data.sshPort = rootInstance["SSH Port"];
-                $scope.data.rmiRegistryPort = rootInstance["RMI Registry Port"];
-                $scope.data.rmiServerPort = rootInstance["RMI Server Port"];
-                $scope.data.pid = rootInstance.Pid;
-                // we need to get these data from the system mbean
-                $scope.data.version = "?";
-                $scope.data.startLevel = "?";
-                $scope.data.framework = "?";
-                $scope.data.frameworkVersion = "?";
-                var systemMbean = "org.apache.karaf:type=system,name=" + rootInstance.Name;
-                // get more data, and its okay to do this synchronously
-                var response = jolokia.request({ type: "read", mbean: systemMbean, attribute: ["StartLevel", "Framework", "Version"] }, Core.onSuccess(null));
-                var obj = response.value;
-                if (obj) {
-                    $scope.data.version = obj.Version;
-                    $scope.data.startLevel = obj.StartLevel;
-                    $scope.data.framework = obj.Framework;
-                }
-                // and the osgi framework version is the bundle version
-                var response2 = jolokia.search("osgi.core:type=bundleState,*", Core.onSuccess(null));
-                if (angular.isArray(response2)) {
-                    var mbean = response2[0];
-                    if (mbean) {
-                        // get more data, and its okay to do this synchronously
-                        var response3 = jolokia.request({ type: 'exec', mbean: mbean, operation: 'getVersion(long)', arguments: [0] }, Core.onSuccess(null));
-                        var obj3 = response3.value;
-                        if (obj3) {
-                            $scope.data.frameworkVersion = obj3;
-                        }
-                    }
-                }
-            }
-            // ensure web page is updated
-            Core.$apply($scope);
-        }
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
  * @module Maven
  */
 var Maven;
@@ -11025,6 +10018,1013 @@ var Maven;
         }
     }]);
 })(Maven || (Maven = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf.log = Logger.get("Karaf");
+    function setSelect(selection, group) {
+        if (!angular.isDefined(selection)) {
+            return group[0];
+        }
+        var answer = group.findIndex(function (item) {
+            return item.id === selection.id;
+        });
+        if (answer !== -1) {
+            return group[answer];
+        }
+        else {
+            return group[0];
+        }
+    }
+    Karaf.setSelect = setSelect;
+    function installRepository(workspace, jolokia, uri, success, error) {
+        Karaf.log.info("installing URI: ", uri);
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionFeaturesMBean(workspace),
+            operation: 'addRepository(java.lang.String)',
+            arguments: [uri]
+        }, Core.onSuccess(success, { error: error }));
+    }
+    Karaf.installRepository = installRepository;
+    function uninstallRepository(workspace, jolokia, uri, success, error) {
+        Karaf.log.info("uninstalling URI: ", uri);
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionFeaturesMBean(workspace),
+            operation: 'removeRepository(java.lang.String)',
+            arguments: [uri]
+        }, Core.onSuccess(success, { error: error }));
+    }
+    Karaf.uninstallRepository = uninstallRepository;
+    function installFeature(workspace, jolokia, feature, version, success, error) {
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionFeaturesMBean(workspace),
+            operation: 'installFeature(java.lang.String, java.lang.String)',
+            arguments: [feature, version]
+        }, Core.onSuccess(success, { error: error }));
+    }
+    Karaf.installFeature = installFeature;
+    function uninstallFeature(workspace, jolokia, feature, version, success, error) {
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionFeaturesMBean(workspace),
+            operation: 'uninstallFeature(java.lang.String, java.lang.String)',
+            arguments: [feature, version]
+        }, Core.onSuccess(success, { error: error }));
+    }
+    Karaf.uninstallFeature = uninstallFeature;
+    // TODO move to core?
+    function toCollection(values) {
+        var collection = values;
+        if (!angular.isArray(values)) {
+            collection = [values];
+        }
+        return collection;
+    }
+    Karaf.toCollection = toCollection;
+    function featureLinks(workspace, name, version) {
+        return "<a href='" + Core.url("#/karaf/feature/" + name + "/" + version + workspace.hash()) + "'>" + version + "</a>";
+    }
+    Karaf.featureLinks = featureLinks;
+    function extractFeature(attributes, name, version) {
+        var features = [];
+        var repos = [];
+        populateFeaturesAndRepos(attributes, features, repos);
+        return features.find(function (feature) {
+            return feature.Name == name && feature.Version == version;
+        });
+        /*
+        var f = {};
+        angular.forEach(attributes["Features"], (feature) => {
+          angular.forEach(feature, (entry) => {
+            if (entry["Name"] === name && entry["Version"] === version) {
+              var deps = [];
+              populateDependencies(attributes, entry["Dependencies"], deps);
+              f["Name"] = entry["Name"];
+              f["Version"] = entry["Version"];
+              f["Bundles"] = entry["Bundles"];
+              f["Dependencies"] = deps;
+              f["Installed"] = entry["Installed"];
+              f["Configurations"] = entry["Configurations"];
+              f["Configuration Files"] = entry["Configuration Files"];
+              f["Files"] = entry["Configuration Files"];
+            }
+          });
+        });
+        return f;
+        */
+    }
+    Karaf.extractFeature = extractFeature;
+    var platformBundlePatterns = [
+        "^org.apache.aries",
+        "^org.apache.karaf",
+        "^activemq-karaf",
+        "^org.apache.commons",
+        "^org.apache.felix",
+        "^io.fabric8",
+        "^io.fabric8.fab",
+        "^io.fabric8.insight",
+        "^io.fabric8.mq",
+        "^io.fabric8.patch",
+        "^io.fabric8.runtime",
+        "^io.fabric8.security",
+        "^org.apache.geronimo.specs",
+        "^org.apache.servicemix.bundles",
+        "^org.objectweb.asm",
+        "^io.hawt",
+        "^javax.mail",
+        "^javax",
+        "^org.jvnet",
+        "^org.mvel2",
+        "^org.apache.mina.core",
+        "^org.apache.sshd.core",
+        "^org.apache.neethi",
+        "^org.apache.servicemix.specs",
+        "^org.apache.xbean",
+        "^org.apache.santuario.xmlsec",
+        "^biz.aQute.bndlib",
+        "^groovy-all",
+        "^com.google.guava",
+        "jackson-\\w+-asl",
+        "^com.fasterxml.jackson",
+        "^org.ops4j",
+        "^org.springframework",
+        "^bcprov$",
+        "^jline$",
+        "scala-library$",
+        "^org.scala-lang",
+        "^stax2-api$",
+        "^woodstox-core-asl",
+        "^org.jboss.amq.mq-fabric",
+        "^gravia-",
+        "^joda-time$",
+        "^org.apache.ws",
+        "-commands$",
+        "patch.patch",
+        "org.fusesource.insight",
+        "activeio-core",
+        "activemq-osgi",
+        "^org.eclipse.jetty",
+        "org.codehaus.jettison.jettison",
+        "org.jledit.core",
+        "org.fusesource.jansi",
+        "org.eclipse.equinox.region"
+    ];
+    var platformBundleRegex = new RegExp(platformBundlePatterns.join('|'));
+    var camelBundlePatterns = ["^org.apache.camel", "camel-karaf-commands$", "activemq-camel$"];
+    var camelBundleRegex = new RegExp(camelBundlePatterns.join('|'));
+    var cxfBundlePatterns = ["^org.apache.cxf"];
+    var cxfBundleRegex = new RegExp(cxfBundlePatterns.join('|'));
+    var activemqBundlePatterns = ["^org.apache.activemq", "activemq-camel$"];
+    var activemqBundleRegex = new RegExp(activemqBundlePatterns.join('|'));
+    function isPlatformBundle(symbolicName) {
+        return platformBundleRegex.test(symbolicName);
+    }
+    Karaf.isPlatformBundle = isPlatformBundle;
+    function isActiveMQBundle(symbolicName) {
+        return activemqBundleRegex.test(symbolicName);
+    }
+    Karaf.isActiveMQBundle = isActiveMQBundle;
+    function isCamelBundle(symbolicName) {
+        return camelBundleRegex.test(symbolicName);
+    }
+    Karaf.isCamelBundle = isCamelBundle;
+    function isCxfBundle(symbolicName) {
+        return cxfBundleRegex.test(symbolicName);
+    }
+    Karaf.isCxfBundle = isCxfBundle;
+    function populateFeaturesAndRepos(attributes, features, repositories) {
+        var fullFeatures = attributes["Features"];
+        angular.forEach(attributes["Repositories"], function (repo) {
+            repositories.push({
+                id: repo["Name"],
+                uri: repo["Uri"]
+            });
+            if (!fullFeatures) {
+                return;
+            }
+            angular.forEach(repo["Features"], function (feature) {
+                angular.forEach(feature, function (entry) {
+                    if (fullFeatures[entry['Name']] !== undefined) {
+                        var f = _.cloneDeep(fullFeatures[entry['Name']][entry['Version']]);
+                        f["Id"] = entry["Name"] + "/" + entry["Version"];
+                        f["RepositoryName"] = repo["Name"];
+                        f["RepositoryURI"] = repo["Uri"];
+                        features.push(f);
+                    }
+                });
+            });
+        });
+    }
+    Karaf.populateFeaturesAndRepos = populateFeaturesAndRepos;
+    function createScrComponentsView(workspace, jolokia, components) {
+        var result = [];
+        angular.forEach(components, function (component) {
+            result.push({
+                Name: component,
+                State: getComponentStateDescription(getComponentState(workspace, jolokia, component))
+            });
+        });
+        return result;
+    }
+    Karaf.createScrComponentsView = createScrComponentsView;
+    function getComponentStateDescription(state) {
+        switch (state) {
+            case 2:
+                return "Enabled";
+            case 4:
+                return "Unsatisfied";
+            case 8:
+                return "Activating";
+            case 16:
+                return "Active";
+            case 32:
+                return "Registered";
+            case 64:
+                return "Factory";
+            case 128:
+                return "Deactivating";
+            case 256:
+                return "Destroying";
+            case 1024:
+                return "Disabling";
+            case 2048:
+                return "Disposing";
+        }
+        return "Unknown";
+    }
+    Karaf.getComponentStateDescription = getComponentStateDescription;
+    ;
+    function getAllComponents(workspace, jolokia) {
+        var scrMBean = getSelectionScrMBean(workspace);
+        var response = jolokia.request({
+            type: 'read',
+            mbean: scrMBean,
+            arguments: []
+        });
+        //Check if the MBean provides the Components attribute.
+        if (!('Components' in response.value)) {
+            response = jolokia.request({
+                type: 'exec',
+                mbean: scrMBean,
+                operation: 'listComponents()'
+            });
+            return createScrComponentsView(workspace, jolokia, response.value);
+        }
+        return response.value['Components'].values;
+    }
+    Karaf.getAllComponents = getAllComponents;
+    function getComponentByName(workspace, jolokia, componentName) {
+        var components = getAllComponents(workspace, jolokia);
+        return components.find(function (c) {
+            return c.Name == componentName;
+        });
+    }
+    Karaf.getComponentByName = getComponentByName;
+    function isComponentActive(workspace, jolokia, component) {
+        var response = jolokia.request({
+            type: 'exec',
+            mbean: getSelectionScrMBean(workspace),
+            operation: 'isComponentActive(java.lang.String)',
+            arguments: [component]
+        });
+        return response.value;
+    }
+    Karaf.isComponentActive = isComponentActive;
+    function getComponentState(workspace, jolokia, component) {
+        var response = jolokia.request({
+            type: 'exec',
+            mbean: getSelectionScrMBean(workspace),
+            operation: 'componentState(java.lang.String)',
+            arguments: [component]
+        });
+        return response.value;
+    }
+    Karaf.getComponentState = getComponentState;
+    function activateComponent(workspace, jolokia, component, success, error) {
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionScrMBean(workspace),
+            operation: 'activateComponent(java.lang.String)',
+            arguments: [component]
+        }, Core.onSuccess(success, { error: error }));
+    }
+    Karaf.activateComponent = activateComponent;
+    function deactivateComponent(workspace, jolokia, component, success, error) {
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionScrMBean(workspace),
+            operation: 'deactiveateComponent(java.lang.String)',
+            arguments: [component]
+        }, Core.onSuccess(success, { error: error }));
+    }
+    Karaf.deactivateComponent = deactivateComponent;
+    function populateDependencies(attributes, dependencies, features) {
+        angular.forEach(dependencies, function (feature) {
+            angular.forEach(feature, function (entry) {
+                var enhancedFeature = extractFeature(attributes, entry["Name"], entry["Version"]);
+                enhancedFeature["id"] = entry["Name"] + "/" + entry["Version"];
+                //enhancedFeature["repository"] = repo["Name"];
+                features.push(enhancedFeature);
+            });
+        });
+    }
+    Karaf.populateDependencies = populateDependencies;
+    function getSelectionFeaturesMBean(workspace) {
+        if (workspace) {
+            var featuresStuff = workspace.mbeanTypesToDomain["features"] || {};
+            var karaf = featuresStuff["org.apache.karaf"] || {};
+            var mbean = karaf.objectName;
+            if (mbean) {
+                return mbean;
+            }
+            // lets navigate to the tree item based on paths
+            var folder = workspace.tree.navigate("org.apache.karaf", "features");
+            if (!folder) {
+                // sometimes the features mbean is inside the 'root' folder
+                folder = workspace.tree.navigate("org.apache.karaf");
+                if (folder) {
+                    var children = folder.children;
+                    folder = null;
+                    angular.forEach(children, function (child) {
+                        if (!folder) {
+                            folder = child.navigate("features");
+                        }
+                    });
+                }
+            }
+            if (folder) {
+                var children = folder.children;
+                if (children) {
+                    var node = children[0];
+                    if (node) {
+                        return node.objectName;
+                    }
+                }
+                return folder.objectName;
+            }
+        }
+        return null;
+    }
+    Karaf.getSelectionFeaturesMBean = getSelectionFeaturesMBean;
+    function getSelectionScrMBean(workspace) {
+        if (workspace) {
+            var scrStuff = workspace.mbeanTypesToDomain["scr"] || {};
+            var karaf = scrStuff["org.apache.karaf"] || {};
+            var mbean = karaf.objectName;
+            if (mbean) {
+                return mbean;
+            }
+            // lets navigate to the tree item based on paths
+            var folder = workspace.tree.navigate("org.apache.karaf", "scr");
+            if (!folder) {
+                // sometimes the features mbean is inside the 'root' folder
+                folder = workspace.tree.navigate("org.apache.karaf");
+                if (folder) {
+                    var children = folder.children;
+                    folder = null;
+                    angular.forEach(children, function (child) {
+                        if (!folder) {
+                            folder = child.navigate("scr");
+                        }
+                    });
+                }
+            }
+            if (folder) {
+                var children = folder.children;
+                if (children) {
+                    var node = children[0];
+                    if (node) {
+                        return node.objectName;
+                    }
+                }
+                return folder.objectName;
+            }
+        }
+        return null;
+    }
+    Karaf.getSelectionScrMBean = getSelectionScrMBean;
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/**
+ * @module Karaf
+ * @main Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    var pluginName = 'karaf';
+    Karaf._module = angular.module(pluginName, ['bootstrap', 'ngResource', 'hawtioCore']);
+    Karaf._module.config(["$routeProvider", function ($routeProvider) {
+        $routeProvider.when('/osgi/server', { templateUrl: 'app/karaf/html/server.html' }).when('/osgi/features', { templateUrl: 'app/karaf/html/features.html', reloadOnSearch: false }).when('/osgi/scr-components', { templateUrl: 'app/karaf/html/scr-components.html' }).when('/osgi/scr-component/:name', { templateUrl: 'app/karaf/html/scr-component.html' }).when('/osgi/feature/:name/:version', { templateUrl: 'app/karaf/html/feature.html' });
+    }]);
+    Karaf._module.run(["workspace", "viewRegistry", "helpRegistry", function (workspace, viewRegistry, helpRegistry) {
+        helpRegistry.addUserDoc('karaf', 'app/karaf/doc/help.md', function () {
+            return workspace.treeContainsDomainAndProperties('org.apache.karaf');
+        });
+    }]);
+    hawtioPluginLoader.addModule(pluginName);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafPlugin.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.FeatureController", ["$scope", "jolokia", "workspace", "$routeParams", function ($scope, jolokia, workspace, $routeParams) {
+        $scope.hasFabric = Fabric.hasFabric(workspace);
+        $scope.name = $routeParams.name;
+        $scope.version = $routeParams.version;
+        $scope.bundlesByLocation = {};
+        $scope.props = "properties";
+        updateTableContents();
+        $scope.install = function () {
+            Karaf.installFeature(workspace, jolokia, $scope.name, $scope.version, function () {
+                Core.notification('success', 'Installed feature ' + $scope.name);
+            }, function (response) {
+                Core.notification('error', 'Failed to install feature ' + $scope.name + ' due to ' + response.error);
+            });
+        };
+        $scope.uninstall = function () {
+            Karaf.uninstallFeature(workspace, jolokia, $scope.name, $scope.version, function () {
+                Core.notification('success', 'Uninstalled feature ' + $scope.name);
+            }, function (response) {
+                Core.notification('error', 'Failed to uninstall feature ' + $scope.name + ' due to ' + response.error);
+            });
+        };
+        $scope.toProperties = function (elements) {
+            var answer = '';
+            angular.forEach(elements, function (value, name) {
+                answer += value['Key'] + " = " + value['Value'] + "\n";
+            });
+            return answer.trim();
+        };
+        function populateTable(response) {
+            $scope.row = Karaf.extractFeature(response.value, $scope.name, $scope.version);
+            if ($scope.row) {
+                addBundleDetails($scope.row);
+                var dependencies = [];
+                //TODO - if the version isn't set or is 0.0.0 then maybe we show the highest available?
+                angular.forEach($scope.row.Dependencies, function (version, name) {
+                    angular.forEach(version, function (data, version) {
+                        dependencies.push({
+                            Name: name,
+                            Version: version
+                        });
+                    });
+                });
+                $scope.row.Dependencies = dependencies;
+            }
+            //console.log("row: ", $scope.row);
+            Core.$apply($scope);
+        }
+        function setBundles(response) {
+            var bundleMap = {};
+            Osgi.defaultBundleValues(workspace, $scope, response.values);
+            angular.forEach(response.value, function (bundle) {
+                var location = bundle["Location"];
+                $scope.bundlesByLocation[location] = bundle;
+            });
+        }
+        ;
+        function updateTableContents() {
+            var featureMbean = Karaf.getSelectionFeaturesMBean(workspace);
+            var bundleMbean = Osgi.getSelectionBundleMBean(workspace);
+            var jolokia = workspace.jolokia;
+            if (bundleMbean) {
+                setBundles(jolokia.request({ type: 'exec', mbean: bundleMbean, operation: 'listBundles()' }));
+            }
+            if (featureMbean) {
+                jolokia.request({ type: 'read', mbean: featureMbean }, Core.onSuccess(populateTable));
+            }
+        }
+        function addBundleDetails(feature) {
+            var bundleDetails = [];
+            angular.forEach(feature["Bundles"], function (bundleLocation) {
+                var bundle = $scope.bundlesByLocation[bundleLocation];
+                if (bundle) {
+                    bundle["Installed"] = true;
+                    bundleDetails.push(bundle);
+                }
+                else {
+                    bundleDetails.push({
+                        "Location": bundleLocation,
+                        "Installed": false
+                    });
+                }
+            });
+            feature["BundleDetails"] = bundleDetails;
+        }
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafPlugin.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.FeaturesController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.hasFabric = Fabric.hasFabric(workspace);
+        $scope.responseJson = '';
+        $scope.filter = '';
+        $scope.installedFeatures = [];
+        $scope.features = [];
+        $scope.repositories = [];
+        $scope.selectedRepositoryId = '';
+        $scope.selectedRepository = {};
+        $scope.newRepositoryURI = '';
+        $scope.init = function () {
+            var selectedRepositoryId = $location.search()['repositoryId'];
+            if (selectedRepositoryId) {
+                $scope.selectedRepositoryId = selectedRepositoryId;
+            }
+            var filter = $location.search()['filter'];
+            if (filter) {
+                $scope.filter = filter;
+            }
+        };
+        $scope.init();
+        $scope.$watch('selectedRepository', function (newValue, oldValue) {
+            //log.debug("selectedRepository: ", $scope.selectedRepository);
+            if (newValue !== oldValue) {
+                if (!newValue) {
+                    $scope.selectedRepositoryId = '';
+                }
+                else {
+                    $scope.selectedRepositoryId = newValue['repository'];
+                }
+                $location.search('repositoryId', $scope.selectedRepositoryId);
+            }
+        }, true);
+        $scope.$watch('filter', function (newValue, oldValue) {
+            if (newValue !== oldValue) {
+                $location.search('filter', newValue);
+            }
+        });
+        var featuresMBean = Karaf.getSelectionFeaturesMBean(workspace);
+        Karaf.log.debug("Features mbean: ", featuresMBean);
+        if (featuresMBean) {
+            Core.register(jolokia, $scope, {
+                type: 'read',
+                mbean: featuresMBean
+            }, Core.onSuccess(render));
+        }
+        $scope.inSelectedRepository = function (feature) {
+            if (!$scope.selectedRepository || !('repository' in $scope.selectedRepository)) {
+                return "";
+            }
+            if (!feature || !('RepositoryName' in feature)) {
+                return "";
+            }
+            if (feature['RepositoryName'] === $scope.selectedRepository['repository']) {
+                return "in-selected-repository";
+            }
+            return "";
+        };
+        $scope.isValidRepository = function () {
+            return Core.isBlank($scope.newRepositoryURI);
+        };
+        $scope.installRepository = function () {
+            var repoURL = $scope.newRepositoryURI;
+            Core.notification('info', 'Adding feature repository URL');
+            Karaf.installRepository(workspace, jolokia, repoURL, function () {
+                Core.notification('success', 'Added feature repository URL');
+                $scope.selectedRepository = {};
+                $scope.selectedRepositoryId = '';
+                $scope.responseJson = null;
+                $scope.triggerRefresh();
+            }, function (response) {
+                Karaf.log.error('Failed to add feature repository URL ', repoURL, ' due to ', response.error);
+                Karaf.log.info('stack trace: ', response.stacktrace);
+                Core.$apply($scope);
+            });
+        };
+        $scope.uninstallRepository = function () {
+            var repoURI = $scope.selectedRepository['uri'];
+            Core.notification('info', 'Removing feature repository ' + repoURI);
+            Karaf.uninstallRepository(workspace, jolokia, repoURI, function () {
+                Core.notification('success', 'Removed feature repository ' + repoURI);
+                $scope.responseJson = null;
+                $scope.selectedRepositoryId = '';
+                $scope.selectedRepository = {};
+                $scope.triggerRefresh();
+            }, function (response) {
+                Karaf.log.error('Failed to remove feature repository ', repoURI, ' due to ', response.error);
+                Karaf.log.info('stack trace: ', response.stacktrace);
+                Core.$apply($scope);
+            });
+        };
+        $scope.triggerRefresh = function () {
+            jolokia.request({
+                type: 'read',
+                method: 'POST',
+                mbean: featuresMBean
+            }, Core.onSuccess(render));
+        };
+        $scope.install = function (feature) {
+            if ($scope.hasFabric) {
+                return;
+            }
+            //$('.popover').remove();
+            Core.notification('info', 'Installing feature ' + feature.Name);
+            Karaf.installFeature(workspace, jolokia, feature.Name, feature.Version, function () {
+                Core.notification('success', 'Installed feature ' + feature.Name);
+                $scope.installedFeatures.add(feature);
+                $scope.responseJson = null;
+                $scope.triggerRefresh();
+                //Core.$apply($scope);
+            }, function (response) {
+                Karaf.log.error('Failed to install feature ', feature.Name, ' due to ', response.error);
+                Karaf.log.info('stack trace: ', response.stacktrace);
+                Core.$apply($scope);
+            });
+        };
+        $scope.uninstall = function (feature) {
+            if ($scope.hasFabric) {
+                return;
+            }
+            //$('.popover').remove();
+            Core.notification('info', 'Uninstalling feature ' + feature.Name);
+            Karaf.uninstallFeature(workspace, jolokia, feature.Name, feature.Version, function () {
+                Core.notification('success', 'Uninstalled feature ' + feature.Name);
+                $scope.installedFeatures.remove(feature);
+                $scope.responseJson = null;
+                $scope.triggerRefresh();
+                //Core.$apply($scope);
+            }, function (response) {
+                Karaf.log.error('Failed to uninstall feature ', feature.Name, ' due to ', response.error);
+                Karaf.log.info('stack trace: ', response.stacktrace);
+                Core.$apply($scope);
+            });
+        };
+        $scope.filteredRows = ['Bundles', 'Configurations', 'Configuration Files', 'Dependencies'];
+        $scope.showRow = function (key, value) {
+            if ($scope.filteredRows.any(key)) {
+                return false;
+            }
+            if (angular.isArray(value)) {
+                if (value.length === 0) {
+                    return false;
+                }
+            }
+            if (angular.isString(value)) {
+                if (Core.isBlank(value)) {
+                    return false;
+                }
+            }
+            if (angular.isObject(value)) {
+                if (!value || angular.equals(value, {})) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        $scope.installed = function (installed) {
+            var answer = Core.parseBooleanValue(installed);
+            return answer;
+        };
+        $scope.showValue = function (value) {
+            if (angular.isArray(value)) {
+                var answer = ['<ul class="zebra-list">'];
+                value.forEach(function (v) {
+                    answer.push('<li>' + v + '</li>');
+                });
+                answer.push('</ul>');
+                return answer.join('\n');
+            }
+            if (angular.isObject(value)) {
+                var answer = ['<table class="table">', '<tbody>'];
+                angular.forEach(value, function (value, key) {
+                    answer.push('<tr>');
+                    answer.push('<td>' + key + '</td>');
+                    answer.push('<td>' + value + '</td>');
+                    answer.push('</tr>');
+                });
+                answer.push('</tbody>');
+                answer.push('</table>');
+                return answer.join('\n');
+            }
+            return "" + value;
+        };
+        $scope.getStateStyle = function (feature) {
+            if (Core.parseBooleanValue(feature.Installed)) {
+                return "badge badge-success";
+            }
+            return "badge";
+        };
+        $scope.filterFeature = function (feature) {
+            if (Core.isBlank($scope.filter)) {
+                return true;
+            }
+            if (feature.Id.has($scope.filter)) {
+                return true;
+            }
+            return false;
+        };
+        function render(response) {
+            var responseJson = angular.toJson(response.value);
+            if ($scope.responseJson !== responseJson) {
+                $scope.responseJson = responseJson;
+                //log.debug("Got response: ", response.value);
+                if (response['value']['Features'] === null) {
+                    $scope.featuresError = true;
+                }
+                else {
+                    $scope.featuresError = false;
+                }
+                $scope.features = [];
+                $scope.repositories = [];
+                var features = [];
+                var repositories = [];
+                Karaf.populateFeaturesAndRepos(response.value, features, repositories);
+                var installedFeatures = features.filter(function (f) {
+                    return Core.parseBooleanValue(f.Installed);
+                });
+                var uninstalledFeatures = features.filter(function (f) {
+                    return !Core.parseBooleanValue(f.Installed);
+                });
+                //log.debug("repositories: ", repositories);
+                $scope.installedFeatures = installedFeatures.sortBy(function (f) {
+                    return f['Name'];
+                });
+                uninstalledFeatures = uninstalledFeatures.sortBy(function (f) {
+                    return f['Name'];
+                });
+                repositories.sortBy('id').forEach(function (repo) {
+                    $scope.repositories.push({
+                        repository: repo['id'],
+                        uri: repo['uri'],
+                        features: uninstalledFeatures.filter(function (f) {
+                            return f['RepositoryName'] === repo['id'];
+                        })
+                    });
+                });
+                if (!Core.isBlank($scope.newRepositoryURI)) {
+                    var selectedRepo = repositories.find(function (r) {
+                        return r['uri'] === $scope.newRepositoryURI;
+                    });
+                    if (selectedRepo) {
+                        $scope.selectedRepositoryId = selectedRepo['id'];
+                    }
+                    $scope.newRepositoryURI = '';
+                }
+                if (Core.isBlank($scope.selectedRepositoryId)) {
+                    $scope.selectedRepository = $scope.repositories.first();
+                }
+                else {
+                    $scope.selectedRepository = $scope.repositories.find(function (r) {
+                        return r.repository === $scope.selectedRepositoryId;
+                    });
+                }
+                Core.$apply($scope);
+            }
+        }
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.NavBarController", ["$scope", "workspace", function ($scope, workspace) {
+        $scope.hash = workspace.hash();
+        $scope.isKarafEnabled = workspace.treeContainsDomainAndProperties("org.apache.karaf");
+        $scope.isFeaturesEnabled = Karaf.getSelectionFeaturesMBean(workspace);
+        $scope.isScrEnabled = Karaf.getSelectionScrMBean(workspace);
+        $scope.$on('$routeChangeSuccess', function () {
+            $scope.hash = workspace.hash();
+        });
+        $scope.isActive = function (nav) {
+            return workspace.isLinkActive(nav);
+        };
+        $scope.isPrefixActive = function (nav) {
+            return workspace.isLinkPrefixActive(nav);
+        };
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.ScrComponentController", ["$scope", "$location", "workspace", "jolokia", "$routeParams", function ($scope, $location, workspace, jolokia, $routeParams) {
+        $scope.name = $routeParams.name;
+        populateTable();
+        function populateTable() {
+            $scope.row = Karaf.getComponentByName(workspace, jolokia, $scope.name);
+            Core.$apply($scope);
+        }
+        $scope.activate = function () {
+            Karaf.activateComponent(workspace, jolokia, $scope.row['Name'], function () {
+                console.log("Activated!");
+            }, function () {
+                console.log("Failed to activate!");
+            });
+        };
+        $scope.deactivate = function () {
+            Karaf.deactivateComponent(workspace, jolokia, $scope.row['Name'], function () {
+                console.log("Deactivated!");
+            }, function () {
+                console.log("Failed to deactivate!");
+            });
+        };
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.ScrComponentsController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.component = empty();
+        // caches last jolokia result
+        $scope.result = [];
+        // rows in components table
+        $scope.components = [];
+        // selected components
+        $scope.selectedComponents = [];
+        $scope.scrOptions = {
+            //plugins: [searchProvider],
+            data: 'components',
+            showFilter: false,
+            showColumnMenu: false,
+            filterOptions: {
+                useExternalFilter: false
+            },
+            sortInfo: { fields: ['Name'], directions: ['asc'] },
+            selectedItems: $scope.selectedComponents,
+            rowHeight: 32,
+            selectWithCheckboxOnly: true,
+            columnDefs: [
+                {
+                    field: 'Name',
+                    displayName: 'Name',
+                    cellTemplate: '<div class="ngCellText"><a href="#/osgi/scr-component/{{row.entity.Name}}?p=container">{{row.getProperty(col.field)}}</a></div>',
+                    width: 400
+                },
+                {
+                    field: 'State',
+                    displayName: 'State',
+                    cellTemplate: '<div class="ngCellText">{{row.getProperty(col.field)}}</div>',
+                    width: 200
+                }
+            ]
+        };
+        var scrMBean = Karaf.getSelectionScrMBean(workspace);
+        if (scrMBean) {
+            render(Karaf.getAllComponents(workspace, jolokia));
+        }
+        $scope.activate = function () {
+            $scope.selectedComponents.forEach(function (component) {
+                Karaf.activateComponent(workspace, jolokia, component.Name, function () {
+                    console.log("Activated!");
+                }, function () {
+                    console.log("Failed to activate!");
+                });
+            });
+        };
+        $scope.deactivate = function () {
+            $scope.selectedComponents.forEach(function (component) {
+                Karaf.deactivateComponent(workspace, jolokia, component.Name, function () {
+                    console.log("Deactivated!");
+                }, function () {
+                    console.log("Failed to deactivate!");
+                });
+            });
+        };
+        function empty() {
+            return [
+                { Name: "", Status: false }
+            ];
+        }
+        function render(components) {
+            if (!angular.equals($scope.result, components)) {
+                $scope.components = components;
+                $scope.result = $scope.components;
+                Core.$apply($scope);
+            }
+        }
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.ServerController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.data = {
+            name: "",
+            version: "",
+            state: "",
+            root: "",
+            startLevel: "",
+            framework: "",
+            frameworkVersion: "",
+            location: "",
+            sshPort: "",
+            rmiRegistryPort: "",
+            rmiServerPort: "",
+            pid: ""
+        };
+        $scope.$on('jmxTreeUpdated', reloadFunction);
+        $scope.$watch('workspace.tree', reloadFunction);
+        function reloadFunction() {
+            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
+            // so lets reload, asynchronously just in case
+            setTimeout(loadData, 50);
+        }
+        function loadData() {
+            console.log("Loading Karaf data...");
+            jolokia.search("org.apache.karaf:type=admin,*", Core.onSuccess(render));
+        }
+        function render(response) {
+            // grab the first mbean as there should ideally only be one karaf in the JVM
+            if (angular.isArray(response)) {
+                var mbean = response[0];
+                if (mbean) {
+                    jolokia.getAttribute(mbean, "Instances", Core.onSuccess(function (response) {
+                        onInstances(response, mbean);
+                    }));
+                }
+            }
+        }
+        function onInstances(instances, mbean) {
+            if (instances) {
+                var parsedMBean = Core.parseMBean(mbean);
+                var instanceName = 'root';
+                if ('attributes' in parsedMBean) {
+                    if ('name' in parsedMBean['attributes']) {
+                        instanceName = parsedMBean['attributes']['name'];
+                    }
+                }
+                //log.debug("mbean: ", Core.parseMBean(mbean));
+                //log.debug("Instances: ", instances);
+                // the name is the first child
+                var rootInstance = instances[instanceName];
+                $scope.data.name = rootInstance.Name;
+                $scope.data.state = rootInstance.State;
+                $scope.data.root = rootInstance["Is Root"];
+                $scope.data.location = rootInstance.Location;
+                $scope.data.sshPort = rootInstance["SSH Port"];
+                $scope.data.rmiRegistryPort = rootInstance["RMI Registry Port"];
+                $scope.data.rmiServerPort = rootInstance["RMI Server Port"];
+                $scope.data.pid = rootInstance.Pid;
+                // we need to get these data from the system mbean
+                $scope.data.version = "?";
+                $scope.data.startLevel = "?";
+                $scope.data.framework = "?";
+                $scope.data.frameworkVersion = "?";
+                var systemMbean = "org.apache.karaf:type=system,name=" + rootInstance.Name;
+                // get more data, and its okay to do this synchronously
+                var response = jolokia.request({ type: "read", mbean: systemMbean, attribute: ["StartLevel", "Framework", "Version"] }, Core.onSuccess(null));
+                var obj = response.value;
+                if (obj) {
+                    $scope.data.version = obj.Version;
+                    $scope.data.startLevel = obj.StartLevel;
+                    $scope.data.framework = obj.Framework;
+                }
+                // and the osgi framework version is the bundle version
+                var response2 = jolokia.search("osgi.core:type=bundleState,*", Core.onSuccess(null));
+                if (angular.isArray(response2)) {
+                    var mbean = response2[0];
+                    if (mbean) {
+                        // get more data, and its okay to do this synchronously
+                        var response3 = jolokia.request({ type: 'exec', mbean: mbean, operation: 'getVersion(long)', arguments: [0] }, Core.onSuccess(null));
+                        var obj3 = response3.value;
+                        if (obj3) {
+                            $scope.data.frameworkVersion = obj3;
+                        }
+                    }
+                }
+            }
+            // ensure web page is updated
+            Core.$apply($scope);
+        }
+    }]);
+})(Karaf || (Karaf = {}));
 
 /// <reference path="../../includes.ts"/>
 /**
@@ -12157,7 +12157,7 @@ var Osgi;
             });
         };
         function render(response) {
-            if (!Object.equal($scope.result, response.value)) {
+            if (!angular.equals($scope.result, response.value)) {
                 $scope.selected.length = 0;
                 $scope.result = response.value;
                 $scope.bundles = [];
@@ -17416,8 +17416,6 @@ $templateCache.put("plugins/activemq/html/durableSubscribers.html","<div ng-cont
 $templateCache.put("plugins/activemq/html/jobs.html","<div ng-controller=\"ActiveMQ.JobSchedulerController\">\n\n    <div class=\"row-fluid\">\n      <div class=\"span12\">\n        <div class=\"pull-right\">\n            <form class=\"form-inline\">\n                <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                        hawtio-show object-name=\"{{workspace.selection.objectName}}\" method-name=\"removeJob\"\n                        ng-click=\"deleteJobsDialog.open()\"\n                        title=\"Delete the selected jobs\">\n                  <i class=\"icon-remove\"></i> Delete\n                </button>\n                <button class=\"btn\" ng-click=\"refresh()\"\n                        title=\"Refreshes the list of subscribers\">\n                    <i class=\"icon-refresh\"></i>\n                </button>\n            </form>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"row-fluid\">\n      <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n    </div>\n\n    <div hawtio-confirm-dialog=\"deleteJobsDialog.show\" ok-button-text=\"Yes\" cancel-button-text=\"No\" on-ok=\"deleteJobs()\">\n      <div class=\"dialog-body\">\n        <p>Are you sure you want to delete the jobs</p>\n      </div>\n    </div>\n\n</div>");
 $templateCache.put("plugins/activemq/html/layoutActiveMQTree.html","<script type=\"text/ng-template\" id=\"header\">\n  <div class=\"tree-header\" ng-controller=\"ActiveMQ.TreeHeaderController\">\n    <div class=\"left\">\n    </div>\n    <div class=\"right\">\n      <i class=\"icon-chevron-down clickable\"\n         title=\"Expand all nodes\"\n         ng-click=\"expandAll()\"></i>\n      <i class=\"icon-chevron-up clickable\"\n         title=\"Unexpand all nodes\"\n         ng-click=\"contractAll()\"></i>\n    </div>\n  </div>\n</script>\n\n<hawtio-pane position=\"left\" width=\"300\" header=\"header\">\n  <div id=\"tree-container\"\n       ng-controller=\"Jmx.MBeansController\">\n    <div id=\"activemqtree\"\n         ng-controller=\"ActiveMQ.TreeController\"></div>\n  </div>\n</hawtio-pane>\n<div class=\"row-fluid\">\n  <ng-include src=\"\'app/jmx/html/subLevelTabs.html\'\"></ng-include>\n  <div id=\"properties\" ng-view></div>\n</div>\n");
 $templateCache.put("plugins/activemq/html/preferences.html","<div ng-controller=\"ActiveMQ.PreferencesController\">\n  <form class=\"form-horizontal\">\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"activemqUserName\"\n             title=\"The user name to be used when connecting to the broker\">User name</label>\n\n      <div class=\"controls\">\n        <input id=\"activemqUserName\" type=\"text\" placeholder=\"username\" ng-model=\"activemqUserName\" autofill/>\n      </div>\n    </div>\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"activemqPassword\" title=\"Password to be used when connecting to the broker\">Password</label>\n\n      <div class=\"controls\">\n        <input id=\"activemqPassword\" type=\"password\" placeholder=\"password\" ng-model=\"activemqPassword\" autofill/>\n      </div>\n    </div>\n\n    <div class=\"control-group\">\n      <label class=\"control-label\">Filter advisory topics</label>\n\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"activemqFilterAdvisoryTopics\">\n        <span class=\"help-block\">Whether to exclude advisory topics in tree/table</span>\n      </div>\n\n    </div>\n\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"byteMessages\">Browse byte messages</label>\n\n      <div class=\"controls\">\n        <select id=\"byteMessages\" ng-model=\"activemqBrowseBytesMessages\">\n          <option value=\'99\'>Off</option>\n          <option value=\'8\'>Decimal</option>\n          <option value=\'4\'>Hex</option>\n          <option value=\'2\'>Decimal and text</option>\n          <option value=\'1\'>Hex and text</option>\n        </select>\n        <span class=\"help-block\">Browsing byte messages should display the message body as</span>\n      </div>\n    </div>\n\n  </form>\n</div>\n");
-$templateCache.put("plugins/docker-registry/html/layoutDockerRegistry.html","<div class=\"row-fluid\" ng-controller=\"DockerRegistry.TopLevel\">\n  <div class=\"span12\">\n    <div ng-view></div>\n  </div>\n</div>\n");
-$templateCache.put("plugins/docker-registry/html/list.html","<div class=\"row-fluid\" ng-controller=\"DockerRegistry.ListController\">\n  <script type=\"text/ng-template\" id=\"tagsTemplate.html\">\n    <ul class=\"zebra-list\">\n      <li ng-repeat=\"(name, imageId) in row.entity.tags\" ng-controller=\"DockerRegistry.TagController\">\n        <a href=\"\" ng-click=\"selectImage(imageId)\">{{name}}</a>\n      </li>\n    </ul>\n  </script>\n  <p></p>\n  <div class=\"row-fluid\">\n    <div class=\"span12\">\n      <span ng-hide=\"selectedImage\">\n        <hawtio-filter ng-model=\"tableConfig.filterOptions.filterText\"\n                       css-class=\"input-xxlarge\"\n                       placeholder=\"Filter images...\"\n                       save-as=\"docker-registry-image-list-text-filter\"></hawtio-filter>\n      </span>\n      <button class=\"pull-right btn btn-danger\"\n              ng-disabled=\"tableConfig.selectedItems.length == 0\"\n              ng-hide=\"selectedImage\"\n              ng-click=\"deletePrompt(tableConfig.selectedItems)\"><i class=\"icon-remove\"></i> Delete</button>\n      <span class=\"pull-right\">&nbsp;</span>\n      <button class=\"pull-right btn btn-primary\" \n              ng-show=\"selectedImage\"\n              ng-click=\"selectedImage = undefined\"><i class=\"icon-list\"></i></button>\n    </div>\n  </div>\n  <p></p>\n  <div class=\"row-fluid\" ng-show=\"!fetched\">\n    <div class=\"span12\">\n      <p class=\"text-center\"><i class=\"icon-spinner icon-spin\"></i></p>\n    </div>\n  </div>\n  <div class=\"row-fluid\" ng-show=\"fetched && !selectedImage && imageRepositories.length === 0\">\n    <div class=\"span12\">\n      <p class=\"alert alert-info\">No images are stored in this repository</p>\n    </div>\n  </div>\n  <div class=\"row-fluid\" ng-show=\"fetched && !selectedImage && imageRepositories.length\">\n    <div class=\"span12\">\n      <table class=\"table table-condensed table-striped\"\n             hawtio-simple-table=\"tableConfig\"></table>\n    </div>\n  </div>\n  <div class=\"row-fluid\" ng-show=\"fetched && selectedImage\">\n    <div class=\"span12\">\n      <div hawtio-object=\"selectedImage\"></div>\n    </div>\n  </div>\n</div>\n\n");
 $templateCache.put("plugins/camel/html/attributeToolBarContext.html","<div class=\"row-fluid\">\n  <div class=\"span6\" ng-controller=\"Camel.AttributesToolBarController\">\n    <div class=\"control-group\">\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'stop\', \'suspend\'])\" ng-click=\"start()\"><i\n              class=\"icon-play-circle\"></i> Start\n      </button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState(\'start\')\" ng-click=\"pause()\"><i class=\"icon-pause\"></i>\n        Pause\n      </button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'start\', \'suspend\'])\" ng-click=\"deleteDialog = true\"><i\n              class=\"icon-remove\"></i> Destroy\n      </button>\n    </div>\n\n    <div hawtio-confirm-dialog=\"deleteDialog\"\n         ok-button-text=\"Delete\"\n         on-ok=\"stop()\">\n      <div class=\"dialog-body\">\n        <p>You are about to delete this Camel Context.</p>\n        <p>This operation cannot be undone so please be careful.</p>\n      </div>\n    </div>\n\n  </div>\n  <div class=\"span6\">\n    <div class=\"control-group\">\n      <input class=\"span12 search-query\" type=\"text\" ng-model=\"$parent.gridOptions.filterOptions.filterText\" placeholder=\"Filter...\">\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/attributeToolBarRoutes.html","<div class=\"row-fluid\">\n  <div class=\"span6\">\n    <div class=\"control-group\"  ng-controller=\"Camel.AttributesToolBarController\">\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'stop\', \'suspend\'])\" ng-click=\"start()\"><i class=\"icon-play-circle\"></i> Start</button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState(\'start\')\" ng-click=\"pause()\"><i class=\"icon-pause\"></i> Pause</button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'start\', \'suspend\'])\" ng-click=\"stop()\"><i class=\"icon-off\"></i> Stop</button>\n      <button class=\"btn\" ng-disabled=\"!everySelectionHasState(\'stop\')\" ng-click=\"delete()\"><i class=\"icon-remove\"></i> Delete</button>\n    </div>\n  </div>\n  <div class=\"span6\">\n    <div class=\"control-group\">\n      <input type=\"text\" class=\"span12 search-query\" ng-model=\"$parent.gridOptions.filterOptions.filterText\" placeholder=\"Filter...\">\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/breadcrumbBar.html","<div ng-hide=\"inDashboard\" class=\"logbar logbar-wiki\" ng-controller=\"Camel.BreadcrumbBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs\">\n      <li class=\"\" >\n        <a class=\"breadcrumb-link\">\n          <span class=\"contained c-medium\">Camel Contexts</span>\n        </a>\n      </li>\n        <li class=\"dropdown\" ng-repeat=\"breadcrumb in breadcrumbs\">\n          <a ng-show=\"breadcrumb.items.length > 0\" href=\"#\" class=\"breadcrumb-link dropdown-toggle\" data-toggle=\"dropdown\"\n             data-placement=\"bottom\" title=\"{{breadcrumb.tooltip}}\">\n            {{breadcrumb.name}}\n            <span class=\"caret\"></span>\n          </a>\n          <ul class=\"dropdown-menu\">\n            <li ng-repeat=\"item in breadcrumb.items\">\n              <a ng-href=\"{{item.link}}{{hash}}\"\n                 title=\"Switch to {{item.name}} \"\n                 data-placement=\"bottom\">\n                {{item.name}}</a>\n            </li>\n          </ul>\n        </li>\n      <li class=\"pull-right\" ng-show=\"treeViewLink\" title=\"Switch to the tree based explorer view\">\n        <a href=\"{{treeViewLink}}\"><i class=\"icon-resize-full\"></i></a>\n      </li>\n      </ul>\n  </div>\n</div>\n");
@@ -17442,6 +17440,8 @@ $templateCache.put("plugins/camel/html/sendMessage.html","<div ng-controller=\"C
 $templateCache.put("plugins/camel/html/source.html","<div class=\"form-horizontal\" ng-controller=\"Camel.SourceController\">\n  <div class=\"row-fluid\">\n    <div class=\"span12\">\n      <button class=\"pull-right btn btn-primary\"\n              hawtio-show object-name=\"{{getSelectionCamelContextMBean(workspace)}}\" method-name=\"addOrUpdateRoutesFromXml\"\n              ng-click=\"saveRouteXml()\"><i class=\"icon-save\"></i> Update</button>\n    </div>\n  </div>\n  <p></p>\n  <div class=\"row-fluid\">\n    <div class=\"span12\">\n      <div hawtio-editor=\"source\" mode=\"mode\"></div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/traceRoute.html","<div ng-controller=\"Camel.TraceRouteController\">\n  <div class=\"span12 well\" ng-hide=\"tracing\">\n    <form>\n      <p>Tracing allows you to send messages to a route and then step through and see the messages flow through a route\n        to aid debugging and to help diagnose issues.</p>\n\n      <p>Once you start tracing, you can send messages to the input endpoints, then come back to this page and see the\n        flow of messages through your route.</p>\n\n      <p>As you click on the message table, you can see which node in the flow it came through; moving the selection up and down in the message table lets you see the flow of the message through the diagram.</p>\n\n      <button class=\"btn btn-info\" type=\"submit\" ng-click=\"startTracing()\">Start tracing</button>\n    </form>\n  </div>\n  <div ng-show=\"tracing\">\n\n    <form>\n      <button class=\"btn btn-info pull-right\" type=\"submit\" ng-click=\"stopTracing()\">Stop tracing</button>\n    </form>\n    <div ng-include src=\"graphView\">\n    </div>\n\n    <form>\n      <button class=\"btn btn-info pull-right\" type=\"submit\" ng-click=\"clear()\">Clear messages</button>\n    </form>\n    <div>&nbsp;</div>\n    <div ng-include src=\"tableView\">\n    </div>\n\n  </div>\n</div>");
 $templateCache.put("plugins/camel/html/typeConverter.html","<div class=\"row-fluid\" ng-controller=\"Camel.TypeConverterController\">\n\n  <!-- the dl need to be wider so we can see the labels -->\n  <style>\n    .dl-horizontal dt {\n      width: 260px;\n    }\n    .dl-horizontal dd {\n      margin-left: 280px;\n    }\n  </style>\n\n  <div ng-show=\"selectedMBean\">\n\n    <div class=\"row-fluid\">\n\n      <div class=\"pull-right\">\n        <form class=\"form-inline no-bottom-margin\">\n          <fieldset>\n            <div class=\"controls control-group inline-block controls-row\">\n              <div class=\"btn-group\">\n                <button\n                    class=\"btn\" ng-click=\"resetStatistics()\" title=\"Reset statistics\">\n                  <i class=\"icon-refresh\"></i></button>\n                <button\n                    ng-disabled=\"mbeanAttributes.StatisticsEnabled\"\n                    class=\"btn\" ng-click=\"enableStatistics()\" title=\"Enable statistics\">\n                  <i class=\"icon-play-circle\"></i></button>\n                <button\n                    ng-disabled=\"!mbeanAttributes.StatisticsEnabled\"\n                    class=\"btn\" ng-click=\"disableStatistics()\" title=\"Disable statistics\">\n                  <i class=\"icon-off\"></i></button>\n              </div>\n            </div>\n          </fieldset>\n        </form>\n      </div>\n      <div>\n        <dl class=\"dl-horizontal\">\n          <dt>Number of Type Converters</dt>\n          <dd>{{mbeanAttributes.NumberOfTypeConverters}}</dd>\n          <dt># Attempts</dt>\n          <dd>{{mbeanAttributes.AttemptCounter}}</dd>\n          <dt># Hit</dt>\n          <dd>{{mbeanAttributes.HitCounter}}</dd>\n          <dt># Miss</dt>\n          <dd>{{mbeanAttributes.MissCounter}}</dd>\n          <dt># Failed</dt>\n          <dd>{{mbeanAttributes.FailedCounter}}</dd>\n          <dt>Statistics Enabled</dt>\n          <dd>{{mbeanAttributes.StatisticsEnabled}}</dd>\n        </dl>\n      </div>\n\n    </div>\n\n    <div class=\"row-fluid\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline no-bottom-margin\">\n          <fieldset>\n            <div class=\"control-group inline-block\">\n              <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\"\n                     ng-model=\"gridOptions.filterOptions.filterText\">\n            </div>\n          </fieldset>\n        </form>\n      </div>\n    </div>\n\n    <div class=\"row-fluid\" ng-show=\"data.length > 0\">\n      <table class=\"table table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n    </div>\n    <div class=\"row-fluid\" ng-show=\"data.length == 0\">\n      Loading...\n    </div>\n\n  </div>\n\n</div>\n\n");
+$templateCache.put("plugins/docker-registry/html/layoutDockerRegistry.html","<div class=\"row-fluid\" ng-controller=\"DockerRegistry.TopLevel\">\n  <div class=\"span12\">\n    <div ng-view></div>\n  </div>\n</div>\n");
+$templateCache.put("plugins/docker-registry/html/list.html","<div class=\"row-fluid\" ng-controller=\"DockerRegistry.ListController\">\n  <script type=\"text/ng-template\" id=\"tagsTemplate.html\">\n    <ul class=\"zebra-list\">\n      <li ng-repeat=\"(name, imageId) in row.entity.tags\" ng-controller=\"DockerRegistry.TagController\">\n        <a href=\"\" ng-click=\"selectImage(imageId)\">{{name}}</a>\n      </li>\n    </ul>\n  </script>\n  <p></p>\n  <div class=\"row-fluid\">\n    <div class=\"span12\">\n      <span ng-hide=\"selectedImage\">\n        <hawtio-filter ng-model=\"tableConfig.filterOptions.filterText\"\n                       css-class=\"input-xxlarge\"\n                       placeholder=\"Filter images...\"\n                       save-as=\"docker-registry-image-list-text-filter\"></hawtio-filter>\n      </span>\n      <button class=\"pull-right btn btn-danger\"\n              ng-disabled=\"tableConfig.selectedItems.length == 0\"\n              ng-hide=\"selectedImage\"\n              ng-click=\"deletePrompt(tableConfig.selectedItems)\"><i class=\"icon-remove\"></i> Delete</button>\n      <span class=\"pull-right\">&nbsp;</span>\n      <button class=\"pull-right btn btn-primary\" \n              ng-show=\"selectedImage\"\n              ng-click=\"selectedImage = undefined\"><i class=\"icon-list\"></i></button>\n    </div>\n  </div>\n  <p></p>\n  <div class=\"row-fluid\" ng-show=\"!fetched\">\n    <div class=\"span12\">\n      <p class=\"text-center\"><i class=\"icon-spinner icon-spin\"></i></p>\n    </div>\n  </div>\n  <div class=\"row-fluid\" ng-show=\"fetched && !selectedImage && imageRepositories.length === 0\">\n    <div class=\"span12\">\n      <p class=\"alert alert-info\">No images are stored in this repository</p>\n    </div>\n  </div>\n  <div class=\"row-fluid\" ng-show=\"fetched && !selectedImage && imageRepositories.length\">\n    <div class=\"span12\">\n      <table class=\"table table-condensed table-striped\"\n             hawtio-simple-table=\"tableConfig\"></table>\n    </div>\n  </div>\n  <div class=\"row-fluid\" ng-show=\"fetched && selectedImage\">\n    <div class=\"span12\">\n      <div hawtio-object=\"selectedImage\"></div>\n    </div>\n  </div>\n</div>\n\n");
 $templateCache.put("plugins/karaf/html/feature-details.html","<div>\n    <table class=\"overviewSection\">\n        <tr ng-hide=\"hasFabric\">\n            <td></td>\n            <td class=\"less-big\">\n                <div class=\"btn-group\">\n                  <button ng-click=\"uninstall(name,version)\" \n                          class=\"btn\" \n                          title=\"uninstall\" \n                          hawtio-show\n                          object-name=\"{{featuresMBean}\"\n                          method-name=\"uninstallFeature\">\n                    <i class=\"icon-off\"></i>\n                  </button>\n                  <button ng-click=\"install(name,version)\" \n                          class=\"btn\" \n                          title=\"install\" \n                          hawtio-show\n                          object-name=\"{{featuresMBean}\"\n                          method-name=\"installFeature\">\n                    <i class=icon-play-circle\"></i>\n                  </button>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>Name:</strong></td>\n            <td class=\"less-big\">{{row.Name}}\n            </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>Version:</strong></td>\n            <td class=\"less-big\">{{row.Version}}\n            </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>Repository:</strong></td>\n            <td class=\"less-big\">{{row.RepositoryName}}\n            </td>\n        </tr>\n        <tr>\n          <td class=\"pull-right\"><strong>Repository URI:</strong></td>\n          <td class=\"less-big\">{{row.RepositoryURI}}\n          </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>State:</strong></td>\n            <td class=\"wrap\">\n                <div ng-switch=\"row.Installed\">\n                    <p style=\"display: inline;\" ng-switch-when=\"true\">Installed</p>\n\n                    <p style=\"display: inline;\" ng-switch-default>Not Installed</p>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td>\n            </td>\n            <td>\n                <div class=\"accordion\" id=\"accordionFeatures\">\n                    <div class=\"accordion-group\">\n                        <div class=\"accordion-heading\">\n                            <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionFeatures\"\n                               href=\"#collapseFeatures\">\n                                Features\n                            </a>\n                        </div>\n                        <div id=\"collapseFeatures\" class=\"accordion-body collapse in\">\n                            <ul class=\"accordion-inner\">\n                                <li ng-repeat=\"feature in row.Dependencies\">\n                                    <a href=\'#/osgi/feature/{{feature.Name}}/{{feature.Version}}?p=container\'>{{feature.Name}}/{{feature.Version}}</a>\n                                </li>\n                            </ul>\n                        </div>\n                    </div>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td>\n            </td>\n            <td>\n                <div class=\"accordion\" id=\"accordionBundles\">\n                    <div class=\"accordion-group\">\n                        <div class=\"accordion-heading\">\n                            <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionBundles\"\n                               href=\"#collapseBundles\">\n                                Bundles\n                            </a>\n                        </div>\n                        <div id=\"collapseBundles\" class=\"accordion-body collapse in\">\n                            <ul class=\"accordion-inner\">\n                                <li ng-repeat=\"bundle in row.BundleDetails\">\n                                    <div ng-switch=\"bundle.Installed\">\n                                        <p style=\"display: inline;\" ng-switch-when=\"true\">\n                                            <a href=\'#/osgi/bundle/{{bundle.Identifier}}?p=container\'>{{bundle.Location}}</a></p>\n\n                                        <p style=\"display: inline;\" ng-switch-default>{{bundle.Location}}</p>\n                                    </div>\n                                </li>\n                            </ul>\n                        </div>\n                    </div>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td>\n            </td>\n            <td>\n                <div class=\"accordion\" id=\"accordionConfigurations\">\n                    <div class=\"accordion-group\">\n                        <div class=\"accordion-heading\">\n                            <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionConfigurations\"\n                               href=\"#collapsConfigurations\">\n                                Configurations\n                            </a>\n                        </div>\n                        <div id=\"collapsConfigurations\" class=\"accordion-body collapse in\">\n                            <table class=\"accordion-inner\">\n                                <tr ng-repeat=\"(pid, value) in row.Configurations\">\n                                    <td>\n                                      <p>{{value.Pid}}</p>\n                                      <div hawtio-editor=\"toProperties(value.Elements)\" mode=\"props\"></div></td>\n                                </tr>\n                            </table>\n                        </div>\n                    </div>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td>\n            </td>\n            <td>\n                <div class=\"accordion\" id=\"accordionConfigurationFiles\">\n                    <div class=\"accordion-group\">\n                        <div class=\"accordion-heading\">\n                            <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionConfigurationFiles\"\n                               href=\"#collapsConfigurationFiles\">\n                                Configuration Files\n                            </a>\n                        </div>\n                        <div id=\"collapsConfigurationFiles\" class=\"accordion-body collapse in\">\n                            <table class=\"accordion-inner\">\n                                <tr ng-repeat=\"file in row.Files\">\n                                    <td>{{file.Files}}</td>\n                                </tr>\n                            </table>\n                        </div>\n                    </div>\n                </div>\n            </td>\n        </tr>\n    </table>\n</div>\n");
 $templateCache.put("plugins/karaf/html/feature.html","<div class=\"controller-section\" ng-controller=\"Karaf.FeatureController\">\n  <div class=\"row-fluid\">\n    <div class=\"span4\">\n      <h1>{{row.id}}</h1>\n    </div>\n  </div>\n\n  <div ng-include src=\"\'app/karaf/html/feature-details.html\'\"></div>\n\n</div>\n\n");
 $templateCache.put("plugins/karaf/html/features.html","<div class=\"controller-section\" ng-controller=\"Karaf.FeaturesController\">\n\n  <div class=\"row-fluid section-filter\">\n    <input type=\"text\" class=\"span12 search-query\" placeholder=\"Filter...\" ng-model=\"filter\">\n    <i class=\"icon-remove clickable\" title=\"Clear filter\" ng-click=\"filter = \'\'\"></i>\n  </div>\n\n  <script type=\"text/ng-template\" id=\"popoverTemplate\">\n    <small>\n      <table class=\"table\">\n        <tbody>\n        <tr ng-repeat=\"(k, v) in feature track by $index\" ng-show=\"showRow(k, v)\">\n          <td class=\"property-name\">{{k}}</td>\n          <td class=\"property-value\" ng-bind-html-unsafe=\"showValue(v)\"></td>\n        </tr>\n        </tbody>\n      </table>\n    </small>\n  </script>\n\n  <p></p>\n  <div class=\"row-fluid\">\n    <div class=\"span6\">\n      <h3 class=\"centered\">Installed Features</h3>\n      <div ng-show=\"featuresError\" class=\"alert alert-warning\">\n        The feature list returned by the server was null, please check the logs and Karaf console for errors.\n      </div>\n      <div class=\"bundle-list\"\n           hawtio-auto-columns=\".bundle-item\">\n        <div ng-repeat=\"feature in installedFeatures\"\n             class=\"bundle-item\"\n             ng-show=\"filterFeature(feature)\"\n             ng-class=\"inSelectedRepository(feature)\">\n          <a ng-href=\"#/osgi/feature/{{feature.Id}}?p=container\"\n             hawtio-template-popover title=\"Feature details\">\n            <span class=\"badge\" ng-class=\"getStateStyle(feature)\">{{feature.Name}} / {{feature.Version}}</span>\n          </a>\n          <span ng-hide=\"hasFabric\">\n            <a class=\"toggle-action\"\n               href=\"\"\n               ng-show=\"installed(feature.Installed)\"\n               ng-click=\"uninstall(feature)\"\n               hawtio-show\n               object-name=\"{{featuresMBean}\"\n               method-name=\"uninstallFeature\">\n              <i class=\"icon-power-off\"></i>\n            </a>\n            <a class=\"toggle-action\"\n               href=\"\"\n               ng-hide=\"installed(feature.Installed)\"\n               ng-click=\"install(feature)\"\n               hawtio-show\n               object-name=\"{{featuresMBean}\"\n               method-name=\"installFeature\">\n              <i class=\"icon-play-circle\"></i>\n            </a>\n          </span>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"span6\">\n      <h3 class=\"centered\">Available Features</h3>\n      <div class=\"row-fluid repository-browser-toolbar centered\">\n        <select id=\"repos\"\n                class=\"input-xlarge\"\n                title=\"Feature repositories\"\n                ng-model=\"selectedRepository\"\n                ng-options=\"r.repository for r in repositories\"></select>\n        <button class=\"btn\"\n                title=\"Remove selected feature repository\"\n                ng-click=\"uninstallRepository()\"\n                ng-hide=\"hasFabric\"\n                hawtio-show\n                object-name=\"{{featuresMBean}}\"\n                method-name=\"removeRepository\"><i class=\"icon-remove-sign\"></i></button>\n        <input type=\"text\"\n               class=\"input-xlarge\"\n               placeholder=\"mvn:foo/bar/1.0/xml/features\"\n               title=\"New feature repository URL\"\n               ng-model=\"newRepositoryURI\"\n               ng-hide=\"hasFabric\"\n               hawtio-show\n               object-name=\"{{featuresMBean}}\"\n               method-name=\"addRepository\">\n        <button class=\"btn\"\n                title=\"Add feature repository URL\"\n                ng-hide=\"hasFabric\"\n                ng-click=\"installRepository()\"\n                ng-disabled=\"isValidRepository()\"\n                hawtio-show\n                object-name=\"{{featuresMBean}}\"\n                method-name=\"addRepository\"><i class=\"icon-plus\"></i></button>\n      </div>\n      <div class=\"row-fluid\">\n        <div class=\"bundle-list\"\n             hawtio-auto-columns=\".bundle-item\">\n          <div ng-repeat=\"feature in selectedRepository.features\"\n               class=\"bundle-item\"\n               ng-show=\"filterFeature(feature)\"\n               hawtio-template-popover title=\"Feature details\">\n            <a ng-href=\"#/osgi/feature/{{feature.Id}}?p=container\">\n              <span class=\"badge\" ng-class=\"getStateStyle(feature)\">{{feature.Name}} / {{feature.Version}}</span>\n            </a >\n            <span ng-hide=\"hasFabric\">\n              <a class=\"toggle-action\"\n                 href=\"\"\n                 ng-show=\"installed(feature.Installed)\"\n                 ng-click=\"uninstall(feature)\"\n                 hawtio-show\n                 object-name=\"{{featuresMBean}\"\n                 method-name=\"uninstallFeature\">\n                <i class=\"icon-power-off\"></i>\n              </a>\n              <a class=\"toggle-action\"\n                 href=\"\"\n                 ng-hide=\"installed(feature.Installed)\"\n                 ng-click=\"install(feature)\"\n                 hawtio-show\n                 object-name=\"{{featuresMBean}\"\n                 method-name=\"installFeature\">\n                <i class=\"icon-play-circle\"></i>\n              </a>\n            </span>\n          </div>\n        </div>\n      </div>\n    </div>\n\n  </div>\n\n</div>\n");
@@ -17459,6 +17459,20 @@ $templateCache.put("plugins/maven/html/searchResults.html","<div ng-show=\"tooMa
 $templateCache.put("plugins/maven/html/test.html","<div ng-controller=\"Maven.TestController\">\n\n  <div class=\"row-fluid\">\n\n    <script type=\"text/ng-template\" id=\"mavenCompletionTemplate\">\n      <div>\n        <p>Maven completion</p>\n        <p>Model: {{someUri}}</p>\n        <p>uriParts</p>\n        <ol>\n          <li ng-repeat=\"part in uriParts\">{{part}}</li>\n        </ol>\n        <input class=\"input-xlarge\" type=\"text\" ng-model=\"someUri\" typeahead=\"name for name in doCompletionMaven($viewValue) | filter:$viewValue\" typeahead-wait-ms=\"200\">\n      </div>\n    </script>\n    <div hawtio-editor=\"mavenCompletion\" mode=\"html\"></div>\n    <div compile=\"mavenCompletion\"></div>\n\n    <!--\n    <div class=\"span3\">\n      <p>Fabric completion</p>\n      <p>Model: {{someUri2}}</p>\n      <p>uriParts</p>\n      <ol>\n        <li ng-repeat=\"part in uriParts2\">{{part}}</li>\n      </ol>\n      <input class=\"input-xlarge\" type=\"text\" ng-model=\"someUri2\" typeahead=\"name for name in doCompletionFabric($viewValue) | filter:$viewValue\" typeahead-wait-ms=\"200\">\n    </div>\n    -->\n  </div>\n\n\n</div>\n");
 $templateCache.put("plugins/maven/html/versions.html","<div class=\"controller-section\" ng-controller=\"Maven.VersionsController\">\n  <div class=\"row-fluid\">\n    <form class=\"form-horizontal no-bottom-margin\">\n      <fieldset>\n        <div class=\"control-group\">\n          <input class=\"search-query span12\" type=\"text\" ng-model=\"search\"\n                 placeholder=\"Filter versions\">\n        </div>\n      </fieldset>\n    </form>\n  </div>\n  <div class=\"row-fluid\">\n    <ng-include src=\"\'app/maven/html/searchResults.html\'\"></ng-include>\n  </div>\n</div>\n");
 $templateCache.put("plugins/maven/html/view.html","<div ng-controller=\"Maven.ViewController\">\n\n</div>");
+$templateCache.put("plugins/osgi/html/bundle-details.html","<div>\n  <table>\n    <tr>\n      <td></td>\n      <td class=\"less-big\">\n        <div class=\"btn-group\">\n          <button ng-click=\"stopBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"stopBundle\"\n                  title=\"stop\"><i class=\"icon-off\"/></button>\n          <button ng-click=\"startBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"startBundle\"\n                  title=\"start\"><i class=\"icon-play-circle\"/></button>\n          <button ng-click=\"refreshBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"refreshBundle\"\n                  title=\"refresh\"><i class=\"icon-refresh\"/></button>\n          <button ng-click=\"updateBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"updateBundle\"\n                  title=\"update\"><i class=\"icon-cloud-download\"/></button>\n          <button ng-click=\"uninstallBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"uninstallBundle\"\n                  title=\"uninstall\"><i class=\"icon-eject\"/></button>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td><p/></td>\n      <td/>\n    <tr>\n      <td>\n        <div ng-switch=\"row.Fragment\">\n          <div ng-switch-when=\"true\"><strong>Fragment&nbsp;ID:</strong></div>\n          <div ng-switch-default><strong>Bundle&nbsp;ID:</strong></div>\n        </div>\n      </td>\n      <td class=\"less-big\">{{row.Identifier}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Bundle&nbsp;Name:</strong></td>\n      <td class=\"less-big\">{{row.Headers[\'Bundle-Name\'].Value}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Symbolic&nbsp;Name:</strong></td>\n      <td class=\"less-big label\">\n        <div id=\"bsn\" rel=\"tooltip\">{{row.SymbolicName}}</div>\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Version:</strong></td>\n      <td class=\"less-big\">{{row.Version}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Start&nbsp;Level:</strong></td>\n      <td class=\"less-big\">{{row.StartLevel}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Location:</strong></td>\n      <td class=\"less-big\">\n        <a ng-href=\"{{mavenLink(row)}}\">\n          {{row.Location}}\n        </a>\n      </td>\n    </tr>\n    <tr>\n      <td><strong>State:</strong></td>\n      <td>\n        <div class=\"less-big label\" ng-class=\"row.StateStyle\">{{row.State}}</div>\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Last&nbsp;Modified:</strong></td>\n      <td class=\"less-big\">{{row.LastModified | date:\'medium\'}}\n      </td>\n    </tr>\n    <tr>\n      <td>\n        <div ng-switch=\"row.Fragment\">\n          <div ng-switch-when=\"true\"><strong>Hosts:</strong></div>\n          <div ng-switch-default><strong>Fragments:</strong></div>\n        </div>\n      </td>\n      <td class=\"less-big\">\n        <div ng-switch=\"row.Fragment\">\n          <div ng-switch-when=\"true\" ng-bind-html-unsafe=\"row.Hosts\"/>\n          <div ng-switch-default ng-bind-html-unsafe=\"row.Fragments\"/>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionInspectClassloading\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionInspectClassloading\"\n                 href=\"#collapseInspectClassloading\">\n                Inspect Classloading\n              </a>\n            </div>\n            <div id=\"collapseInspectClassloading\" class=\"accordion-body collapse in\">\n              <form class=\"form-inline\" hawtio-show object-name=\"{{osgiToolsMBean}}\" operation-name=\"getLoadClassOrigin\">\n                <fieldset>\n                  &nbsp;&nbsp;\n                  <input class=\"input-xlarge\" type=\"text\" ng-model=\"classToLoad\" placeHolder=\"Enter Class Name to Load...\">\n                  <button class=\"btn btn-success execute\" ng-click=\"executeLoadClass(classToLoad)\">Load class</button>\n                </fieldset>\n              </form>\n              <form class=\"form-inline\" hawtio-show object-name=\"{{osgiToolsMBean}}\" operation-name=\"getResourceURL\">\n                <fieldset>\n                  &nbsp;&nbsp;\n                  <input class=\"input-xlarge\" type=\"text\" ng-model=\"resourceToLoad\"\n                         placeHolder=\"Enter Resource Name to Find...\">\n                  <button class=\"btn btn-success execute\" ng-click=\"executeFindResource(resourceToLoad)\">Get resource\n                  </button>\n                </fieldset>\n              </form>\n              <div id=\"loadClassResult\"/>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionImportedPackages\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionImportedPackages\"\n                 href=\"#collapseImportedPackages\">\n                Imported Packages\n              </a>\n            </div>\n            <div id=\"collapseImportedPackages\" class=\"accordion-body collapse in\">\n              <table>\n                <tr ng-repeat=\"(package, data) in row.ImportData\">\n                  <td>\n                    <div class=\"less-big badge\" id=\"import.{{package}}\">{{package}}</div>\n                  </td>\n                </tr>\n              </table>\n              <div id=\"unsatisfiedOptionalImports\"/>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionExportedPackages\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionExportedPackages\"\n                 href=\"#collapseExportedPackages\">\n                Exported Packages\n              </a>\n            </div>\n            <div id=\"collapseExportedPackages\" class=\"accordion-body collapse in\">\n              <table>\n                <tr ng-repeat=\"(package, data) in row.ExportData\">\n                  <td>\n                    <div class=\"less-big badge badge-success\" id=\"export.{{package}}\">{{package}}</div>\n                  </td>\n                </tr>\n              </table>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td></td>\n      <td>\n        <div class=\"accordion\" id=\"accordionServices\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionServices\"\n                 href=\"#collapseServices\">\n                Services\n              </a>\n            </div>\n            <div id=\"collapseServices\" class=\"accordion-body collapse in\">\n              Registered Services\n              <table>\n                <tr ng-repeat=\"id in row.RegisteredServices\">\n                  <td><i class=\"icon-cog less-big text-success\" id=\"registers.service.{{id}}\">{{id}}</i></td>\n                </tr>\n              </table>\n              <br/>\n              Services used by this Bundle\n              <table>\n                <tr ng-repeat=\"id in row.ServicesInUse\">\n                  <td><i class=\"icon-cog less-big text-info\" id=\"uses.service.{{id}}\">{{id}}</i></td>\n                </tr>\n              </table>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionRequiringBundles\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionRequiringBundles\"\n                 href=\"#collapseRequiringBundles\">\n                Other Bundles using this Bundle\n              </a>\n            </div>\n            <div id=\"collapseRequiringBundles\" class=\"accordion-body collapse in\">\n              <div class=\"accordion-inner\">\n                <span ng-bind-html-unsafe=\"row.RequiringBundles\"/>\n              </div>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionHeaders\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionHeaders\"\n                 href=\"#collapsHeaders\">\n                Headers\n              </a>\n            </div>\n            <div id=\"collapsHeaders\" class=\"accordion-body collapse in\">\n              <table class=\"accordion-inner\">\n                <tr ng-repeat=\"(key, value) in row.Headers\" ng-show=\"showValue(key)\">\n                  <td valign=\"top\">{{key}}</td>\n                  <td>{{value.Value}}</td>\n                </tr>\n              </table>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n  </table>\n</div>\n");
+$templateCache.put("plugins/osgi/html/bundle-list.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundleListController\">\n  <div class=\"row-fluid bundle-list-toolbar\">\n\n    <div class=\"pull-left\">\n      <div class=\"btn-group\">\n        <a ng-href=\"#/osgi/bundle-list?p=container\"\n                type=\"button\"\n                class=\"btn active\"\n                title=\"List view\">\n          <i class=\"icon-list\"></i>\n        </a>\n        <a ng-href=\"#/osgi/bundles?p=container\"\n                type=\"button\"\n                class=\"btn\"\n                title=\"Table view\">\n          <i class=\"icon-table\"></i>\n        </a>\n      </div>\n\n      <div class=\"input-append\" hawtio-show object-name=\"{{frameworkMBean}}\" method-name=\"installBundle\">\n        <input class=\"input-xxlarge\"\n               type=\"text\"\n               placeholder=\"Install Bundle...\"\n               ng-model=\"bundleUrl\">\n        <button ng-disabled=\"installDisabled()\"\n                class=\"btn\"\n                ng-click=\"install()\"\n                title=\"Install\">\n          <i class=\"icon-ok\"></i>\n        </button>\n      </div>\n\n    </div>\n\n\n    <div class=\"pull-right\">\n      <strong>Show bundles: </strong>\n      &nbsp;\n      <label for=\"showActiveMQBundles\">ActiveMQ</label>\n      <input id=\"showActiveMQBundles\" type=\"checkbox\" ng-model=\"display.showActiveMQBundles\">\n      &nbsp;\n      &nbsp;\n      <label for=\"showCamelBundles\">Camel</label>\n      <input id=\"showCamelBundles\" type=\"checkbox\" ng-model=\"display.showCamelBundles\">\n      &nbsp;\n      &nbsp;\n      <label for=\"showCxfBundles\">CXF</label>\n      <input id=\"showCxfBundles\" type=\"checkbox\" ng-model=\"display.showCxfBundles\">\n      &nbsp;\n      &nbsp;\n      <label for=\"showPlatformBundles\">Platform</label>\n      <input id=\"showPlatformBundles\" type=\"checkbox\" ng-model=\"display.showPlatformBundles\">\n      &nbsp;\n      &nbsp;\n      &nbsp;\n      <select class=\"input-large\" ng-model=\"display.sortField\" id=\"sortField\">\n        <option value=\"Identifier\">Sort by ID</option>\n        <option value=\"Name\">Sort by Name</option>\n        <option value=\"SymbolicName\">Sort by Symbolic Name</option>\n      </select>\n      <select class=\"input-large\" ng-model=\"display.bundleField\" id=\"bundleField\">\n        <option value=\"Name\">Display Name</option>\n        <option value=\"SymbolicName\">Display Symbolic Name</option>\n      </select>\n      <input class=\"input-small search-query\" type=\"number\" min=\"0\"\n             ng-model=\"display.startLevelFilter\"\n             placeholder=\"Start Level...\"/>\n      <hawtio-filter ng-model=\"display.bundleFilter\" placeholder=\"Filter...\" save-as=\"osgi-bundle-list-text-filter\"></hawtio-filter>\n    </div>\n\n  </div>\n\n  <div class=\"row-fluid\" id=\"bundleTableHolder\">\n    <!-- Just create a bit of space between the form and the controls -->\n    <p></p>\n\n    <script type=\"text/ng-template\" id=\"popoverTemplate\">\n<small>\n  <table class=\"table\">\n    <tbody>\n    <tr ng-repeat=\"(k, v) in bundle track by $index\">\n      <td class=\"property-name\">{{k}}</td>\n      <td class=\"property-value\">{{v}}</td>\n    </tr>\n    </tbody>\n  </table>\n</small>\n    </script>\n\n    <div class=\"bundle-list centered\"\n         hawtio-auto-columns=\".bundle-item\">\n      <div ng-repeat=\"bundle in bundles\"\n           class=\"bundle-item\"\n           ng-show=\"filterBundle(bundle)\"\n           hawtio-template-popover title=\"Bundle details\">\n        <a id=\"{{bundle.Identifier}}\"\n           ng-href=\"#/osgi/bundle/{{bundle.Identifier}}?p=container\">\n          <span class=\"badge\" ng-class=\"getStateStyle(bundle.State)\">{{getLabel(bundle)}}</span>\n        </a>\n      </div>\n    </div>\n  </div>\n</div>\n");
+$templateCache.put("plugins/osgi/html/bundle.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundleController\">\n  <div ng-include src=\"\'app/osgi/html/bundle-details.html\'\"></div>\n</div>\n");
+$templateCache.put("plugins/osgi/html/bundles.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundlesController\">\n  <div class=\"row-fluid\">\n    <div class=\"pull-left\">\n\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n\n          <div class=\"btn-group inline-block\">\n            <a ng-href=\"#/osgi/bundle-list?p=container\"\n                    type=\"button\"\n                    class=\"btn\"\n                    title=\"List view\">\n              <i class=\"icon-list\"></i>\n            </a>\n            <a ng-href=\"#/osgi/bundles?p=container\"\n                    type=\"button\"\n                    class=\"btn active\"\n                    title=\"Table view\">\n              <i class=\"icon-table\"></i>\n            </a>\n          </div>\n\n          <div class=\"controls control-group inline-block controls-row\">\n            <div class=\"btn-group\">\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"stop()\" title=\"Stop\"><i class=\"icon-off\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"start()\" title=\"Start\"><i class=\"icon-play-circle\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"refresh()\" title=\"Refresh\"><i class=\"icon-refresh\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"update()\" title=\"Update\"><i class=\"icon-cloud-download\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"uninstall()\" title=\"Uninstall\"><i class=\"icon-eject\"></i></button>\n            </div>\n            <div class=\"input-append\">\n              <input class=\"input-xlarge\" type=\"text\" placeholder=\"Install Bundle...\" ng-model=\"bundleUrl\">\n              <button ng-disabled=\"installDisabled()\" class=\"btn\" ng-click=\"install()\" title=\"Install\"><i class=\"icon-ok\"></i></button>\n            </div>\n          </div>\n        </fieldset>\n      </form>\n      \n    </div>\n\n    <div class=\"pull-right\">\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n          <div class=\"control-group inline-block\">\n            <input type=\"text\"\n                   class=\"input-large search-query\"\n                   placeholder=\"Filter...\"\n                   ng-model=\"gridOptions.filterOptions.filterText\">\n          </div>\n        </fieldset>\n      </form>\n\n    </div>\n  </div>\n  \n  \n  <div class=\"row-fluid\">\n    <div ng-hide=\"loading\" class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n    <div ng-show=\"loading\">\n      Please wait, loading...\n    </div>\n  </div>\n</div>\n");
+$templateCache.put("plugins/osgi/html/configurations.html","<style type=\"text/css\">\n  .configuration-header {\n    margin: 20px 20px;\n  }\n\n  ul.configurations,\n  ul.configurations li {\n    list-style: none;\n  }\n\n  ul.configurations {\n    margin: 0px 20px;\n  }\n\n  ul.configurations .bundle-item {\n    display: list-item;\n    margin-bottom: 4px;\n  }\n\n  ul.configurations li.bundle-item a {\n    /*\n      TODO it\'d be nice to use the natural widgth here,\n      but then it might be nice to use multiple columns?\n    */\n    width: 450px;\n  }\n</style>\n\n<div class=\"controller-section\" ng-controller=\"Osgi.ConfigurationsController\">\n  <div class=\"row-fluid\">\n    <div class=\"configuration-header\">\n      <div class=\"configuration-filter\">\n        <input type=\"text\" class=\"span8 search-query\" placeholder=\"Filter...\" ng-model=\"filterText\">\n        <i class=\"icon-remove clickable\" title=\"Clear filter\" ng-click=\"filterText = \'\'\"></i>\n        <button class=\"btn pull-right\" ng-click=\"addPidDialog.open()\" title=\"Add a new configuration\" hawtio-show object-name=\"{{hawtioConfigAdminMBean}}\" method-name=\"configAdminUpdate\"><i\n                class=\"icon-plus\"></i> Configuration\n        </button>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row-fluid centered\" ng-hide=\"configurations.length\">\n    <i class=\"icon-spinner icon-spin\"></i>\n  </div>\n\n  <ul class=\"configurations\">\n    <li ng-repeat=\'config in configurations | filter:filterText\' class=\'{{config.class}} bundle-item\'>\n      <a ng-href=\"{{config.pidLink}}\" title=\"{{config.description}}\">\n        <span class=\"{{config.kind.class}}\">{{config.name}}</span>\n      </a>\n      <ul ng-show=\"config.isFactory\">\n        <li ng-repeat=\"child in config.children\" class=\'{{child.class}} bundle-item\'>\n          <a ng-href=\"{{child.pidLink}}\" title=\"{{child.description}}\">\n            <span class=\"{{child.kind.class}}\">{{child.name}}</span>\n          </a>\n        </li>\n      </ul>\n    </li>\n  </ul>\n\n  <div modal=\"addPidDialog.show\" close=\"addPidDialog.close()\" options=\"addPidDialog.options\">\n    <form name=\"addPidDialogForm\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"addPid(newPid)\">\n      <div class=\"modal-header\"><h4>Add New Configuration</h4></div>\n      <div class=\"modal-body\">\n        <div class=\"control-group\">\n          <label class=\"control-label\" for=\"newPid\">New configuration ID</label>\n\n          <div class=\"controls\">\n            <input class=\"input-xlarge\" type=\"text\" id=\"newPid\" ng-model=\"newPid\"/>\n          </div>\n        </div>\n      </div>\n      <div class=\"modal-footer\">\n        <input class=\"btn btn-success\" ng-disabled=\"!(newPid !== \'\' && newPid !== undefined)\" type=\"submit\" value=\"Add\">\n        <input class=\"btn btn-primary\" ng-click=\"addPidDialog.close()\" type=\"button\" value=\"Cancel\">\n      </div>\n    </form>\n  </div>\n</div>\n\n");
+$templateCache.put("plugins/osgi/html/framework.html","<div class=\"container-fluid\" ng-controller=\"Osgi.FrameworkController\">\n    <h3>Framework Configuration</h3>\n    <div class=\"span11\">\n    <table>\n        <tr>\n            <td><strong>Current Framework Start Level:</strong></td>\n            <td class=\"less-big\">{{startLevel}}</td>\n            <td><button class=\"btn btn-primary\" \n                        ng-click=\"edit(\'FrameworkStartLevel\', \'Framework Start Level\')\" \n                        title=\"Edit framework start level\"\n                        hawtio-show\n                        object-name=\"{{frameworkMBean}}\"\n                        method-name=\"setFrameworkStartLevel\">Edit</button></td>\n        </tr>\n        <tr><td><p></p></td></tr>\n        <tr>\n            <td><strong>Initial Bundle Start Level:</strong></td>\n            <td class=\"less-big\">{{initialBundleStartLevel}}</td>\n            <td><button class=\"btn btn-primary\"\n                        ng-click=\"edit(\'InitialBundleStartLevel\', \'Initial Bundle Start Level\')\" \n                        title=\"Edit initial bundle start level\"\n                        hawtio-show\n                        object-name=\"{{frameworkMBean}}\"\n                        method-name=\"setInitialBundleStartLevel\">Edit</button></td>\n        </tr>\n    </table>\n    </div>\n\n    <div modal=\"editDialog.show\" close=\"editDialog.close()\" options=\"editDialog.options\">\n        <form id=\"myForm\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"editDialog.close()\">\n            <div class=\"modal-header\"><h4>Change {{editDisplayName}}</h4></div>\n            <div class=\"modal-body\">\n                <p>New Start Level (0-100): <input ng-model=\"editResult\" type=\"number\" min=\"0\" max=\"100\" required/></p>\n            </div>\n            <div class=\"modal-footer\">\n                <input class=\"btn\" ng-click=\"editDialog.close()\" type=\"submit\" value=\"Cancel\">\n                <input class=\"btn btn-primary\" ng-click=\"edited(editAttr, editDisplayName, editResult)\" type=\"submit\" value=\"OK\">\n            </div>\n        </form>\n    </div>\n</div>\n");
+$templateCache.put("plugins/osgi/html/layoutOsgi.html","<ul class=\"nav nav-tabs\" hawtio-auto-dropdown ng-controller=\"Karaf.NavBarController\">\n  <li ng-class=\'{active : isActive(\"#/osgi/configuration\") || isPrefixActive(\"#/osgi/pid\")}\'>\n      <a ng-href=\"#/osgi/configurations{{hash}}\">Configuration</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/bundle\")}\'>\n      <a ng-href=\"#/osgi/bundle-list{{hash}}\">Bundles</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/features\") || isActive(\"#/osgi/feature\")}\' ng-show=\"isFeaturesEnabled\">\n    <a ng-href=\"#/osgi/features{{hash}}\">Features</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/package\")}\'>\n      <a ng-href=\"#/osgi/packages{{hash}}\">Packages</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/service\")}\'>\n      <a ng-href=\"#/osgi/services{{hash}}\">Services</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/scr-components\")}\' ng-show=\"isScrEnabled\">\n    <a ng-href=\"#/osgi/scr-components{{hash}}\">Declarative Services</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/server\")}\'>\n    <a ng-href=\"#/osgi/server{{hash}}\">Server</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/fwk\")}\'>\n      <a ng-href=\"#/osgi/fwk{{hash}}\">Framework</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/dependencies\")}\'>\n      <a ng-href=\"#/osgi/dependencies{{hash}}\">Dependencies</a>\n  </li>\n\n  <li class=\"dropdown overflow\" style=\"float: right !important; visibility: hidden;\">\n    <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\"><i class=\"icon-chevron-down\"></i></a>\n    <ul class=\"dropdown-menu right\"></ul>\n  </li>\n\n</ul>\n<div class=\"row-fluid\" ng-controller=\"Osgi.TopLevelController\">\n    <div ng-view></div>\n</div>\n\n\n");
+$templateCache.put("plugins/osgi/html/package-details.html","<div>\n    <table class=\"overviewSection\">\n        <tr>\n            <td><strong>Name:</strong></td>\n            <td class=\"less-big\">{{row.Name}}\n            </td>\n        </tr>\n        <tr>\n            <td><strong>Version:</strong></td>\n            <td class=\"less-big\">{{row.Version}}\n            </td>\n        </tr>\n        <tr>\n            <td><strong>Removal Pending:</strong></td>\n            <td class=\"less-big\">{{row.RemovalPending}}\n        </tr>\n        <tr>\n            <td><strong>Exporting Bundles:</strong></td>\n            <td>\n                <ul>\n                    <li ng-repeat=\"name in row.ExportingBundles\">\n                        <a href=\'#/osgi/bundle/{{name}}{{hash}}\'>{{name}}</a>\n                    </li>\n                </ul>\n            </td>\n        </tr>\n        <tr>\n            <td><strong>Importing Bundles:</strong></td>\n            <td>\n                <ul>\n                    <li ng-repeat=\"name in row.ImportingBundles\">\n                        <a href=\'#/osgi/bundle/{{name}}{{hash}}\'>{{name}}</a>\n                    </li>\n                </ul>\n            </td>\n        </tr>\n    </table>\n</div>");
+$templateCache.put("plugins/osgi/html/package.html","<div class=\"controller-section\" ng-controller=\"Osgi.PackageController\">\n\n<h1>{{row.id}}</h1>\n\n<div ng-include src=\"\'app/osgi/html/package-details.html\'\"></div>\n</div>\n");
+$templateCache.put("plugins/osgi/html/packages.html","<script type=\"text/ng-template\" id=\"packageBundlesTemplate\">\n  <table>\n    <tr>\n      <th>Exporting Bundles</th>\n      <th>Importing Bundles</th>\n    </tr>\n    <tr>\n      <td>\n        <ul>\n          <li ng-repeat=\"b in row.ExportingBundles\">\n            <a href=\'#/osgi/bundle/{{b.Identifier}}?\'>{{b.SymbolicName}}</a>\n          </li>\n        </ul>\n      </td>\n      <td>\n        <ul>\n          <li ng-repeat=\"b in row.ImportingBundles\">\n            <a href=\'#/osgi/bundle/{{b.Identifier}}?\'>{{b.SymbolicName}}</a>\n          </li>\n        </ul>\n      </td>\n    </tr>\n  </table>\n</script>\n\n<div class=\"controller-section\" ng-controller=\"Osgi.PackagesController\">\n  <table class=\"table table-striped\" hawtio-simple-table=\"mygrid\"></table>\n</div>\n");
+$templateCache.put("plugins/osgi/html/pid-details.html","<div>\n  <h4 title=\"{{metaType.description}}\">{{zkPid || metaType.name || pid}}\n    <span ng-show=\"factoryInstanceName\">: {{factoryInstanceName}}</span>\n  </h4>\n\n  <div ng-hide=\"editMode\">\n    <div class=\"row-fluid\">\n      <button class=\"btn\" ng-click=\"setEditMode(true)\" title=\"Edit this configuration\" hawtio-show object-name=\"{{hawtioConfigAdminMBean}}\" method-name=\"configAdminUpdate\"><i class=\"icon-edit\"></i> Edit</button>\n      <button class=\"btn btn-danger pull-right\" ng-click=\"deletePidDialog.open()\" title=\"Delete this configuration\" hawtio-show object-name=\"{{configAdminMBean}}\" method-name=\"delete\"><i class=\"icon-remove\"></i> Delete</button>\n    </div>\n    <div class=\"row-fluid config-admin-form view\">\n      <div simple-form name=\"pidEditor\" mode=\'view\' entity=\'entity\' data=\'schema\' schema=\"fullSchema\"></div>\n    </div>\n  </div>\n  <div ng-show=\"editMode\">\n    <div class=\"row-fluid\">\n      <button ng-show=\"newPid\" class=\"btn btn-primary\" ng-disabled=\"!canSave || !createForm.pidInstanceName\" ng-click=\"pidSave()\"><i class=\"icon-save\"></i> Create</button>\n      <button ng-hide=\"newPid\" class=\"btn btn-primary\" ng-disabled=\"!canSave\" ng-click=\"pidSave()\"><i class=\"icon-save\"></i> Save</button>\n      <button class=\"btn btn-warning\" ng-click=\"setEditMode(false)\"><i class=\"icon-remove\"></i> Cancel</button>\n      <button class=\"btn pull-right\" ng-click=\"addPropertyDialog.open()\" title=\"Add a new property value to this configuration\"><i class=\"icon-plus\"></i> Property</button>\n    </div>\n    <div class=\"row-fluid config-admin-form edit\">\n      <div ng-show=\"newPid\" class=\"new-config-name-form\">\n        <form class=\"form-horizontal\" action=\"\">\n          <fieldset>\n            <div class=\"control-group\">\n              <label class=\"control-label\" title=\"The name of the configuration file\">Configuration name: </label>\n              <div class=\"controls\">\n                <input type=\"text\" class=\"span12\"\n                       title=\"The name of the configuration file\"\n                       ng-required=\"true\"\n                       ng-model=\"createForm.pidInstanceName\" name=\"path\"\n                       autofocus=\"autofocus\">\n              </div>\n            </div>\n          </fieldset>\n        </form>\n      </div>\n\n      <div simple-form name=\"pidEditor\" mode=\'edit\' entity=\'entity\' data=\'schema\' schema=\"fullSchema\" onSubmit=\"pidSave()\"></div>\n    </div>\n  </div>\n\n  <div modal=\"deletePropDialog.show\" close=\"deletePropDialog.close()\" options=\"deletePropDialog.options\">\n    <form name=\"deleteProperty\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"deletePidPropConfirmed()\">\n      <div class=\"modal-header\"><h4>Delete property \'{{deleteKey}}\'</h4></div>\n      <div class=\"modal-body\">\n        <p>Are you sure?</p>\n      </div>\n      <div class=\"modal-footer\">\n        <input class=\"btn btn-success\" type=\"submit\" value=\"Delete\">\n        <input class=\"btn btn-primary\" ng-click=\"deletePropDialog.close()\" type=\"button\" value=\"Cancel\">\n      </div>\n    </form>\n  </div>\n\n  <div modal=\"deletePidDialog.show\" close=\"deletePidDialog.close()\" options=\"deletePidDialog.options\">\n    <form name=\"deletePid\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"deletePidConfirmed()\">\n      <div class=\"modal-header\"><h4>Delete configuration: {{pid}}</h4></div>\n      <div class=\"modal-body\">\n        <p>Are you sure?</p>\n      </div>\n      <div class=\"modal-footer\">\n        <input class=\"btn btn-success\" type=\"submit\" value=\"Delete\">\n        <input class=\"btn btn-primary\" ng-click=\"deletePidDialog.close()\" type=\"button\" value=\"Cancel\">\n      </div>\n    </form>\n  </div>\n\n  <div modal=\"addPropertyDialog.show\" close=\"addPropertyDialog.close()\" options=\"addPropertyDialog.options\">\n    <form name=\"addProperty\" class=\"form-horizontal no-bottom-margin\"\n          ng-submit=\"addPropertyConfirmed(addPropKey, addPropValue)\">\n      <div class=\"modal-header\"><h4>Add property</h4></div>\n      <div class=\"modal-body\">\n        <div class=\"control-group\">\n          <label class=\"control-label\" for=\"propKey\">Key</label>\n\n          <div class=\"controls\">\n            <input class=\"input-xlarge\" type=\"text\" id=\"propKey\" placeholder=\"Key\" ng-model=\"addPropKey\"/>\n            <span class=\"help-block\"\n                  ng-hide=\"addPropKey !== \'\' && addPropKey !== undefined\">A key must be specified</span>\n          </div>\n        </div>\n        <div class=\"control-group\">\n          <label class=\"control-label\" for=\"propValue\">Value</label>\n\n          <div class=\"controls\">\n            <input class=\"input-xlarge\" type=\"text\" id=\"propValue\" placeholder=\"Value\" ng-model=\"addPropValue\"/>\n          </div>\n        </div>\n      </div>\n      <div class=\"modal-footer\">\n        <input class=\"btn btn-success\" ng-disabled=\"!(addPropKey !== \'\' && addPropKey !== undefined)\" type=\"submit\"\n               value=\"Add\">\n        <input class=\"btn btn-primary\" ng-click=\"addPropertyDialog.close()\" type=\"button\" value=\"Cancel\">\n      </div>\n    </form>\n  </div>\n</div>\n");
+$templateCache.put("plugins/osgi/html/pid.html","<div class=\"controller-section\" ng-controller=\"Osgi.PidController\">\n  <div ng-include src=\"\'app/osgi/html/pid-details.html\'\"></div>\n</div>\n");
+$templateCache.put("plugins/osgi/html/services.html","<script type=\"text/ng-template\" id=\"osgiServiceTemplate\">\n  <table>\n    <tr>\n      <th>Using Bundles</th>\n    </tr>\n    <tr>\n      <td>\n        <ul>\n          <li ng-repeat=\"b in row.UsingBundles\">\n            <a href=\'#/osgi/bundle/{{b.Identifier}}{{hash}}\'>{{b.SymbolicName}}</a>\n          </li>\n        </ul>\n      </td>\n    </tr>\n  </table>\n</script>\n\n<div class=\"controller-section\" ng-controller=\"Osgi.ServiceController\">\n\n  <table class=\"table table-striped\" hawtio-simple-table=\"mygrid\"></table>\n\n  <table cellpadding=\"0\" cellspacing=\"0\" border=\"0\"\n         class=\"table table-condensed table-striped table-bordered table-hover\"\n         id=\"grid\">\n    <thead>\n    <tr>\n      <th></th>\n      <th>ID</th>\n      <th>Bundle</th>\n      <th>Object Class(es)</th>\n    </tr>\n    </thead>\n    <tbody>\n  </table>\n</div>\n");
+$templateCache.put("plugins/osgi/html/svc-dependencies.html","<style type=\"text/css\">\n\n    div#pop-up {\n        display: none;\n        position:absolute;\n        color: white;\n        font-size: 14px;\n        background: rgba(0,0,0,0.6);\n        padding: 5px 10px 5px 10px;\n        -moz-border-radius: 8px 8px;\n        border-radius: 8px 8px;\n    }\n\n    div#pop-up-title {\n        font-size: 15px;\n        margin-bottom: 4px;\n        font-weight: bolder;\n    }\n    div#pop-up-content {\n        font-size: 12px;\n    }\n\n    rect.graphbox {\n        fill: #DDD;\n    }\n\n    rect.graphbox.frame {\n        stroke: #222;\n        stroke-width: 2px\n    }\n\n    path.link {\n        fill: none;\n        stroke: #666;\n        stroke-width: 1.5px;\n    }\n\n    path.link.registered {\n        stroke: #444;\n    }\n\n    path.link.inuse {\n        stroke-dasharray: 0,2 1;\n    }\n\n    circle {\n        fill: #black;\n    }\n\n    circle.service {\n        fill: blue;\n    }\n\n    circle.bundle {\n        fill: black;\n    }\n\n    circle.package {\n        fill: gray;\n    }\n\n    text {\n        font: 10px sans-serif;\n        pointer-events: none;\n    }\n\n    text.shadow {\n        stroke: #fff;\n        stroke-width: 3px;\n        stroke-opacity: .8;\n    }\n\n</style>\n\n<div ng-controller=\"Osgi.ServiceDependencyController\">\n\n    <div class=\"pull-left\">\n        <form class=\"form-inline no-bottom-margin\">\n            <fieldset>\n                <div class=\"control-group inline-block\">\n                    <input type=\"text\" class=\"search-query\" placeholder=\"Filter Bundle Symbolic Name...\" ng-model=\"bundleFilter\">\n                    <input type=\"text\" class=\"search-query\" placeholder=\"Filter Package Name...\" ng-model=\"packageFilter\" ng-change=\"updatePkgFilter()\">\n                    <label class=\"radio\" for=\"showServices\">\n                        <input id=\"showServices\" type=\"radio\" value=\"services\" ng-model=\"selectView\"> Show Services\n                    </label>\n                    <label class=\"radio\" for=\"showPackages\">\n                        <input id=\"showPackages\" type=\"radio\" value=\"packages\" ng-model=\"selectView\" ng-disabled=\"disablePkg\"> Show Packages\n                    </label>\n                    <label class=\"checkbox\" for=\"hideUnused\">\n                        <input id=\"hideUnused\" type=\"checkbox\" ng-model=\"hideUnused\"> Hide Unused\n                    </label>\n                    <button class=\"btn btn-primary\" ng-click=\"updateGraph()\" title=\"Apply the selected criteria to the Graph.\">Apply</button>\n                </div>\n            </fieldset>\n        </form>\n    </div>\n\n  <div ng-hide=\"inDashboard\" class=\"add-link\">\n    <a ng-href=\"{{addToDashboardLink()}}\" title=\"Add this view to a Dashboard\"><i class=\"icon-share\"></i></a>\n  </div>\n\n    <div id=\"pop-up\">\n        <div id=\"pop-up-title\"></div>\n        <div id=\"pop-up-content\"></div>\n    </div>\n\n  <div class=\"row-fluid\">\n    <div class=\"span12 canvas\" style=\"min-height: 800px\">\n      <div hawtio-force-graph graph=\"graph\" link-distance=\"100\" charge=\"-300\" nodesize=\"6\"></div>\n    </div>\n  </div>\n\n</div>\n");
 $templateCache.put("plugins/wiki/exemplar/document.html","<h2>This is a title</h2>\n\n<p>Here are some notes</p>");
 $templateCache.put("plugins/wiki/html/camelCanvas.html","<div ng-controller=\"Wiki.CamelController\">\n\n  <div class=\"wiki-fixed\" ng-controller=\"Wiki.CamelCanvasController\">\n    <ng-include src=\"\'app/wiki/html/camelNavBar.html\'\"></ng-include>\n\n    <script type=\"text/ng-template\"\n            id=\"nodeTemplate\">\n      <div class=\"component window\"\n           id=\"{{id}}\"\n           title=\"{{node.tooltip}}\">\n        <div class=\"window-inner {{node.type}}\">\n          <img class=\"nodeIcon\"\n               title=\"Click and drag to create a connection\"\n               src=\"{{node.imageUrl}}\">\n          <span class=\"nodeText\"\n                title=\"{{node.label}}\">{{node.label}}</span>\n        </div>\n      </div>\n    </script>\n\n\n    <div class=\"row-fluid\">\n      <div class=\"span12\">\n        <ul class=\"nav nav-tabs\">\n          <li ng-class=\"{active : true}\">\n            <a ng-href=\'{{startLink}}/camel/canvas/{{pageId}}\' title=\"Edit the diagram in a draggy droppy way\"\n               data-placement=\"bottom\">\n              <i class=\"icon-picture\"></i> Canvas</a></li>\n          <li ng-class=\"{active : false}\">\n            <a ng-href=\'{{startLink}}/camel/properties/{{pageId}}\' title=\"Switch to the tree based view\"\n               data-placement=\"bottom\">\n              <i class=\"icon-sitemap\"></i> Tree</a></li>\n\n          <li class=\"pull-right\">\n            <a href=\'\' title=\"Add new pattern node connecting to this pattern\" ng-click=\"addDialog.open()\"\n               data-placement=\"bottom\">\n              <i class=\"icon-plus\"></i> Add</a></li>\n\n          <li class=\"pull-right\">\n            <a href=\'\' title=\"Automatically layout the diagram \" ng-click=\"doLayout()\"\n               data-placement=\"bottom\">\n              <i class=\"icon-magic\"></i> Layout</a></li>\n\n          <li class=\"pull-right\" style=\"margin-top: 0; margin-bottom: 0;\">\n            </li>\n\n          <!--\n          <li class=\"pull-right\">\n            <a href=\'\' title=\"Edit the properties for the selected node\" ng-disabled=\"!selectedFolder\"\n               ng-click=\"propertiesDialog.open()\"\n               data-placement=\"bottom\">\n              <i class=\"icon-edit\"></i> Properties</a></li>\n              -->\n        </ul>\n\n        <div class=\"modal-large\">\n          <div modal=\"addDialog.show\" close=\"addDialog.close()\" ng-options=\"addDialog.options\">\n            <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"addAndCloseDialog()\">\n              <div class=\"modal-header\"><h4>Add Node</h4></div>\n              <div class=\"modal-body\">\n                <tabset>\n                  <tab heading=\"Patterns\">\n                    <div hawtio-tree=\"paletteTree\" hideRoot=\"true\" onSelect=\"onPaletteSelect\"\n                         activateNodes=\"paletteActivations\"></div>\n                  </tab>\n                  <tab heading=\"Endpoints\">\n                    <div hawtio-tree=\"componentTree\" hideRoot=\"true\" onSelect=\"onComponentSelect\"\n                         activateNodes=\"componentActivations\"></div>\n                  </tab>\n                </tabset>\n              </div>\n              <div class=\"modal-footer\">\n                <input id=\"submit\" class=\"btn btn-primary add\" type=\"submit\" ng-disabled=\"!selectedPaletteNode && !selectedComponentNode\"\n                       value=\"Add\">\n                <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"addDialog.close()\">Cancel</button>\n              </div>\n            </form>\n          </div>\n        </div>\n\n\n        <!--\n        <div modal=\"propertiesDialog.show\" close=\"propertiesDialog.close()\" ng-options=\"propertiesDialog.options\">\n          <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"updatePropertiesAndCloseDialog()\">\n            <div class=\"modal-header\"><h4>Properties</h4></div>\n            <div class=\"modal-body\">\n\n              <div ng-show=\"!selectedEndpoint\"> -->\n                <!-- pattern form --> <!--\n                <div simple-form name=\"formEditor\" entity=\'nodeData\' data=\'nodeModel\' schema=\"schema\"\n                     onsubmit=\"updatePropertiesAndCloseDialog\"></div>\n              </div>\n              <div ng-show=\"selectedEndpoint\"> -->\n                <!-- endpoint form -->\n                <!--\n                <div class=\"control-group\">\n                  <label class=\"control-label\" for=\"endpointPath\">Endpoint</label>\n\n                  <div class=\"controls\">\n                    <input id=\"endpointPath\" class=\"span10\" type=\"text\" ng-model=\"endpointPath\" placeholder=\"name\"\n                           typeahead=\"title for title in endpointCompletions($viewValue) | filter:$viewValue\"\n                           typeahead-editable=\'true\'\n                           min-length=\"1\">\n                  </div>\n                </div>\n                <div simple-form name=\"formEditor\" entity=\'endpointParameters\' data=\'endpointSchema\'\n                     schema=\"schema\"></div>\n              </div>\n\n\n            </div>\n            <div class=\"modal-footer\">\n              <input class=\"btn btn-primary add\" type=\"submit\" ng-click=\"updatePropertiesAndCloseDialog()\" value=\"OK\">\n              <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"propertiesDialog.close()\">Cancel</button>\n            </div>\n          </form>\n        </div>\n        -->\n\n      </div>\n    </div>\n\n    <div class=\"row-fluid\">\n    </div>\n\n    <div class=\"panes gridStyle\">\n      <div class=\"left-pane\">\n        <div class=\"camel-viewport camel-canvas\">\n          <div style=\"position: relative;\" class=\"canvas\"></div>\n        </div>\n      </div>\n      <div class=\"right-pane\">\n        <div class=\"camel-props\">\n          <div class=\"button-bar\">\n            <div class=\"centered\">\n              <form class=\"form-inline\">\n                <label>Route: </label>\n                <select ng-model=\"selectedRouteId\" ng-options=\"routeId for routeId in routeIds\"></select>\n              </form>\n              <div class=\"btn-group\">\n                <button class=\"btn\"\n                        title=\"{{getDeleteTitle()}}\"\n                        ng-click=\"removeNode()\"\n                        data-placement=\"bottom\">\n                    <i class=\"icon-remove\"></i> Delete {{getDeleteTarget()}}</button>\n                <button class=\"btn\"\n                        title=\"Apply any changes to the endpoint properties\"\n                        ng-disabled=\"!isFormDirty()\"\n                        ng-click=\"updateProperties()\">\n                    <i class=\"icon-ok\"></i> Apply</button>\n                <!-- TODO Would be good to have this too\n                <button class=\"btn\"\n                        title=\"Clear any changes to the endpoint properties\"\n                        ng-disabled=\"!isFormDirty()\"\n                        ng-click=\"resetForms()\">\n                  <i class=\"icon-remove\"></i> Cancel</button> -->\n              </div>\n            </div>\n          </div>\n          <div class=\"prop-viewport\">\n\n            <div>\n              <!-- pattern form -->\n              <div ng-show=\"!selectedEndpoint\">\n                <div simple-form\n                     name=\"formEditor\"\n                     entity=\'nodeData\'\n                     data=\'nodeModel\'\n                     schema=\"schema\"\n                     onsubmit=\"updateProperties\"></div>\n              </div>\n\n              <!-- endpoint form -->\n              <div class=\"endpoint-props\" ng-show=\"selectedEndpoint\">\n                <p>Endpoint</p>\n                <form name=\"endpointForm\">\n                  <div class=\"control-group\">\n                    <label class=\"control-label\" for=\"endpointPath\">URI:</label>\n\n                    <div class=\"controls\">\n                      <input id=\"endpointPath\" class=\"span10\" type=\"text\" ng-model=\"endpointPath\" placeholder=\"name\"\n                             typeahead=\"title for title in endpointCompletions($viewValue) | filter:$viewValue\"\n                             typeahead-editable=\'true\'\n                             min-length=\"1\">\n                    </div>\n                  </div>\n                </form>\n\n                <div simple-form\n                     name=\"formEditor\"\n                     entity=\'endpointParameters\'\n                     data=\'endpointSchema\'\n                     schema=\"schema\"\n                     onsubmit=\"updateProperties\"></div>\n              </div>\n\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/camelDiagram.html","<div ng-include=\"diagramTemplate\"></div>\n");
@@ -17486,20 +17500,6 @@ $templateCache.put("plugins/wiki/html/sourceView.html","<textarea id=\"source\" 
 $templateCache.put("plugins/wiki/html/viewBook.html","<div ng-controller=\"Wiki.ViewController\">\n\n  <script type=\"text/ng-template\" id=\"fileCellTemplate.html\">\n    <div class=\"ngCellText\"\n         title=\"{{fileName(row.entity)}} - Last Modified: {{row.entity.lastModified | date:\'medium\'}}, Size: {{row.entity.length}}\">\n      <a href=\"{{childLink(row.entity)}}\" class=\"file-name\">\n        <span class=\"file-icon\"\n              ng-class=\"fileClass(row.entity)\"\n              ng-bind-html-unsafe=\"fileIconHtml(row)\">\n\n              </span>{{fileName(row.entity)}}\n      </a>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"fileColumnTemplate.html\">\n\n    <div class=\"ngHeaderSortColumn {{col.headerClass}}\"\n         ng-style=\"{\'cursor\': col.cursor}\"\n         ng-class=\"{ \'ngSorted\': !noSortVisible }\">\n\n      <div class=\"ngHeaderText\" ng-hide=\"pageId === \'/\'\">\n        <a ng-href=\"{{parentLink()}}\"\n           class=\"wiki-file-list-up\"\n           title=\"Open the parent folder\">\n          <i class=\"icon-level-up\"></i> Up a directory\n        </a>\n      </div>\n    </div>\n\n  </script>\n\n  <ng-include src=\"\'app/wiki/html/viewNavBar.html\'\"></ng-include>\n\n  <div class=\"wiki-fixed form-horizontal\">\n    <div class=\"row-fluid\">\n      <div class=\"tocify\" wiki-href-adjuster>\n        <!-- TODO we maybe want a more flexible way to find the links to include than the current link-filter -->\n        <div hawtio-toc-display get-contents=\"getContents(filename, cb)\"\n             html=\"html\" link-filter=\"[file-extension]\">\n        </div>\n      </div>\n      <div class=\"toc-content\" id=\"toc-content\"></div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/viewNavBar.html","<div ng-hide=\"inDashboard\" class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs\">\n      <li ng-show=\"branches.length || branch\">\n        <div hawtio-drop-down=\"branchMenuConfig\"></div>\n      </li>\n      <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href) && !objectId}\'>\n        <a class=\"breadcrumb-link\" ng-href=\"{{link.href}}\">\n          <span class=\"contained c-medium\">{{link.name}}</span>\n        </a>\n      </li>\n      <li ng-show=\"objectId\">\n        <a ng-href=\"{{historyLink}}{{hash}}\">History</a>\n      </li>\n      <li ng-show=\"objectId\" class=\"active\">\n        <a>{{objectId}}</a>\n      </li>\n\n      <li class=\"pull-right dropdown\">\n        <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\">\n          Actions <span class=\"caret\"></span>\n        </a>\n        <ul class=\"dropdown-menu\">\n          <li ng-show=\"sourceLink()\">\n            <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n               data-placement=\"bottom\">\n              <i class=\"icon-file-alt\"></i> Source</a>\n          </li>\n          <li>\n            <a ng-href=\"{{historyLink}}{{hash}}\" ng-hide=\"!historyLink\" title=\"View the history of this file\"\n               data-placement=\"bottom\">\n              <i class=\"icon-comments-alt\"></i> History</a>\n          </li>\n          <!--\n          <li class=\"divider\">\n          </li>\n          -->\n          <li ng-hide=\"gridOptions.selectedItems.length !== 1\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"rename\">\n            <a ng-click=\"openRenameDialog()\"\n               title=\"Rename the selected document\"\n               data-placement=\"bottom\">\n              <i class=\"icon-adjust\"></i> Rename</a>\n          </li>\n          <li ng-hide=\"!gridOptions.selectedItems.length\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"rename\">\n            <a ng-click=\"openMoveDialog()\"\n               title=\"move the selected documents to a new folder\"\n               data-placement=\"bottom\">\n              <i class=\"icon-move\"></i> Move</a>\n          </li>\n          <!--\n          <li class=\"divider\">\n          </li>\n          -->\n          <li ng-hide=\"!gridOptions.selectedItems.length\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"remove\">\n            <a ng-click=\"openDeleteDialog()\"\n               title=\"Delete the selected document(s)\"\n               data-placement=\"bottom\">\n              <i class=\"icon-remove\"></i> Delete</a>\n          </li>\n          <li class=\"divider\" ng-show=\"childActions.length\">\n          </li>\n          <li ng-repeat=\"childAction in childActions\">\n            <a ng-click=\"childAction.doAction()\"\n               title=\"{{childAction.title}}\"\n               data-placement=\"bottom\">\n              <i class=\"{{childAction.icon}}\"></i> {{childAction.name}}</a>\n          </li>\n        </ul>\n      </li>\n      <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n        <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this page\"\n           data-placement=\"bottom\">\n          <i class=\"icon-edit\"></i> Edit</a>\n      </li>\n      <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n        <a ng-href=\"{{createLink()}}{{hash}}\"\n           title=\"Create new page\"\n           data-placement=\"bottom\">\n          <i class=\"icon-plus\"></i> Create</a>\n      </li>\n      <li class=\"pull-right\">\n        <div class=\"btn-group\" \n             ng-hide=\"!children || profile\">\n          <a class=\"btn btn-small\"\n             ng-disabled=\"mode == ViewMode.List\"\n             href=\"\" \n             ng-click=\"setViewMode(ViewMode.List)\">\n            <i class=\"icon-list\"></i></a>\n          <a class=\"btn btn-small\" \n             ng-disabled=\"mode == ViewMode.Icon\"\n             href=\"\" \n             ng-click=\"setViewMode(ViewMode.Icon)\">\n            <i class=\"icon-th-large\"></i></a>\n        </div>\n      </li>\n      <li class=\"pull-right\">\n        <a href=\"\" ng-hide=\"children || profile\" title=\"Add to dashboard\" ng-href=\"{{createDashboardLink()}}\"\n           data-placement=\"bottom\">\n          <i class=\"icon-share\"></i>\n        </a>\n      </li>\n    </ul>\n  </div>\n</div>\n\n\n");
 $templateCache.put("plugins/wiki/html/viewPage.html","<div ng-controller=\"Wiki.ViewController\">\n  <script type=\"text/ng-template\" id=\"fileCellTemplate.html\">\n    <div class=\"ngCellText\"\n         title=\"{{fileName(row.entity)}} - Last Modified: {{row.entity.lastModified | date:\'medium\'}}, Size: {{row.entity.length}}\">\n      <a href=\"{{childLink(row.entity)}}\" class=\"file-name\" hawtio-file-drop=\"{{row.entity.fileName}}\" download-url=\"{{row.entity.downloadURL}}\">\n        <span class=\"file-icon\"\n              ng-class=\"fileClass(row.entity)\"\n              compile=\"fileIconHtml(row)\">\n        </span>{{fileName(row.entity)}}\n      </a>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"fileColumnTemplate.html\">\n    <div class=\"ngHeaderSortColumn {{col.headerClass}}\"\n         ng-style=\"{\'cursor\': col.cursor}\"\n         ng-class=\"{ \'ngSorted\': !noSortVisible }\">\n      <div class=\"ngHeaderText\" ng-hide=\"pageId === \'/\'\">\n        <a ng-href=\"{{parentLink()}}\"\n           class=\"wiki-file-list-up\"\n           title=\"Open the parent folder\">\n          <i class=\"icon-level-up\"></i> Up a directory\n        </a>\n      </div>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"imageTemplate.html\">\n    <img src=\"{{imageURL}}\">\n  </script>\n\n  <ng-include src=\"\'app/wiki/html/viewNavBar.html\'\"></ng-include>\n\n  <!-- Icon View -->\n  <div ng-show=\"mode == ViewMode.Icon\" class=\"wiki-fixed\">\n    <div ng-hide=\"!showAppHeader\">\n      <div class=\"row-fluid\">\n        <div class=\"span12\">\n          <div kubernetes-json=\"kubernetesJson\"></div>\n        </div>\n      </div>\n    </div>\n    <div ng-hide=\"!html\" wiki-href-adjuster wiki-title-linker>\n      <div class=\"row-fluid\" style=\"margin-left: 10px\">\n        <div class=\"span12\">\n          <div compile=\"html\"></div>\n        </div>\n      </div>\n    </div>\n    <div class=\"row-fluid\" ng-show=\"html && children\">\n      <div class=\"span12 wiki-icon-view-header\">\n        <h5>Directories and Files</h5>\n      </div>\n    </div>\n    <div class=\"row-fluid\" ng-hide=\"!directory\">\n      <div class=\"span12\" ng-controller=\"Wiki.FileDropController\">\n        <div class=\"wiki-icon-view\" nv-file-drop nv-file-over uploader=\"uploader\" over-class=\"ready-drop\">\n          <div class=\"column-box mouse-pointer well\"\n               ng-repeat=\"child in children\" \n               ng-class=\"isInGroup(gridOptions.selectedItems, child, \'selected\', \'\')\"\n               ng-click=\"toggleSelectionFromGroup(gridOptions.selectedItems, child)\">\n            <div class=\"row-fluid\">\n              <div class=\"span2\" hawtio-file-drop=\"{{child.fileName}}\" download-url=\"{{child.downloadURL}}\">\n                  <span class=\"app-logo\" ng-class=\"fileClass(child)\" compile=\"fileIconHtml(child)\"></span>\n              </div>\n              <div class=\"span10\">\n                <h3>\n                  <a href=\"{{childLink(child)}}\">{{child.displayName || child.name}}</a>\n                </h3>\n              </div>\n            </div>\n            <div class=\"row-fluid\" ng-show=\"child.summary\">\n              <div class=\"span12\">\n                <p compile=\"marked(child.summary)\"></p>\n              </div>\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n  <!-- end Icon view -->\n\n  <!-- start List view -->\n  <div ng-show=\"mode == ViewMode.List\" class=\"wiki-fixed\">\n    <hawtio-pane position=\"left\" width=\"300\">\n      <div ng-controller=\"Wiki.FileDropController\">\n        <div class=\"wiki-list-view\" nv-file-drop nv-file-over uploader=\"uploader\" over-class=\"ready-drop\">\n          <div class=\"wiki-grid\" hawtio-list=\"gridOptions\"></div>\n        </div>\n      </div>\n    </hawtio-pane>\n    <div class=\"row-fluid\">\n      <div ng-class=\"span12\">\n        <div ng-hide=\"!showProfileHeader\">\n          <div class=\"row-fluid\">\n            <div class=\"span12\">\n              <div fabric-profile-details version-id=\"versionId\" profile-id=\"profileId\"></div>\n              <p></p>\n            </div>\n          </div>\n        </div>\n        <div ng-hide=\"!showAppHeader\">\n          <div class=\"row-fluid\">\n            <div class=\"span12\">\n              <div kubernetes-json=\"kubernetesJson\" children=\"children\"></div>\n            </div>\n          </div>\n        </div>\n        <div ng-hide=\"!html\" wiki-href-adjuster wiki-title-linker>\n          <div class=\"row-fluid\" style=\"margin-left: 10px\">\n            <div class=\"span12\">\n              <div compile=\"html\"></div>\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n  <!-- end List view -->\n  <div ng-include=\"sourceView\" class=\"editor-autoresize\"></div>\n</div>\n");
-$templateCache.put("plugins/osgi/html/bundle-details.html","<div>\n  <table>\n    <tr>\n      <td></td>\n      <td class=\"less-big\">\n        <div class=\"btn-group\">\n          <button ng-click=\"stopBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"stopBundle\"\n                  title=\"stop\"><i class=\"icon-off\"/></button>\n          <button ng-click=\"startBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"startBundle\"\n                  title=\"start\"><i class=\"icon-play-circle\"/></button>\n          <button ng-click=\"refreshBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"refreshBundle\"\n                  title=\"refresh\"><i class=\"icon-refresh\"/></button>\n          <button ng-click=\"updateBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"updateBundle\"\n                  title=\"update\"><i class=\"icon-cloud-download\"/></button>\n          <button ng-click=\"uninstallBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"uninstallBundle\"\n                  title=\"uninstall\"><i class=\"icon-eject\"/></button>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td><p/></td>\n      <td/>\n    <tr>\n      <td>\n        <div ng-switch=\"row.Fragment\">\n          <div ng-switch-when=\"true\"><strong>Fragment&nbsp;ID:</strong></div>\n          <div ng-switch-default><strong>Bundle&nbsp;ID:</strong></div>\n        </div>\n      </td>\n      <td class=\"less-big\">{{row.Identifier}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Bundle&nbsp;Name:</strong></td>\n      <td class=\"less-big\">{{row.Headers[\'Bundle-Name\'].Value}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Symbolic&nbsp;Name:</strong></td>\n      <td class=\"less-big label\">\n        <div id=\"bsn\" rel=\"tooltip\">{{row.SymbolicName}}</div>\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Version:</strong></td>\n      <td class=\"less-big\">{{row.Version}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Start&nbsp;Level:</strong></td>\n      <td class=\"less-big\">{{row.StartLevel}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Location:</strong></td>\n      <td class=\"less-big\">\n        <a ng-href=\"{{mavenLink(row)}}\">\n          {{row.Location}}\n        </a>\n      </td>\n    </tr>\n    <tr>\n      <td><strong>State:</strong></td>\n      <td>\n        <div class=\"less-big label\" ng-class=\"row.StateStyle\">{{row.State}}</div>\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Last&nbsp;Modified:</strong></td>\n      <td class=\"less-big\">{{row.LastModified | date:\'medium\'}}\n      </td>\n    </tr>\n    <tr>\n      <td>\n        <div ng-switch=\"row.Fragment\">\n          <div ng-switch-when=\"true\"><strong>Hosts:</strong></div>\n          <div ng-switch-default><strong>Fragments:</strong></div>\n        </div>\n      </td>\n      <td class=\"less-big\">\n        <div ng-switch=\"row.Fragment\">\n          <div ng-switch-when=\"true\" ng-bind-html-unsafe=\"row.Hosts\"/>\n          <div ng-switch-default ng-bind-html-unsafe=\"row.Fragments\"/>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionInspectClassloading\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionInspectClassloading\"\n                 href=\"#collapseInspectClassloading\">\n                Inspect Classloading\n              </a>\n            </div>\n            <div id=\"collapseInspectClassloading\" class=\"accordion-body collapse in\">\n              <form class=\"form-inline\" hawtio-show object-name=\"{{osgiToolsMBean}}\" operation-name=\"getLoadClassOrigin\">\n                <fieldset>\n                  &nbsp;&nbsp;\n                  <input class=\"input-xlarge\" type=\"text\" ng-model=\"classToLoad\" placeHolder=\"Enter Class Name to Load...\">\n                  <button class=\"btn btn-success execute\" ng-click=\"executeLoadClass(classToLoad)\">Load class</button>\n                </fieldset>\n              </form>\n              <form class=\"form-inline\" hawtio-show object-name=\"{{osgiToolsMBean}}\" operation-name=\"getResourceURL\">\n                <fieldset>\n                  &nbsp;&nbsp;\n                  <input class=\"input-xlarge\" type=\"text\" ng-model=\"resourceToLoad\"\n                         placeHolder=\"Enter Resource Name to Find...\">\n                  <button class=\"btn btn-success execute\" ng-click=\"executeFindResource(resourceToLoad)\">Get resource\n                  </button>\n                </fieldset>\n              </form>\n              <div id=\"loadClassResult\"/>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionImportedPackages\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionImportedPackages\"\n                 href=\"#collapseImportedPackages\">\n                Imported Packages\n              </a>\n            </div>\n            <div id=\"collapseImportedPackages\" class=\"accordion-body collapse in\">\n              <table>\n                <tr ng-repeat=\"(package, data) in row.ImportData\">\n                  <td>\n                    <div class=\"less-big badge\" id=\"import.{{package}}\">{{package}}</div>\n                  </td>\n                </tr>\n              </table>\n              <div id=\"unsatisfiedOptionalImports\"/>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionExportedPackages\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionExportedPackages\"\n                 href=\"#collapseExportedPackages\">\n                Exported Packages\n              </a>\n            </div>\n            <div id=\"collapseExportedPackages\" class=\"accordion-body collapse in\">\n              <table>\n                <tr ng-repeat=\"(package, data) in row.ExportData\">\n                  <td>\n                    <div class=\"less-big badge badge-success\" id=\"export.{{package}}\">{{package}}</div>\n                  </td>\n                </tr>\n              </table>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td></td>\n      <td>\n        <div class=\"accordion\" id=\"accordionServices\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionServices\"\n                 href=\"#collapseServices\">\n                Services\n              </a>\n            </div>\n            <div id=\"collapseServices\" class=\"accordion-body collapse in\">\n              Registered Services\n              <table>\n                <tr ng-repeat=\"id in row.RegisteredServices\">\n                  <td><i class=\"icon-cog less-big text-success\" id=\"registers.service.{{id}}\">{{id}}</i></td>\n                </tr>\n              </table>\n              <br/>\n              Services used by this Bundle\n              <table>\n                <tr ng-repeat=\"id in row.ServicesInUse\">\n                  <td><i class=\"icon-cog less-big text-info\" id=\"uses.service.{{id}}\">{{id}}</i></td>\n                </tr>\n              </table>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionRequiringBundles\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionRequiringBundles\"\n                 href=\"#collapseRequiringBundles\">\n                Other Bundles using this Bundle\n              </a>\n            </div>\n            <div id=\"collapseRequiringBundles\" class=\"accordion-body collapse in\">\n              <div class=\"accordion-inner\">\n                <span ng-bind-html-unsafe=\"row.RequiringBundles\"/>\n              </div>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionHeaders\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionHeaders\"\n                 href=\"#collapsHeaders\">\n                Headers\n              </a>\n            </div>\n            <div id=\"collapsHeaders\" class=\"accordion-body collapse in\">\n              <table class=\"accordion-inner\">\n                <tr ng-repeat=\"(key, value) in row.Headers\" ng-show=\"showValue(key)\">\n                  <td valign=\"top\">{{key}}</td>\n                  <td>{{value.Value}}</td>\n                </tr>\n              </table>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n  </table>\n</div>\n");
-$templateCache.put("plugins/osgi/html/bundle-list.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundleListController\">\n  <div class=\"row-fluid bundle-list-toolbar\">\n\n    <div class=\"pull-left\">\n      <div class=\"btn-group\">\n        <a ng-href=\"#/osgi/bundle-list?p=container\"\n                type=\"button\"\n                class=\"btn active\"\n                title=\"List view\">\n          <i class=\"icon-list\"></i>\n        </a>\n        <a ng-href=\"#/osgi/bundles?p=container\"\n                type=\"button\"\n                class=\"btn\"\n                title=\"Table view\">\n          <i class=\"icon-table\"></i>\n        </a>\n      </div>\n\n      <div class=\"input-append\" hawtio-show object-name=\"{{frameworkMBean}}\" method-name=\"installBundle\">\n        <input class=\"input-xxlarge\"\n               type=\"text\"\n               placeholder=\"Install Bundle...\"\n               ng-model=\"bundleUrl\">\n        <button ng-disabled=\"installDisabled()\"\n                class=\"btn\"\n                ng-click=\"install()\"\n                title=\"Install\">\n          <i class=\"icon-ok\"></i>\n        </button>\n      </div>\n\n    </div>\n\n\n    <div class=\"pull-right\">\n      <strong>Show bundles: </strong>\n      &nbsp;\n      <label for=\"showActiveMQBundles\">ActiveMQ</label>\n      <input id=\"showActiveMQBundles\" type=\"checkbox\" ng-model=\"display.showActiveMQBundles\">\n      &nbsp;\n      &nbsp;\n      <label for=\"showCamelBundles\">Camel</label>\n      <input id=\"showCamelBundles\" type=\"checkbox\" ng-model=\"display.showCamelBundles\">\n      &nbsp;\n      &nbsp;\n      <label for=\"showCxfBundles\">CXF</label>\n      <input id=\"showCxfBundles\" type=\"checkbox\" ng-model=\"display.showCxfBundles\">\n      &nbsp;\n      &nbsp;\n      <label for=\"showPlatformBundles\">Platform</label>\n      <input id=\"showPlatformBundles\" type=\"checkbox\" ng-model=\"display.showPlatformBundles\">\n      &nbsp;\n      &nbsp;\n      &nbsp;\n      <select class=\"input-large\" ng-model=\"display.sortField\" id=\"sortField\">\n        <option value=\"Identifier\">Sort by ID</option>\n        <option value=\"Name\">Sort by Name</option>\n        <option value=\"SymbolicName\">Sort by Symbolic Name</option>\n      </select>\n      <select class=\"input-large\" ng-model=\"display.bundleField\" id=\"bundleField\">\n        <option value=\"Name\">Display Name</option>\n        <option value=\"SymbolicName\">Display Symbolic Name</option>\n      </select>\n      <input class=\"input-small search-query\" type=\"number\" min=\"0\"\n             ng-model=\"display.startLevelFilter\"\n             placeholder=\"Start Level...\"/>\n      <hawtio-filter ng-model=\"display.bundleFilter\" placeholder=\"Filter...\" save-as=\"osgi-bundle-list-text-filter\"></hawtio-filter>\n    </div>\n\n  </div>\n\n  <div class=\"row-fluid\" id=\"bundleTableHolder\">\n    <!-- Just create a bit of space between the form and the controls -->\n    <p></p>\n\n    <script type=\"text/ng-template\" id=\"popoverTemplate\">\n<small>\n  <table class=\"table\">\n    <tbody>\n    <tr ng-repeat=\"(k, v) in bundle track by $index\">\n      <td class=\"property-name\">{{k}}</td>\n      <td class=\"property-value\">{{v}}</td>\n    </tr>\n    </tbody>\n  </table>\n</small>\n    </script>\n\n    <div class=\"bundle-list centered\"\n         hawtio-auto-columns=\".bundle-item\">\n      <div ng-repeat=\"bundle in bundles\"\n           class=\"bundle-item\"\n           ng-show=\"filterBundle(bundle)\"\n           hawtio-template-popover title=\"Bundle details\">\n        <a id=\"{{bundle.Identifier}}\"\n           ng-href=\"#/osgi/bundle/{{bundle.Identifier}}?p=container\">\n          <span class=\"badge\" ng-class=\"getStateStyle(bundle.State)\">{{getLabel(bundle)}}</span>\n        </a>\n      </div>\n    </div>\n  </div>\n</div>\n");
-$templateCache.put("plugins/osgi/html/bundle.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundleController\">\n  <div ng-include src=\"\'app/osgi/html/bundle-details.html\'\"></div>\n</div>\n");
-$templateCache.put("plugins/osgi/html/bundles.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundlesController\">\n  <div class=\"row-fluid\">\n    <div class=\"pull-left\">\n\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n\n          <div class=\"btn-group inline-block\">\n            <a ng-href=\"#/osgi/bundle-list?p=container\"\n                    type=\"button\"\n                    class=\"btn\"\n                    title=\"List view\">\n              <i class=\"icon-list\"></i>\n            </a>\n            <a ng-href=\"#/osgi/bundles?p=container\"\n                    type=\"button\"\n                    class=\"btn active\"\n                    title=\"Table view\">\n              <i class=\"icon-table\"></i>\n            </a>\n          </div>\n\n          <div class=\"controls control-group inline-block controls-row\">\n            <div class=\"btn-group\">\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"stop()\" title=\"Stop\"><i class=\"icon-off\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"start()\" title=\"Start\"><i class=\"icon-play-circle\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"refresh()\" title=\"Refresh\"><i class=\"icon-refresh\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"update()\" title=\"Update\"><i class=\"icon-cloud-download\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"uninstall()\" title=\"Uninstall\"><i class=\"icon-eject\"></i></button>\n            </div>\n            <div class=\"input-append\">\n              <input class=\"input-xlarge\" type=\"text\" placeholder=\"Install Bundle...\" ng-model=\"bundleUrl\">\n              <button ng-disabled=\"installDisabled()\" class=\"btn\" ng-click=\"install()\" title=\"Install\"><i class=\"icon-ok\"></i></button>\n            </div>\n          </div>\n        </fieldset>\n      </form>\n      \n    </div>\n\n    <div class=\"pull-right\">\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n          <div class=\"control-group inline-block\">\n            <input type=\"text\"\n                   class=\"input-large search-query\"\n                   placeholder=\"Filter...\"\n                   ng-model=\"gridOptions.filterOptions.filterText\">\n          </div>\n        </fieldset>\n      </form>\n\n    </div>\n  </div>\n  \n  \n  <div class=\"row-fluid\">\n    <div ng-hide=\"loading\" class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n    <div ng-show=\"loading\">\n      Please wait, loading...\n    </div>\n  </div>\n</div>\n");
-$templateCache.put("plugins/osgi/html/configurations.html","<style type=\"text/css\">\n  .configuration-header {\n    margin: 20px 20px;\n  }\n\n  ul.configurations,\n  ul.configurations li {\n    list-style: none;\n  }\n\n  ul.configurations {\n    margin: 0px 20px;\n  }\n\n  ul.configurations .bundle-item {\n    display: list-item;\n    margin-bottom: 4px;\n  }\n\n  ul.configurations li.bundle-item a {\n    /*\n      TODO it\'d be nice to use the natural widgth here,\n      but then it might be nice to use multiple columns?\n    */\n    width: 450px;\n  }\n</style>\n\n<div class=\"controller-section\" ng-controller=\"Osgi.ConfigurationsController\">\n  <div class=\"row-fluid\">\n    <div class=\"configuration-header\">\n      <div class=\"configuration-filter\">\n        <input type=\"text\" class=\"span8 search-query\" placeholder=\"Filter...\" ng-model=\"filterText\">\n        <i class=\"icon-remove clickable\" title=\"Clear filter\" ng-click=\"filterText = \'\'\"></i>\n        <button class=\"btn pull-right\" ng-click=\"addPidDialog.open()\" title=\"Add a new configuration\" hawtio-show object-name=\"{{hawtioConfigAdminMBean}}\" method-name=\"configAdminUpdate\"><i\n                class=\"icon-plus\"></i> Configuration\n        </button>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row-fluid centered\" ng-hide=\"configurations.length\">\n    <i class=\"icon-spinner icon-spin\"></i>\n  </div>\n\n  <ul class=\"configurations\">\n    <li ng-repeat=\'config in configurations | filter:filterText\' class=\'{{config.class}} bundle-item\'>\n      <a ng-href=\"{{config.pidLink}}\" title=\"{{config.description}}\">\n        <span class=\"{{config.kind.class}}\">{{config.name}}</span>\n      </a>\n      <ul ng-show=\"config.isFactory\">\n        <li ng-repeat=\"child in config.children\" class=\'{{child.class}} bundle-item\'>\n          <a ng-href=\"{{child.pidLink}}\" title=\"{{child.description}}\">\n            <span class=\"{{child.kind.class}}\">{{child.name}}</span>\n          </a>\n        </li>\n      </ul>\n    </li>\n  </ul>\n\n  <div modal=\"addPidDialog.show\" close=\"addPidDialog.close()\" options=\"addPidDialog.options\">\n    <form name=\"addPidDialogForm\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"addPid(newPid)\">\n      <div class=\"modal-header\"><h4>Add New Configuration</h4></div>\n      <div class=\"modal-body\">\n        <div class=\"control-group\">\n          <label class=\"control-label\" for=\"newPid\">New configuration ID</label>\n\n          <div class=\"controls\">\n            <input class=\"input-xlarge\" type=\"text\" id=\"newPid\" ng-model=\"newPid\"/>\n          </div>\n        </div>\n      </div>\n      <div class=\"modal-footer\">\n        <input class=\"btn btn-success\" ng-disabled=\"!(newPid !== \'\' && newPid !== undefined)\" type=\"submit\" value=\"Add\">\n        <input class=\"btn btn-primary\" ng-click=\"addPidDialog.close()\" type=\"button\" value=\"Cancel\">\n      </div>\n    </form>\n  </div>\n</div>\n\n");
-$templateCache.put("plugins/osgi/html/framework.html","<div class=\"container-fluid\" ng-controller=\"Osgi.FrameworkController\">\n    <h3>Framework Configuration</h3>\n    <div class=\"span11\">\n    <table>\n        <tr>\n            <td><strong>Current Framework Start Level:</strong></td>\n            <td class=\"less-big\">{{startLevel}}</td>\n            <td><button class=\"btn btn-primary\" \n                        ng-click=\"edit(\'FrameworkStartLevel\', \'Framework Start Level\')\" \n                        title=\"Edit framework start level\"\n                        hawtio-show\n                        object-name=\"{{frameworkMBean}}\"\n                        method-name=\"setFrameworkStartLevel\">Edit</button></td>\n        </tr>\n        <tr><td><p></p></td></tr>\n        <tr>\n            <td><strong>Initial Bundle Start Level:</strong></td>\n            <td class=\"less-big\">{{initialBundleStartLevel}}</td>\n            <td><button class=\"btn btn-primary\"\n                        ng-click=\"edit(\'InitialBundleStartLevel\', \'Initial Bundle Start Level\')\" \n                        title=\"Edit initial bundle start level\"\n                        hawtio-show\n                        object-name=\"{{frameworkMBean}}\"\n                        method-name=\"setInitialBundleStartLevel\">Edit</button></td>\n        </tr>\n    </table>\n    </div>\n\n    <div modal=\"editDialog.show\" close=\"editDialog.close()\" options=\"editDialog.options\">\n        <form id=\"myForm\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"editDialog.close()\">\n            <div class=\"modal-header\"><h4>Change {{editDisplayName}}</h4></div>\n            <div class=\"modal-body\">\n                <p>New Start Level (0-100): <input ng-model=\"editResult\" type=\"number\" min=\"0\" max=\"100\" required/></p>\n            </div>\n            <div class=\"modal-footer\">\n                <input class=\"btn\" ng-click=\"editDialog.close()\" type=\"submit\" value=\"Cancel\">\n                <input class=\"btn btn-primary\" ng-click=\"edited(editAttr, editDisplayName, editResult)\" type=\"submit\" value=\"OK\">\n            </div>\n        </form>\n    </div>\n</div>\n");
-$templateCache.put("plugins/osgi/html/layoutOsgi.html","<ul class=\"nav nav-tabs\" hawtio-auto-dropdown ng-controller=\"Karaf.NavBarController\">\n  <li ng-class=\'{active : isActive(\"#/osgi/configuration\") || isPrefixActive(\"#/osgi/pid\")}\'>\n      <a ng-href=\"#/osgi/configurations{{hash}}\">Configuration</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/bundle\")}\'>\n      <a ng-href=\"#/osgi/bundle-list{{hash}}\">Bundles</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/features\") || isActive(\"#/osgi/feature\")}\' ng-show=\"isFeaturesEnabled\">\n    <a ng-href=\"#/osgi/features{{hash}}\">Features</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/package\")}\'>\n      <a ng-href=\"#/osgi/packages{{hash}}\">Packages</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/service\")}\'>\n      <a ng-href=\"#/osgi/services{{hash}}\">Services</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/scr-components\")}\' ng-show=\"isScrEnabled\">\n    <a ng-href=\"#/osgi/scr-components{{hash}}\">Declarative Services</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/server\")}\'>\n    <a ng-href=\"#/osgi/server{{hash}}\">Server</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/fwk\")}\'>\n      <a ng-href=\"#/osgi/fwk{{hash}}\">Framework</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/dependencies\")}\'>\n      <a ng-href=\"#/osgi/dependencies{{hash}}\">Dependencies</a>\n  </li>\n\n  <li class=\"dropdown overflow\" style=\"float: right !important; visibility: hidden;\">\n    <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\"><i class=\"icon-chevron-down\"></i></a>\n    <ul class=\"dropdown-menu right\"></ul>\n  </li>\n\n</ul>\n<div class=\"row-fluid\" ng-controller=\"Osgi.TopLevelController\">\n    <div ng-view></div>\n</div>\n\n\n");
-$templateCache.put("plugins/osgi/html/package-details.html","<div>\n    <table class=\"overviewSection\">\n        <tr>\n            <td><strong>Name:</strong></td>\n            <td class=\"less-big\">{{row.Name}}\n            </td>\n        </tr>\n        <tr>\n            <td><strong>Version:</strong></td>\n            <td class=\"less-big\">{{row.Version}}\n            </td>\n        </tr>\n        <tr>\n            <td><strong>Removal Pending:</strong></td>\n            <td class=\"less-big\">{{row.RemovalPending}}\n        </tr>\n        <tr>\n            <td><strong>Exporting Bundles:</strong></td>\n            <td>\n                <ul>\n                    <li ng-repeat=\"name in row.ExportingBundles\">\n                        <a href=\'#/osgi/bundle/{{name}}{{hash}}\'>{{name}}</a>\n                    </li>\n                </ul>\n            </td>\n        </tr>\n        <tr>\n            <td><strong>Importing Bundles:</strong></td>\n            <td>\n                <ul>\n                    <li ng-repeat=\"name in row.ImportingBundles\">\n                        <a href=\'#/osgi/bundle/{{name}}{{hash}}\'>{{name}}</a>\n                    </li>\n                </ul>\n            </td>\n        </tr>\n    </table>\n</div>");
-$templateCache.put("plugins/osgi/html/package.html","<div class=\"controller-section\" ng-controller=\"Osgi.PackageController\">\n\n<h1>{{row.id}}</h1>\n\n<div ng-include src=\"\'app/osgi/html/package-details.html\'\"></div>\n</div>\n");
-$templateCache.put("plugins/osgi/html/packages.html","<script type=\"text/ng-template\" id=\"packageBundlesTemplate\">\n  <table>\n    <tr>\n      <th>Exporting Bundles</th>\n      <th>Importing Bundles</th>\n    </tr>\n    <tr>\n      <td>\n        <ul>\n          <li ng-repeat=\"b in row.ExportingBundles\">\n            <a href=\'#/osgi/bundle/{{b.Identifier}}?\'>{{b.SymbolicName}}</a>\n          </li>\n        </ul>\n      </td>\n      <td>\n        <ul>\n          <li ng-repeat=\"b in row.ImportingBundles\">\n            <a href=\'#/osgi/bundle/{{b.Identifier}}?\'>{{b.SymbolicName}}</a>\n          </li>\n        </ul>\n      </td>\n    </tr>\n  </table>\n</script>\n\n<div class=\"controller-section\" ng-controller=\"Osgi.PackagesController\">\n  <table class=\"table table-striped\" hawtio-simple-table=\"mygrid\"></table>\n</div>\n");
-$templateCache.put("plugins/osgi/html/pid-details.html","<div>\n  <h4 title=\"{{metaType.description}}\">{{zkPid || metaType.name || pid}}\n    <span ng-show=\"factoryInstanceName\">: {{factoryInstanceName}}</span>\n  </h4>\n\n  <div ng-hide=\"editMode\">\n    <div class=\"row-fluid\">\n      <button class=\"btn\" ng-click=\"setEditMode(true)\" title=\"Edit this configuration\" hawtio-show object-name=\"{{hawtioConfigAdminMBean}}\" method-name=\"configAdminUpdate\"><i class=\"icon-edit\"></i> Edit</button>\n      <button class=\"btn btn-danger pull-right\" ng-click=\"deletePidDialog.open()\" title=\"Delete this configuration\" hawtio-show object-name=\"{{configAdminMBean}}\" method-name=\"delete\"><i class=\"icon-remove\"></i> Delete</button>\n    </div>\n    <div class=\"row-fluid config-admin-form view\">\n      <div simple-form name=\"pidEditor\" mode=\'view\' entity=\'entity\' data=\'schema\' schema=\"fullSchema\"></div>\n    </div>\n  </div>\n  <div ng-show=\"editMode\">\n    <div class=\"row-fluid\">\n      <button ng-show=\"newPid\" class=\"btn btn-primary\" ng-disabled=\"!canSave || !createForm.pidInstanceName\" ng-click=\"pidSave()\"><i class=\"icon-save\"></i> Create</button>\n      <button ng-hide=\"newPid\" class=\"btn btn-primary\" ng-disabled=\"!canSave\" ng-click=\"pidSave()\"><i class=\"icon-save\"></i> Save</button>\n      <button class=\"btn btn-warning\" ng-click=\"setEditMode(false)\"><i class=\"icon-remove\"></i> Cancel</button>\n      <button class=\"btn pull-right\" ng-click=\"addPropertyDialog.open()\" title=\"Add a new property value to this configuration\"><i class=\"icon-plus\"></i> Property</button>\n    </div>\n    <div class=\"row-fluid config-admin-form edit\">\n      <div ng-show=\"newPid\" class=\"new-config-name-form\">\n        <form class=\"form-horizontal\" action=\"\">\n          <fieldset>\n            <div class=\"control-group\">\n              <label class=\"control-label\" title=\"The name of the configuration file\">Configuration name: </label>\n              <div class=\"controls\">\n                <input type=\"text\" class=\"span12\"\n                       title=\"The name of the configuration file\"\n                       ng-required=\"true\"\n                       ng-model=\"createForm.pidInstanceName\" name=\"path\"\n                       autofocus=\"autofocus\">\n              </div>\n            </div>\n          </fieldset>\n        </form>\n      </div>\n\n      <div simple-form name=\"pidEditor\" mode=\'edit\' entity=\'entity\' data=\'schema\' schema=\"fullSchema\" onSubmit=\"pidSave()\"></div>\n    </div>\n  </div>\n\n  <div modal=\"deletePropDialog.show\" close=\"deletePropDialog.close()\" options=\"deletePropDialog.options\">\n    <form name=\"deleteProperty\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"deletePidPropConfirmed()\">\n      <div class=\"modal-header\"><h4>Delete property \'{{deleteKey}}\'</h4></div>\n      <div class=\"modal-body\">\n        <p>Are you sure?</p>\n      </div>\n      <div class=\"modal-footer\">\n        <input class=\"btn btn-success\" type=\"submit\" value=\"Delete\">\n        <input class=\"btn btn-primary\" ng-click=\"deletePropDialog.close()\" type=\"button\" value=\"Cancel\">\n      </div>\n    </form>\n  </div>\n\n  <div modal=\"deletePidDialog.show\" close=\"deletePidDialog.close()\" options=\"deletePidDialog.options\">\n    <form name=\"deletePid\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"deletePidConfirmed()\">\n      <div class=\"modal-header\"><h4>Delete configuration: {{pid}}</h4></div>\n      <div class=\"modal-body\">\n        <p>Are you sure?</p>\n      </div>\n      <div class=\"modal-footer\">\n        <input class=\"btn btn-success\" type=\"submit\" value=\"Delete\">\n        <input class=\"btn btn-primary\" ng-click=\"deletePidDialog.close()\" type=\"button\" value=\"Cancel\">\n      </div>\n    </form>\n  </div>\n\n  <div modal=\"addPropertyDialog.show\" close=\"addPropertyDialog.close()\" options=\"addPropertyDialog.options\">\n    <form name=\"addProperty\" class=\"form-horizontal no-bottom-margin\"\n          ng-submit=\"addPropertyConfirmed(addPropKey, addPropValue)\">\n      <div class=\"modal-header\"><h4>Add property</h4></div>\n      <div class=\"modal-body\">\n        <div class=\"control-group\">\n          <label class=\"control-label\" for=\"propKey\">Key</label>\n\n          <div class=\"controls\">\n            <input class=\"input-xlarge\" type=\"text\" id=\"propKey\" placeholder=\"Key\" ng-model=\"addPropKey\"/>\n            <span class=\"help-block\"\n                  ng-hide=\"addPropKey !== \'\' && addPropKey !== undefined\">A key must be specified</span>\n          </div>\n        </div>\n        <div class=\"control-group\">\n          <label class=\"control-label\" for=\"propValue\">Value</label>\n\n          <div class=\"controls\">\n            <input class=\"input-xlarge\" type=\"text\" id=\"propValue\" placeholder=\"Value\" ng-model=\"addPropValue\"/>\n          </div>\n        </div>\n      </div>\n      <div class=\"modal-footer\">\n        <input class=\"btn btn-success\" ng-disabled=\"!(addPropKey !== \'\' && addPropKey !== undefined)\" type=\"submit\"\n               value=\"Add\">\n        <input class=\"btn btn-primary\" ng-click=\"addPropertyDialog.close()\" type=\"button\" value=\"Cancel\">\n      </div>\n    </form>\n  </div>\n</div>\n");
-$templateCache.put("plugins/osgi/html/pid.html","<div class=\"controller-section\" ng-controller=\"Osgi.PidController\">\n  <div ng-include src=\"\'app/osgi/html/pid-details.html\'\"></div>\n</div>\n");
-$templateCache.put("plugins/osgi/html/services.html","<script type=\"text/ng-template\" id=\"osgiServiceTemplate\">\n  <table>\n    <tr>\n      <th>Using Bundles</th>\n    </tr>\n    <tr>\n      <td>\n        <ul>\n          <li ng-repeat=\"b in row.UsingBundles\">\n            <a href=\'#/osgi/bundle/{{b.Identifier}}{{hash}}\'>{{b.SymbolicName}}</a>\n          </li>\n        </ul>\n      </td>\n    </tr>\n  </table>\n</script>\n\n<div class=\"controller-section\" ng-controller=\"Osgi.ServiceController\">\n\n  <table class=\"table table-striped\" hawtio-simple-table=\"mygrid\"></table>\n\n  <table cellpadding=\"0\" cellspacing=\"0\" border=\"0\"\n         class=\"table table-condensed table-striped table-bordered table-hover\"\n         id=\"grid\">\n    <thead>\n    <tr>\n      <th></th>\n      <th>ID</th>\n      <th>Bundle</th>\n      <th>Object Class(es)</th>\n    </tr>\n    </thead>\n    <tbody>\n  </table>\n</div>\n");
-$templateCache.put("plugins/osgi/html/svc-dependencies.html","<style type=\"text/css\">\n\n    div#pop-up {\n        display: none;\n        position:absolute;\n        color: white;\n        font-size: 14px;\n        background: rgba(0,0,0,0.6);\n        padding: 5px 10px 5px 10px;\n        -moz-border-radius: 8px 8px;\n        border-radius: 8px 8px;\n    }\n\n    div#pop-up-title {\n        font-size: 15px;\n        margin-bottom: 4px;\n        font-weight: bolder;\n    }\n    div#pop-up-content {\n        font-size: 12px;\n    }\n\n    rect.graphbox {\n        fill: #DDD;\n    }\n\n    rect.graphbox.frame {\n        stroke: #222;\n        stroke-width: 2px\n    }\n\n    path.link {\n        fill: none;\n        stroke: #666;\n        stroke-width: 1.5px;\n    }\n\n    path.link.registered {\n        stroke: #444;\n    }\n\n    path.link.inuse {\n        stroke-dasharray: 0,2 1;\n    }\n\n    circle {\n        fill: #black;\n    }\n\n    circle.service {\n        fill: blue;\n    }\n\n    circle.bundle {\n        fill: black;\n    }\n\n    circle.package {\n        fill: gray;\n    }\n\n    text {\n        font: 10px sans-serif;\n        pointer-events: none;\n    }\n\n    text.shadow {\n        stroke: #fff;\n        stroke-width: 3px;\n        stroke-opacity: .8;\n    }\n\n</style>\n\n<div ng-controller=\"Osgi.ServiceDependencyController\">\n\n    <div class=\"pull-left\">\n        <form class=\"form-inline no-bottom-margin\">\n            <fieldset>\n                <div class=\"control-group inline-block\">\n                    <input type=\"text\" class=\"search-query\" placeholder=\"Filter Bundle Symbolic Name...\" ng-model=\"bundleFilter\">\n                    <input type=\"text\" class=\"search-query\" placeholder=\"Filter Package Name...\" ng-model=\"packageFilter\" ng-change=\"updatePkgFilter()\">\n                    <label class=\"radio\" for=\"showServices\">\n                        <input id=\"showServices\" type=\"radio\" value=\"services\" ng-model=\"selectView\"> Show Services\n                    </label>\n                    <label class=\"radio\" for=\"showPackages\">\n                        <input id=\"showPackages\" type=\"radio\" value=\"packages\" ng-model=\"selectView\" ng-disabled=\"disablePkg\"> Show Packages\n                    </label>\n                    <label class=\"checkbox\" for=\"hideUnused\">\n                        <input id=\"hideUnused\" type=\"checkbox\" ng-model=\"hideUnused\"> Hide Unused\n                    </label>\n                    <button class=\"btn btn-primary\" ng-click=\"updateGraph()\" title=\"Apply the selected criteria to the Graph.\">Apply</button>\n                </div>\n            </fieldset>\n        </form>\n    </div>\n\n  <div ng-hide=\"inDashboard\" class=\"add-link\">\n    <a ng-href=\"{{addToDashboardLink()}}\" title=\"Add this view to a Dashboard\"><i class=\"icon-share\"></i></a>\n  </div>\n\n    <div id=\"pop-up\">\n        <div id=\"pop-up-title\"></div>\n        <div id=\"pop-up-content\"></div>\n    </div>\n\n  <div class=\"row-fluid\">\n    <div class=\"span12 canvas\" style=\"min-height: 800px\">\n      <div hawtio-force-graph graph=\"graph\" link-distance=\"100\" charge=\"-300\" nodesize=\"6\"></div>\n    </div>\n  </div>\n\n</div>\n");
 $templateCache.put("plugins/wiki/html/modal/deleteDialog.html","<div>\n  <form class=\"form-horizontal\" ng-submit=\"deleteAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Delete Document</h4></div>\n    <div class=\"modal-body\">\n      <div class=\"control-group\">\n        <p>You are about to delete\n          <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                        when=\"{\'1\': \'this document!\', \'other\': \'these {} documents!\'}\">\n          </ng-pluralize>\n        </p>\n\n        <div ng-bind-html-unsafe=\"selectedFileHtml\"></div>\n        <p class=\"alert alert-danger\" ng-show=\"warning\" ng-bind-html-unsafe=\"warning\">\n        </p>\n      </div>\n    </div>\n    <div class=\"modal-footer\">\n      <input class=\"btn btn-primary\" type=\"submit\"\n             value=\"Delete\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"close()\">Cancel</button>\n    </div>\n  </form>\n</div>\n");
 $templateCache.put("plugins/wiki/html/modal/moveDialog.html","<div>\n    <form class=\"form-horizontal\" ng-submit=\"moveAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Move Document</h4></div>\n    <div class=\"modal-body\">\n      <div class=\"control-group\">\n        <label class=\"control-label\" for=\"moveFolder\">Folder</label>\n\n        <div class=\"controls\">\n          <input type=\"text\" id=\"moveFolder\" ng-model=\"move.moveFolder\"\n                 typeahead=\"title for title in folderNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'>\n        </div>\n      </div>\n    </div>\n    <div class=\"modal-footer\">\n      <input class=\"btn btn-primary\" type=\"submit\"\n             ng-disabled=\"!move.moveFolder\"\n             value=\"Move\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"close()\">Cancel</button>\n    </div>\n  </form>\n</div>");
 $templateCache.put("plugins/wiki/html/modal/renameDialog.html","<div>\n  <form class=\"form-horizontal\" ng-submit=\"renameAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Rename Document</h4></div>\n    <div class=\"modal-body\">\n      <div class=\"control-group\">\n        <label class=\"control-label\" for=\"renameFileName\">Name</label>\n\n        <div class=\"controls\">\n          <input type=\"text\" id=\"renameFileName\" ng-model=\"rename.newFileName\">\n        </div>\n      </div>\n\n      <div class=\"control-group\">\n        <div ng-show=\"fileExists.exists\" class=\"alert\">\n          Please choose a different name as <b>{{fileExists.name}}</b> already exists\n        </div>\n      </div>\n    </div>\n    <div class=\"modal-footer\">\n      <input class=\"btn btn-primary\" type=\"submit\"\n             ng-disabled=\"!fileName || fileExists.exists\"\n             value=\"Rename\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"close()\">Cancel</button>\n    </div>\n  </form>\n</div>\n");}]); hawtioPluginLoader.addModule("hawtio-wiki-templates");

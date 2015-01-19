@@ -142,7 +142,7 @@ module ActiveMQ {
                 if ( 'canonicalName' in o){
                     objectName = o['canonicalName'];
                 }
-                entries = Object.extended(o['keyPropertyList']).clone();
+                entries = _.cloneDeep(o['keyPropertyList']);
               }
 
               entries["_id"] = objectName;
