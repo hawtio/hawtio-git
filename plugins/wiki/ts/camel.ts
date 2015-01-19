@@ -1,7 +1,11 @@
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+/// <reference path="wikiPlugin.ts"/>
+
 /**
  * @module Wiki
  */
-/// <reference path="./wikiPlugin.ts"/>
 module Wiki {
 
   _module.controller("Wiki.CamelController", ["$scope", "$location", "$routeParams", "localStorage", "workspace", "wikiRepository", "jolokia", ($scope, $location, $routeParams, localStorage:WindowLocalStorage, workspace:Workspace, wikiRepository:GitWikiRepository, jolokia) => {

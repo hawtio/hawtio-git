@@ -1,14 +1,10 @@
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+
 /**
  * @module Wiki
  */
-/// <reference path="wikiPlugin.ts"/>
-/// <reference path="../../ui/js/dialog.ts"/>
-/// <reference path="wikiDialogs.ts"/>
-/// <reference path="../../fabric/js/fabricGlobals.ts"/>
-/// <reference path="../../fabric/js/fabricHelpers.ts"/>
-/// <reference path="../../kubernetes/js/kubernetesHelpers.ts"/>
-/// <reference path="../../helpers/js/storageHelpers.ts"/>
-/// <reference path="../../helpers/js/selectionHelpers.ts"/>
 module Wiki {
 
   // controller for handling file drops
@@ -52,8 +48,8 @@ module Wiki {
     uploader.onProgressAll = function (progress) {
       log.debug('onProgressAll', progress);
     };
-    uploader.onSuccessItem = function (fileItem, response, status, headers) {
-      log.debug('onSuccessItem', fileItem, response, status, headers);
+    uploader.Core.onSuccessItem = function (fileItem, response, status, headers) {
+      log.debug('Core.onSuccessItem', fileItem, response, status, headers);
     };
     uploader.onErrorItem = function (fileItem, response, status, headers) {
       log.debug('onErrorItem', fileItem, response, status, headers);
@@ -80,7 +76,7 @@ module Wiki {
 
     $scope.name = "WikiViewController";
 
-    var isFmc = Fabric.isFMCContainer(workspace);
+    var isFmc = Wiki.isFMCContainer(workspace);
 
     Wiki.initScope($scope, $routeParams, $location);
     SelectionHelpers.decorate($scope);

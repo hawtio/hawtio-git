@@ -1,3 +1,6 @@
+/// <reference path="../../includes.ts"/>
+/// <reference path="gitHelpers.ts"/>
+
 /**
  * @module Git
  * @main Git
@@ -206,7 +209,7 @@ module Git {
     }
 
     public getRepositoryLabel(fn, error) {
-      return this.jolokia.request({type: "read", mbean: this.mbean, attribute: ["RepositoryLabel"]}, onSuccess(function(result){
+      return this.jolokia.request({type: "read", mbean: this.mbean, attribute: ["RepositoryLabel"]}, Core.onSuccess(function(result){
         fn(result.value.RepositoryLabel);
       }, {error: error}));
     }
@@ -214,7 +217,7 @@ module Git {
     public exists(branch:string, path:string, fn):Boolean {
       var result;
       if (angular.isDefined(fn) && fn) {
-        result = this.jolokia.execute(this.mbean, "exists", branch, path, onSuccess(fn));
+        result = this.jolokia.execute(this.mbean, "exists", branch, path, Core.onSuccess(fn));
       } else {
         result = this.jolokia.execute(this.mbean, "exists", branch, path);
       }
@@ -226,80 +229,80 @@ module Git {
     }
 
     public read(branch:string, path:string, fn) {
-      return this.jolokia.execute(this.mbean, "read", branch, path, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "read", branch, path, Core.onSuccess(fn));
     }
 
     public write(branch:string, path:string, commitMessage:string, contents:string, fn) {
       var authorName = this.getUserName();
       var authorEmail = this.getUserEmail();
-      return this.jolokia.execute(this.mbean, "write", branch, path, commitMessage, authorName, authorEmail, contents, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "write", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
     }
 
     public writeBase64(branch:string, path:string, commitMessage:string, contents:string, fn) {
       var authorName = this.getUserName();
       var authorEmail = this.getUserEmail();
-      return this.jolokia.execute(this.mbean, "writeBase64", branch, path, commitMessage, authorName, authorEmail, contents, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "writeBase64", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
     }
 
     public createDirectory(branch:string, path:string, commitMessage:string, fn) {
       var authorName = this.getUserName();
       var authorEmail = this.getUserEmail();
 
-      return this.jolokia.execute(this.mbean, "createDirectory", branch, path, commitMessage, authorName, authorEmail, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "createDirectory", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
     }
 
     public revertTo(branch:string, objectId:string, blobPath:string, commitMessage:string, fn) {
       var authorName = this.getUserName();
       var authorEmail = this.getUserEmail();
 
-      return this.jolokia.execute(this.mbean, "revertTo", branch, objectId, blobPath, commitMessage, authorName, authorEmail, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "revertTo", branch, objectId, blobPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
     }
 
     public rename(branch:string, oldPath: string, newPath:string, commitMessage:string, fn) {
       var authorName = this.getUserName();
       var authorEmail = this.getUserEmail();
 
-      return this.jolokia.execute(this.mbean, "rename", branch, oldPath, newPath, commitMessage, authorName, authorEmail, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "rename", branch, oldPath, newPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
     }
 
     public remove(branch:string, path:string, commitMessage:string, fn) {
       var authorName = this.getUserName();
       var authorEmail = this.getUserEmail();
 
-      return this.jolokia.execute(this.mbean, "remove", branch, path, commitMessage, authorName, authorEmail, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "remove", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
     }
 
     public completePath(branch:string, completionText:string, directoriesOnly:boolean, fn) {
-      return this.jolokia.execute(this.mbean, "completePath", branch, completionText, directoriesOnly, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "completePath", branch, completionText, directoriesOnly, Core.onSuccess(fn));
     }
 
     public history(branch:string, objectId:string, path:string, limit:number, fn) {
-      return this.jolokia.execute(this.mbean, "history", branch, objectId, path, limit, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "history", branch, objectId, path, limit, Core.onSuccess(fn));
     }
 
     public commitTree(commitId:string, fn) {
-      return this.jolokia.execute(this.mbean, "getCommitTree", commitId, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "getCommitTree", commitId, Core.onSuccess(fn));
     }
 
     public commitInfo(commitId:string, fn) {
-      return this.jolokia.execute(this.mbean, "getCommitInfo", commitId, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "getCommitInfo", commitId, Core.onSuccess(fn));
     }
 
     public diff(objectId:string, baseObjectId:string, path:string, fn) {
-      return this.jolokia.execute(this.mbean, "diff", objectId, baseObjectId, path, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "diff", objectId, baseObjectId, path, Core.onSuccess(fn));
     }
 
     public getContent(objectId:string, blobPath:string, fn) {
-      return this.jolokia.execute(this.mbean, "getContent", objectId, blobPath, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "getContent", objectId, blobPath, Core.onSuccess(fn));
     }
 
 
     public readJsonChildContent(path:string, nameWildcard:string, search:string, fn) {
-      return this.jolokia.execute(this.mbean, "readJsonChildContent", this.branch, path, nameWildcard, search, onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "readJsonChildContent", this.branch, path, nameWildcard, search, Core.onSuccess(fn));
     }
 
     public branches(fn) {
-      return this.jolokia.execute(this.mbean, "branches", onSuccess(fn));
+      return this.jolokia.execute(this.mbean, "branches", Core.onSuccess(fn));
     }
 
     // TODO move...

@@ -1,12 +1,15 @@
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+
 /**
  * @module Wiki
  */
-/// <reference path="./wikiPlugin.ts"/>
 module Wiki {
 
   _module.controller("Wiki.HistoryController", ["$scope", "$location", "$routeParams", "$templateCache", "workspace", "marked", "fileExtensionTypeRegistry", "wikiRepository", "jolokia", ($scope, $location, $routeParams, $templateCache, workspace:Workspace, marked, fileExtensionTypeRegistry, wikiRepository:GitWikiRepository, jolokia) => {
 
-    var isFmc = Fabric.isFMCContainer(workspace);
+    var isFmc = Wiki.isFMCContainer(workspace);
 
     Wiki.initScope($scope, $routeParams, $location);
     $scope.selectedItems = [];

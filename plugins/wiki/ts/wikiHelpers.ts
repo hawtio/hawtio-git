@@ -1,10 +1,6 @@
-/// <reference path="../../baseIncludes.ts"/>
-/// <reference path="../../core/js/coreHelpers.ts"/>
-/// <reference path="../../git/js/gitHelpers.ts"/>
-/// <reference path="../../git/js/git.ts"/>
-/// <reference path="../../fabric/js/fabricHelpers.ts"/>
-/// <reference path="../../helpers/js/urlHelpers.ts"/>
-/// <reference path="../../docker-registry/js/dockerRegistryHelpers.ts"/>
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+
 /**
  * @module Wiki
  */
@@ -88,13 +84,13 @@ module Wiki {
           options.form.path = options.parentId;
           options.form.branch = options.branch;
           var json = angular.toJson(options.form);
-          var jolokia = <Jolokia.IJolokia> Core.injector.get("jolokia");
+          var jolokia = <Jolokia.IJolokia> HawtioCore.injector.get("jolokia");
           jolokia.request({
             type: 'exec',
             mbean: 'io.fabric8:type=KubernetesTemplateManager',
             operation: 'createAppByJson',
             arguments: [json]
-          }, onSuccess((response) => { 
+          }, Core.onSuccess((response) => {
             log.debug("Generated app, response: ", response);
             options.success(undefined); 
           }, {
@@ -350,6 +346,10 @@ module Wiki {
     }
   ];
 
+  export function isFMCContainer(workspace) {
+    return false;
+  }
+
   export function isWikiEnabled(workspace:Workspace, jolokia, localStorage) {
     return Git.createGitRepository(workspace, jolokia, localStorage) !== null;
   }
@@ -534,7 +534,7 @@ module Wiki {
     var extension = fileExtension(name);
     var answer = null;
     if (!fileExtensionTypeRegistry) {
-      fileExtensionTypeRegistry = Core.injector.get("fileExtensionTypeRegistry");
+      fileExtensionTypeRegistry = HawtioCore.injector.get("fileExtensionTypeRegistry");
     }
     angular.forEach(fileExtensionTypeRegistry, (array, key) => {
       if (array.indexOf(extension) >= 0) {

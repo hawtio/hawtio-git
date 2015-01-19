@@ -1,9 +1,11 @@
-/// <reference path="wikiPlugin.ts"/>
-/// <reference path="../../fabric/js/fabricHelpers.ts"/>
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+
 module Wiki {
 
   var CreateController = controller("CreateController", ["$scope", "$location", "$routeParams", "$route", "$http", "$timeout", "workspace", "jolokia", "wikiRepository", ($scope, $location:ng.ILocationService, $routeParams:ng.route.IRouteParamsService, $route:ng.route.IRouteService, $http:ng.IHttpService, $timeout:ng.ITimeoutService, workspace:Core.Workspace, jolokia:Jolokia.IJolokia, wikiRepository) => {
-    var isFmc = Fabric.isFMCContainer(workspace);
+    var isFmc = Wiki.isFMCContainer(workspace);
     Wiki.initScope($scope, $routeParams, $location);
     $scope.createDocumentTree = Wiki.createWizardTree(workspace, $scope);
     $scope.createDocumentTreeActivations = ["camel-spring.xml", "ReadMe.md"];

@@ -1,7 +1,10 @@
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+
 /**
  * @module Wiki
  */
-/// <reference path="./wikiPlugin.ts"/>
 module Wiki {
 
   _module.controller("Wiki.FormTableController", ["$scope", "$location", "$routeParams", "workspace", "wikiRepository", ($scope, $location, $routeParams, workspace:Workspace, wikiRepository:GitWikiRepository) => {

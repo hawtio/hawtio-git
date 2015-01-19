@@ -1,4 +1,6 @@
-/// <reference path="./wikiPlugin.ts"/>
+/// <reference path="../../includes.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+
 module Wiki {
 
   _module.directive('wikiHrefAdjuster', ["$location", ($location) => {

@@ -1,11 +1,14 @@
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+
 /**
  * @module Wiki
  */
-/// <reference path="wikiPlugin.ts"/>
 module Wiki {
   _module.controller("Wiki.NavBarController", ["$scope", "$location", "$routeParams", "workspace", "jolokia", "wikiRepository", "wikiBranchMenu", ($scope, $location, $routeParams, workspace:Workspace, jolokia, wikiRepository:GitWikiRepository, wikiBranchMenu:BranchMenu) => {
 
-    var isFmc = Fabric.isFMCContainer(workspace);
+    var isFmc = Wiki.isFMCContainer(workspace);
 
     Wiki.initScope($scope, $routeParams, $location);
     $scope.branchMenuConfig = <UI.MenuItem>{

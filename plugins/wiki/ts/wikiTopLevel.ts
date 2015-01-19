@@ -1,8 +1,7 @@
-/// <reference path="wikiPlugin.ts"/>
-/// <reference path="../../fabric/js/fabricGlobals.ts"/>
-/// <reference path="../../git/js/gitHelpers.ts"/>
-/// <reference path="../../core/js/workspace.ts"/>
-/// <reference path="../../osgi/js/osgiHelpers.ts"/>
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+
 module Wiki {
 
   export var TopLevelController = _module.controller("Wiki.TopLevelController", ['$scope', 'workspace', ($scope, workspace:Core.Workspace) => {

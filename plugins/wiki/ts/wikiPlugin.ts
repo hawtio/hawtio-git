@@ -1,15 +1,11 @@
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+
 /**
  * @module Wiki
  * @main Wiki
  */
-/// <reference path="wikiHelpers.ts"/>
-/// <reference path="../../ui/js/dropDown.ts"/>
-/// <reference path="../../core/js/workspace.ts"/>
-/// <reference path="../../git/js/git.ts"/>
-/// <reference path="../../git/js/gitHelpers.ts"/>
-/// <reference path="../../helpers/js/pluginHelpers.ts"/>
-/// <reference path="../../helpers/js/urlHelpers.ts"/>
-/// <reference path="./wikiRepository.ts"/>
 module Wiki {
 
   export var pluginName = 'wiki';

@@ -1,3 +1,6 @@
+/// <reference path="../../includes.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+
 module Wiki {
 
   export interface WikiDialog {

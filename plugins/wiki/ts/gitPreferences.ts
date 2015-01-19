@@ -1,7 +1,9 @@
+/// <reference path="../../includes.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+
 /**
  * @module Wiki
  */
-/// <reference path="./wikiPlugin.ts"/>
  module Wiki {
   _module.controller("Wiki.GitPreferences", ["$scope", "localStorage", "userDetails", ($scope, localStorage, userDetails) => {
     Core.initPreferenceScope($scope, localStorage, {

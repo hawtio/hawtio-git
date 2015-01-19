@@ -1,7 +1,10 @@
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+
 /**
  * @module Wiki
  */
-/// <reference path="./wikiPlugin.ts"/>
 module Wiki {
   _module.controller("Wiki.CamelCanvasController", ["$scope", "$element", "workspace", "jolokia", "wikiRepository", "$templateCache", "$interpolate", ($scope, $element, workspace:Workspace, jolokia, wikiRepository:GitWikiRepository, $templateCache, $interpolate) => {
     var jsPlumbInstance = jsPlumb.getInstance();

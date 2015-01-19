@@ -1,7 +1,10 @@
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+/// <reference path="wikiHelpers.ts"/>
+
 /**
  * @module Wiki
  */
-/// <reference path="./wikiPlugin.ts"/>
 module Wiki {
   _module.controller("Wiki.DozerMappingsController", ["$scope", "$location", "$routeParams", "workspace", "jolokia", "wikiRepository", "$templateCache", ($scope, $location, $routeParams, workspace:Workspace, jolokia, wikiRepository:GitWikiRepository, $templateCache) => {
     var log:Logging.Logger = Logger.get("Dozer");
