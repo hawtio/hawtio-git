@@ -55,7 +55,7 @@ module Osgi {
   }
 
   export function formatServiceName(objClass:any):string {
-    if (Object.isArray(objClass)) {
+    if (angular.isArray(objClass)) {
       return formatServiceNameArray(objClass);
     }
     var name = objClass.toString();
@@ -246,7 +246,7 @@ module Osgi {
       );
 
       // setup tooltips
-      $("#bsn").tooltip({title: readBSNHeaderData($scope.row.Headers["Bundle-SymbolicName"].Value),
+      (<any> $)("#bsn").tooltip({title: readBSNHeaderData($scope.row.Headers["Bundle-SymbolicName"].Value),
         placement: "right"});
 
       createImportPackageSection();
@@ -278,8 +278,9 @@ module Osgi {
           }
         }
         po += "</table></small>";
-        $(document.getElementById("import." + pkg)).
-                popover({title: "attributes and directives", content: po, trigger: "hover", html: true });
+
+        (<any> $)(document.getElementById("import." + pkg)).
+          popover({title: "attributes and directives", content: po, trigger: "hover", html: true });
 
         // Unset the value so that we can see whether there are any unbound optional imports left...
         importPackageHeaders[pkg] = undefined;
@@ -310,7 +311,7 @@ module Osgi {
         var po = "<small><table>";
         po += formatAttributesAndDirectivesForPopover(importPackageHeaders[pkg], false);
         po += "</table></small>";
-        $(document.getElementById("unsatisfied." + pkg)).
+        (<any> $)(document.getElementById("unsatisfied." + pkg)).
                 popover({title: "attributes and directives", content: po, trigger: "hover", html: true });
       }
     }
@@ -323,7 +324,7 @@ module Osgi {
                 "<tr><td><strong>Exported Version=</strong>" + $scope.row.ExportData[pkg].ReportedVersion + "</td></tr>";
         po += formatAttributesAndDirectivesForPopover(exportPackageHeaders[pkg], true);
         po += "</table></small>";
-        $(document.getElementById("export." + pkg)).
+        (<any> $)(document.getElementById("export." + pkg)).
                 popover({title: "attributes and directives", content: po, trigger: "hover", html: true });
       }
     }
@@ -380,11 +381,11 @@ module Osgi {
 
                     if (regEl !== undefined && regEl !== null) {
                       regEl.innerText = " " + formatServiceName(data[svcId].objectClass);
-                      $(regEl).popover({title: "service properties", content: po, trigger: "hover", html: true});
+                      (<any> $)(regEl).popover({title: "service properties", content: po, trigger: "hover", html: true});
                     }
                     if (usesEl !== undefined && usesEl !== null) {
                       usesEl.innerText = " " + formatServiceName(data[svcId].objectClass);
-                      $(usesEl).popover({title: "service properties", content: po, trigger: "hover", html: true});
+                      (<any> $)(usesEl).popover({title: "service properties", content: po, trigger: "hover", html: true});
                     }
                   }
                 }(id, reg, uses)));
