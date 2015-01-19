@@ -271,7 +271,7 @@ module ActiveMQ {
         return key.startsWith("JMS");
       }).sort(sort);
 
-      var remaining = headerKeys.subtract(jmsHeaders, propertiesKeys).sort(sort);
+      var remaining = headerKeys.subtract(jmsHeaders.concat(propertiesKeys)).sort(sort);
 
       var buffer = [];
 
