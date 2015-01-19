@@ -39,9 +39,9 @@ module DockerRegistry {
         // log.debug("Got back repositories: ", repositories);
         var results = repositories.results;
         results = results.sortBy((res) => { return res.name; }).first(15);
-        results = results.map((res) => { return res.name; });
-        // log.debug("Results: ", results);
-        deferred.resolve(results);
+        var names = results.map((res) => { return res.name; });
+        // log.debug("Results: ", names);
+        deferred.resolve(names);
       } else {
         // log.debug("didn't get back anything, bailing");
         deferred.reject([]);
