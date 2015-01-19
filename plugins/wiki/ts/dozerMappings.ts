@@ -1,5 +1,6 @@
 /// <reference path="../../includes.ts"/>
 /// <reference path="../../git/ts/gitHelpers.ts"/>
+/// <reference path="../../dozer/ts/dozerHelpers.ts"/>
 /// <reference path="wikiHelpers.ts"/>
 
 /**
@@ -404,7 +405,7 @@ module Wiki {
         if (entity instanceof Dozer.Field) {
           //var field: Dozer.Field = entity;
           $scope.propertiesTemplate = propertiesTemplate;
-          $scope.nodeModel = io_hawt_dozer_schema_Field;
+          $scope.nodeModel = Dozer.io_hawt_dozer_schema_Field;
           $scope.selectedDescription = "Field Mapping";
           $scope.selectedMapping = Core.pathGet(folder, ["parent", "entity"]);
           $scope.selectedMappingFolder = folder.parent;
@@ -413,7 +414,7 @@ module Wiki {
         else if (entity instanceof Dozer.Mapping) {
           //var mapping: Dozer.Mapping = entity;
           $scope.propertiesTemplate = propertiesTemplate;
-          $scope.nodeModel = io_hawt_dozer_schema_Mapping;
+          $scope.nodeModel = Dozer.io_hawt_dozer_schema_Mapping;
           $scope.selectedDescription = "Class Mapping";
           $scope.selectedMapping = entity;
           $scope.selectedMappingFolder = folder;

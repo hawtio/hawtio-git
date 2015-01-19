@@ -14,6 +14,10 @@ module Camel {
   export var defaultCamelTraceOrDebugIncludeStreams = true;
   export var defaultCamelRouteMetricMaxSeconds = 10;
 
+  export declare var _apacheCamelModel: any;
+  export declare var _jsonSchema: any;
+
+
   /**
    * Looks up the route XML for the given context and selected route and
    * processes the selected route's XML with the given function

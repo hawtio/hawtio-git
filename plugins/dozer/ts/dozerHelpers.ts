@@ -6,6 +6,11 @@
  */
 module Dozer {
 
+  export declare var io_hawt_dozer_schema_Field: any;
+  export declare var io_hawt_dozer_schema_FieldExclude: any;
+  export declare var io_hawt_dozer_schema_Mapping: any;
+  export declare var io_hawt_dozer_schema_Mappings: any;
+
   /**
    * The JMX domain for Dozer
    * @property jmxDomain

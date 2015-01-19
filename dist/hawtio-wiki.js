@@ -2987,235 +2987,6 @@ var ActiveMQ;
 })(ActiveMQ || (ActiveMQ = {}));
 
 /// <reference path="../../includes.ts"/>
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryInterfaces.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.context = '/docker-registry';
-    DockerRegistry.hash = UrlHelpers.join('#', DockerRegistry.context);
-    DockerRegistry.defaultRoute = UrlHelpers.join(DockerRegistry.hash, 'list');
-    DockerRegistry.basePath = UrlHelpers.join('app', DockerRegistry.context);
-    DockerRegistry.templatePath = UrlHelpers.join(DockerRegistry.basePath, 'html');
-    DockerRegistry.pluginName = 'DockerRegistry';
-    DockerRegistry.log = Logger.get(DockerRegistry.pluginName);
-    DockerRegistry.SEARCH_FRAGMENT = '/v1/search';
-    /**
-     * Fetch the available docker images in the registry, can only
-     * be called after app initialization
-     */
-    function getDockerImageRepositories(callback) {
-        var DockerRegistryRestURL = HawtioCore.injector.get("DockerRegistryRestURL");
-        var $http = HawtioCore.injector.get("$http");
-        DockerRegistryRestURL.then(function (restURL) {
-            $http.get(UrlHelpers.join(restURL, DockerRegistry.SEARCH_FRAGMENT)).success(function (data) {
-                callback(restURL, data);
-            }).error(function (data) {
-                DockerRegistry.log.debug("Error fetching image repositories:", data);
-                callback(restURL, null);
-            });
-        });
-    }
-    DockerRegistry.getDockerImageRepositories = getDockerImageRepositories;
-    function completeDockerRegistry() {
-        var $q = HawtioCore.injector.get("$q");
-        var $rootScope = HawtioCore.injector.get("$rootScope");
-        var deferred = $q.defer();
-        getDockerImageRepositories(function (restURL, repositories) {
-            if (repositories && repositories.results) {
-                // log.debug("Got back repositories: ", repositories);
-                var results = repositories.results;
-                results = results.sortBy(function (res) {
-                    return res.name;
-                }).first(15);
-                results = results.map(function (res) {
-                    return res.name;
-                });
-                // log.debug("Results: ", results);
-                deferred.resolve(results);
-            }
-            else {
-                // log.debug("didn't get back anything, bailing");
-                deferred.reject([]);
-            }
-        });
-        return deferred.promise;
-    }
-    DockerRegistry.completeDockerRegistry = completeDockerRegistry;
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry._module = angular.module(DockerRegistry.pluginName, ['hawtioCore', 'ngResource']);
-    DockerRegistry.controller = PluginHelpers.createControllerFunction(DockerRegistry._module, DockerRegistry.pluginName);
-    DockerRegistry.route = PluginHelpers.createRoutingFunction(DockerRegistry.templatePath);
-    DockerRegistry._module.config(['$routeProvider', function ($routeProvider) {
-        $routeProvider.when(UrlHelpers.join(DockerRegistry.context, 'list'), DockerRegistry.route('list.html', false));
-    }]);
-    DockerRegistry._module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', function (jolokiaUrl, jolokia, $q, $rootScope) {
-        var answer = $q.defer();
-        jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined, Core.onSuccess(function (response) {
-            var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
-            DockerRegistry.log.debug("Discovered docker registry API URL: ", proxified);
-            answer.resolve(proxified);
-            Core.$apply($rootScope);
-        }, {
-            error: function (response) {
-                DockerRegistry.log.debug("error fetching docker registry API details: ", response);
-                answer.reject(response);
-                Core.$apply($rootScope);
-            }
-        }));
-        return answer.promise;
-    }]);
-    DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
-        DockerRegistry.log.debug("Running");
-        viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
-        workspace.topLevelTabs.push({
-            id: 'docker-registry',
-            content: 'Images',
-            isValid: function (workspace) { return workspace.treeContainsDomainAndProperties(Fabric.jmxDomain, { type: 'KubernetesManager' }); },
-            isActive: function (workspace) { return workspace.isLinkActive('docker-registry'); },
-            href: function () { return DockerRegistry.defaultRoute; }
-        });
-    }]);
-    hawtioPluginLoader.addModule(DockerRegistry.pluginName);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.TopLevel = DockerRegistry.controller("TopLevel", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
-        $scope.repositories = [];
-        $scope.fetched = false;
-        $scope.restURL = '';
-        DockerRegistry.getDockerImageRepositories(function (restURL, repositories) {
-            $scope.restURL = restURL;
-            $scope.fetched = true;
-            if (repositories) {
-                $scope.repositories = repositories.results;
-                var previous = angular.toJson($scope.repositories);
-                $scope.fetch = PollHelpers.setupPolling($scope, function (next) {
-                    var searchURL = UrlHelpers.join($scope.restURL, DockerRegistry.SEARCH_FRAGMENT);
-                    $http.get(searchURL).success(function (repositories) {
-                        if (repositories && repositories.results) {
-                            if (previous !== angular.toJson(repositories.results)) {
-                                $scope.repositories = repositories.results;
-                                previous = angular.toJson($scope.repositories);
-                            }
-                        }
-                        next();
-                    });
-                });
-                $scope.fetch();
-            }
-            else {
-                DockerRegistry.log.debug("Failed initial fetch of image repositories");
-            }
-        });
-        $scope.$watchCollection('repositories', function (repositories) {
-            if (!Core.isBlank($scope.restURL)) {
-                if (!repositories || repositories.length === 0) {
-                    $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
-                    return;
-                }
-                // we've a new list of repositories, let's refresh our info on 'em
-                var outstanding = repositories.length;
-                function maybeNotify() {
-                    outstanding = outstanding - 1;
-                    if (outstanding <= 0) {
-                        $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
-                    }
-                }
-                repositories.forEach(function (repository) {
-                    var tagURL = UrlHelpers.join($scope.restURL, 'v1/repositories/' + repository.name + '/tags');
-                    // we'll give it half a second as sometimes tag info isn't instantly available
-                    $timeout(function () {
-                        DockerRegistry.log.debug("Fetching tags from URL: ", tagURL);
-                        $http.get(tagURL).success(function (tags) {
-                            DockerRegistry.log.debug("Got tags: ", tags, " for image repository: ", repository.name);
-                            repository.tags = tags;
-                            maybeNotify();
-                        }).error(function (data) {
-                            DockerRegistry.log.debug("Error fetching data for image repository: ", repository.name, " error: ", data);
-                            maybeNotify();
-                        });
-                    }, 500);
-                });
-            }
-        });
-    }]);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.TagController = DockerRegistry.controller("TagController", ["$scope", function ($scope) {
-        $scope.selectImage = function (imageID) {
-            $scope.$emit("DockerRegistry.SelectedImageID", imageID);
-        };
-    }]);
-    DockerRegistry.ListController = DockerRegistry.controller("ListController", ["$scope", "$templateCache", "$http", function ($scope, $templateCache, $http) {
-        $scope.imageRepositories = [];
-        $scope.selectedImage = undefined;
-        $scope.tableConfig = {
-            data: 'imageRepositories',
-            showSelectionCheckbox: true,
-            enableRowClickSelection: false,
-            multiSelect: true,
-            selectedItems: [],
-            filterOptions: {
-                filterText: ''
-            },
-            columnDefs: [
-                { field: 'name', displayName: 'Name', defaultSort: true },
-                { field: 'description', displayName: 'Description' },
-                { field: 'tags', displayName: 'Tags', cellTemplate: $templateCache.get("tagsTemplate.html") }
-            ]
-        };
-        $scope.deletePrompt = function (selectedRepositories) {
-            UI.multiItemConfirmActionDialog({
-                collection: selectedRepositories,
-                index: 'name',
-                onClose: function (result) {
-                    if (result) {
-                        selectedRepositories.forEach(function (repository) {
-                            var deleteURL = UrlHelpers.join($scope.restURL, '/v1/repositories/' + repository.name + '/');
-                            DockerRegistry.log.debug("Using URL: ", deleteURL);
-                            $http.delete(deleteURL).success(function (data) {
-                                DockerRegistry.log.debug("Deleted repository: ", repository.name);
-                            }).error(function (data) {
-                                DockerRegistry.log.debug("Failed to delete repository: ", repository.name);
-                            });
-                        });
-                    }
-                },
-                title: 'Delete Repositories?',
-                action: 'The following repositories will be deleted:',
-                okText: 'Delete',
-                okClass: 'btn-danger',
-                custom: 'This operation is permanent once completed!',
-                customClass: 'alert alert-warning'
-            }).open();
-        };
-        $scope.$on("DockerRegistry.SelectedImageID", function ($event, imageID) {
-            var imageJsonURL = UrlHelpers.join($scope.restURL, '/v1/images/' + imageID + '/json');
-            $http.get(imageJsonURL).success(function (image) {
-                DockerRegistry.log.debug("Got image: ", image);
-                $scope.selectedImage = image;
-            });
-        });
-        $scope.$on('DockerRegistry.Repositories', function ($event, restURL, repositories) {
-            $scope.imageRepositories = repositories;
-        });
-    }]);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
 /**
  * @module Camel
  */
@@ -3527,7 +3298,7 @@ var Camel;
      * @method
      */
     function getCamelSchema(nodeIdOrDefinition) {
-        return (angular.isObject(nodeIdOrDefinition)) ? nodeIdOrDefinition : Forms.lookupDefinition(nodeIdOrDefinition, _apacheCamelModel);
+        return (angular.isObject(nodeIdOrDefinition)) ? nodeIdOrDefinition : Forms.lookupDefinition(nodeIdOrDefinition, Camel._apacheCamelModel);
     }
     Camel.getCamelSchema = getCamelSchema;
     /**
@@ -3536,7 +3307,7 @@ var Camel;
      * @method
      */
     function isCamelPattern(nodeId) {
-        return Forms.isJsonType(nodeId, _apacheCamelModel, "org.apache.camel.model.OptionalIdentifiedDefinition");
+        return Forms.isJsonType(nodeId, Camel._apacheCamelModel, "org.apache.camel.model.OptionalIdentifiedDefinition");
     }
     Camel.isCamelPattern = isCamelPattern;
     /**
@@ -3572,7 +3343,7 @@ var Camel;
      * @method
      */
     function camelLanguageSettings(nodeName) {
-        return _apacheCamelModel.languages[nodeName];
+        return Camel._apacheCamelModel.languages[nodeName];
     }
     Camel.camelLanguageSettings = camelLanguageSettings;
     function isCamelLanguage(nodeName) {
@@ -6256,7 +6027,7 @@ var Camel;
     }
     Camel.getEndpointCategory = getEndpointCategory;
     function getConfiguredCamelModel() {
-        var schema = _apacheCamelModel;
+        var schema = Camel._apacheCamelModel;
         var definitions = schema["definitions"];
         if (definitions) {
             angular.forEach(camelModelTabExtensions, function (tabs, name) {
@@ -7405,7 +7176,7 @@ var Camel;
 (function (Camel) {
     Camel._module.controller("Camel.PropertiesController", ["$scope", "workspace", function ($scope, workspace) {
         $scope.viewTemplate = null;
-        $scope.schema = _apacheCamelModel;
+        $scope.schema = Camel._apacheCamelModel;
         $scope.$on("$routeChangeSuccess", function (event, current, previous) {
             // lets do this asynchronously to avoid Error: $digest already in progress
             setTimeout(updateData, 50);
@@ -8716,6 +8487,235 @@ var Camel;
 })(Camel || (Camel = {}));
 
 /// <reference path="../../includes.ts"/>
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryInterfaces.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.context = '/docker-registry';
+    DockerRegistry.hash = UrlHelpers.join('#', DockerRegistry.context);
+    DockerRegistry.defaultRoute = UrlHelpers.join(DockerRegistry.hash, 'list');
+    DockerRegistry.basePath = UrlHelpers.join('app', DockerRegistry.context);
+    DockerRegistry.templatePath = UrlHelpers.join(DockerRegistry.basePath, 'html');
+    DockerRegistry.pluginName = 'DockerRegistry';
+    DockerRegistry.log = Logger.get(DockerRegistry.pluginName);
+    DockerRegistry.SEARCH_FRAGMENT = '/v1/search';
+    /**
+     * Fetch the available docker images in the registry, can only
+     * be called after app initialization
+     */
+    function getDockerImageRepositories(callback) {
+        var DockerRegistryRestURL = HawtioCore.injector.get("DockerRegistryRestURL");
+        var $http = HawtioCore.injector.get("$http");
+        DockerRegistryRestURL.then(function (restURL) {
+            $http.get(UrlHelpers.join(restURL, DockerRegistry.SEARCH_FRAGMENT)).success(function (data) {
+                callback(restURL, data);
+            }).error(function (data) {
+                DockerRegistry.log.debug("Error fetching image repositories:", data);
+                callback(restURL, null);
+            });
+        });
+    }
+    DockerRegistry.getDockerImageRepositories = getDockerImageRepositories;
+    function completeDockerRegistry() {
+        var $q = HawtioCore.injector.get("$q");
+        var $rootScope = HawtioCore.injector.get("$rootScope");
+        var deferred = $q.defer();
+        getDockerImageRepositories(function (restURL, repositories) {
+            if (repositories && repositories.results) {
+                // log.debug("Got back repositories: ", repositories);
+                var results = repositories.results;
+                results = results.sortBy(function (res) {
+                    return res.name;
+                }).first(15);
+                results = results.map(function (res) {
+                    return res.name;
+                });
+                // log.debug("Results: ", results);
+                deferred.resolve(results);
+            }
+            else {
+                // log.debug("didn't get back anything, bailing");
+                deferred.reject([]);
+            }
+        });
+        return deferred.promise;
+    }
+    DockerRegistry.completeDockerRegistry = completeDockerRegistry;
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry._module = angular.module(DockerRegistry.pluginName, ['hawtioCore', 'ngResource']);
+    DockerRegistry.controller = PluginHelpers.createControllerFunction(DockerRegistry._module, DockerRegistry.pluginName);
+    DockerRegistry.route = PluginHelpers.createRoutingFunction(DockerRegistry.templatePath);
+    DockerRegistry._module.config(['$routeProvider', function ($routeProvider) {
+        $routeProvider.when(UrlHelpers.join(DockerRegistry.context, 'list'), DockerRegistry.route('list.html', false));
+    }]);
+    DockerRegistry._module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', function (jolokiaUrl, jolokia, $q, $rootScope) {
+        var answer = $q.defer();
+        jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined, Core.onSuccess(function (response) {
+            var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
+            DockerRegistry.log.debug("Discovered docker registry API URL: ", proxified);
+            answer.resolve(proxified);
+            Core.$apply($rootScope);
+        }, {
+            error: function (response) {
+                DockerRegistry.log.debug("error fetching docker registry API details: ", response);
+                answer.reject(response);
+                Core.$apply($rootScope);
+            }
+        }));
+        return answer.promise;
+    }]);
+    DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
+        DockerRegistry.log.debug("Running");
+        viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
+        workspace.topLevelTabs.push({
+            id: 'docker-registry',
+            content: 'Images',
+            isValid: function (workspace) { return workspace.treeContainsDomainAndProperties(Fabric.jmxDomain, { type: 'KubernetesManager' }); },
+            isActive: function (workspace) { return workspace.isLinkActive('docker-registry'); },
+            href: function () { return DockerRegistry.defaultRoute; }
+        });
+    }]);
+    hawtioPluginLoader.addModule(DockerRegistry.pluginName);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.TopLevel = DockerRegistry.controller("TopLevel", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
+        $scope.repositories = [];
+        $scope.fetched = false;
+        $scope.restURL = '';
+        DockerRegistry.getDockerImageRepositories(function (restURL, repositories) {
+            $scope.restURL = restURL;
+            $scope.fetched = true;
+            if (repositories) {
+                $scope.repositories = repositories.results;
+                var previous = angular.toJson($scope.repositories);
+                $scope.fetch = PollHelpers.setupPolling($scope, function (next) {
+                    var searchURL = UrlHelpers.join($scope.restURL, DockerRegistry.SEARCH_FRAGMENT);
+                    $http.get(searchURL).success(function (repositories) {
+                        if (repositories && repositories.results) {
+                            if (previous !== angular.toJson(repositories.results)) {
+                                $scope.repositories = repositories.results;
+                                previous = angular.toJson($scope.repositories);
+                            }
+                        }
+                        next();
+                    });
+                });
+                $scope.fetch();
+            }
+            else {
+                DockerRegistry.log.debug("Failed initial fetch of image repositories");
+            }
+        });
+        $scope.$watchCollection('repositories', function (repositories) {
+            if (!Core.isBlank($scope.restURL)) {
+                if (!repositories || repositories.length === 0) {
+                    $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
+                    return;
+                }
+                // we've a new list of repositories, let's refresh our info on 'em
+                var outstanding = repositories.length;
+                function maybeNotify() {
+                    outstanding = outstanding - 1;
+                    if (outstanding <= 0) {
+                        $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
+                    }
+                }
+                repositories.forEach(function (repository) {
+                    var tagURL = UrlHelpers.join($scope.restURL, 'v1/repositories/' + repository.name + '/tags');
+                    // we'll give it half a second as sometimes tag info isn't instantly available
+                    $timeout(function () {
+                        DockerRegistry.log.debug("Fetching tags from URL: ", tagURL);
+                        $http.get(tagURL).success(function (tags) {
+                            DockerRegistry.log.debug("Got tags: ", tags, " for image repository: ", repository.name);
+                            repository.tags = tags;
+                            maybeNotify();
+                        }).error(function (data) {
+                            DockerRegistry.log.debug("Error fetching data for image repository: ", repository.name, " error: ", data);
+                            maybeNotify();
+                        });
+                    }, 500);
+                });
+            }
+        });
+    }]);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.TagController = DockerRegistry.controller("TagController", ["$scope", function ($scope) {
+        $scope.selectImage = function (imageID) {
+            $scope.$emit("DockerRegistry.SelectedImageID", imageID);
+        };
+    }]);
+    DockerRegistry.ListController = DockerRegistry.controller("ListController", ["$scope", "$templateCache", "$http", function ($scope, $templateCache, $http) {
+        $scope.imageRepositories = [];
+        $scope.selectedImage = undefined;
+        $scope.tableConfig = {
+            data: 'imageRepositories',
+            showSelectionCheckbox: true,
+            enableRowClickSelection: false,
+            multiSelect: true,
+            selectedItems: [],
+            filterOptions: {
+                filterText: ''
+            },
+            columnDefs: [
+                { field: 'name', displayName: 'Name', defaultSort: true },
+                { field: 'description', displayName: 'Description' },
+                { field: 'tags', displayName: 'Tags', cellTemplate: $templateCache.get("tagsTemplate.html") }
+            ]
+        };
+        $scope.deletePrompt = function (selectedRepositories) {
+            UI.multiItemConfirmActionDialog({
+                collection: selectedRepositories,
+                index: 'name',
+                onClose: function (result) {
+                    if (result) {
+                        selectedRepositories.forEach(function (repository) {
+                            var deleteURL = UrlHelpers.join($scope.restURL, '/v1/repositories/' + repository.name + '/');
+                            DockerRegistry.log.debug("Using URL: ", deleteURL);
+                            $http.delete(deleteURL).success(function (data) {
+                                DockerRegistry.log.debug("Deleted repository: ", repository.name);
+                            }).error(function (data) {
+                                DockerRegistry.log.debug("Failed to delete repository: ", repository.name);
+                            });
+                        });
+                    }
+                },
+                title: 'Delete Repositories?',
+                action: 'The following repositories will be deleted:',
+                okText: 'Delete',
+                okClass: 'btn-danger',
+                custom: 'This operation is permanent once completed!',
+                customClass: 'alert alert-warning'
+            }).open();
+        };
+        $scope.$on("DockerRegistry.SelectedImageID", function ($event, imageID) {
+            var imageJsonURL = UrlHelpers.join($scope.restURL, '/v1/images/' + imageID + '/json');
+            $http.get(imageJsonURL).success(function (image) {
+                DockerRegistry.log.debug("Got image: ", image);
+                $scope.selectedImage = image;
+            });
+        });
+        $scope.$on('DockerRegistry.Repositories', function ($event, restURL, repositories) {
+            $scope.imageRepositories = repositories;
+        });
+    }]);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
 /**
  * @module Dozer
  * @main Dozer
@@ -9217,34 +9217,34 @@ var Dozer;
      * @for Dozer
      */
     function schemaConfigure() {
-        io_hawt_dozer_schema_Field["tabs"] = {
+        Dozer.io_hawt_dozer_schema_Field["tabs"] = {
             'Fields': ['a.value', 'b.value'],
             'From Field': ['a\\..*'],
             'To Field': ['b\\..*'],
             'Field Configuration': ['*']
         };
-        io_hawt_dozer_schema_Mapping["tabs"] = {
+        Dozer.io_hawt_dozer_schema_Mapping["tabs"] = {
             'Classes': ['class-a.value', 'class-b.value'],
             'From Class': ['class-a\\..*'],
             'To Class': ['class-b\\..*'],
             'Class Configuration': ['*']
         };
         // hide the fields table from the class configuration tab
-        io_hawt_dozer_schema_Mapping.properties.fieldOrFieldExclude.hidden = true;
-        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "label"], "From Field");
-        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "label"], "To Field");
-        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "label"], "From Class");
-        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "label"], "To Class");
+        Dozer.io_hawt_dozer_schema_Mapping.properties.fieldOrFieldExclude.hidden = true;
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "label"], "From Field");
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "label"], "To Field");
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "label"], "From Class");
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "label"], "To Class");
         // ignore prefixes in the generated labels
-        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "a", "ignorePrefixInLabel"], true);
-        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "b", "ignorePrefixInLabel"], true);
-        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-a", "ignorePrefixInLabel"], true);
-        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-b", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "ignorePrefixInLabel"], true);
         // add custom widgets
-        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "formTemplate"], classNameWidget("class_a"));
-        Core.pathSet(io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "formTemplate"], classNameWidget("class_b"));
-        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.a.value" ' + 'typeahead="title for title in fromFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
-        Core.pathSet(io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.b.value" ' + 'typeahead="title for title in toFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "formTemplate"], classNameWidget("class_a"));
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "formTemplate"], classNameWidget("class_b"));
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.a.value" ' + 'typeahead="title for title in fromFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.b.value" ' + 'typeahead="title for title in toFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
         function classNameWidget(propertyName) {
             return '<input type="text" ng-model="dozerEntity.' + propertyName + '.value" ' + 'typeahead="title for title in classNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>';
         }
@@ -14626,6 +14626,7 @@ var Wiki;
 
 /// <reference path="../../includes.ts"/>
 /// <reference path="../../git/ts/gitHelpers.ts"/>
+/// <reference path="../../dozer/ts/dozerHelpers.ts"/>
 /// <reference path="wikiHelpers.ts"/>
 /**
  * @module Wiki
@@ -14981,7 +14982,7 @@ var Wiki;
                 if (entity instanceof Dozer.Field) {
                     //var field: Dozer.Field = entity;
                     $scope.propertiesTemplate = propertiesTemplate;
-                    $scope.nodeModel = io_hawt_dozer_schema_Field;
+                    $scope.nodeModel = Dozer.io_hawt_dozer_schema_Field;
                     $scope.selectedDescription = "Field Mapping";
                     $scope.selectedMapping = Core.pathGet(folder, ["parent", "entity"]);
                     $scope.selectedMappingFolder = folder.parent;
@@ -14990,7 +14991,7 @@ var Wiki;
                 else if (entity instanceof Dozer.Mapping) {
                     //var mapping: Dozer.Mapping = entity;
                     $scope.propertiesTemplate = propertiesTemplate;
-                    $scope.nodeModel = io_hawt_dozer_schema_Mapping;
+                    $scope.nodeModel = Dozer.io_hawt_dozer_schema_Mapping;
                     $scope.selectedDescription = "Class Mapping";
                     $scope.selectedMapping = entity;
                     $scope.selectedMappingFolder = folder;
@@ -16738,6 +16739,7 @@ $templateCache.put("plugins/osgi/html/pid-details.html","<div>\n  <h4 title=\"{{
 $templateCache.put("plugins/osgi/html/pid.html","<div class=\"controller-section\" ng-controller=\"Osgi.PidController\">\n  <div ng-include src=\"\'app/osgi/html/pid-details.html\'\"></div>\n</div>\n");
 $templateCache.put("plugins/osgi/html/services.html","<script type=\"text/ng-template\" id=\"osgiServiceTemplate\">\n  <table>\n    <tr>\n      <th>Using Bundles</th>\n    </tr>\n    <tr>\n      <td>\n        <ul>\n          <li ng-repeat=\"b in row.UsingBundles\">\n            <a href=\'#/osgi/bundle/{{b.Identifier}}{{hash}}\'>{{b.SymbolicName}}</a>\n          </li>\n        </ul>\n      </td>\n    </tr>\n  </table>\n</script>\n\n<div class=\"controller-section\" ng-controller=\"Osgi.ServiceController\">\n\n  <table cellpadding=\"0\" cellspacing=\"0\" border=\"0\"\n         class=\"table table-condensed table-striped table-bordered table-hover\"\n         id=\"grid\">\n    <thead>\n    <tr>\n      <th></th>\n      <th>ID</th>\n      <th>Bundle</th>\n      <th>Object Class(es)</th>\n    </tr>\n    </thead>\n    <tbody>\n  </table>\n</div>\n");
 $templateCache.put("plugins/osgi/html/svc-dependencies.html","<style type=\"text/css\">\n\n    div#pop-up {\n        display: none;\n        position:absolute;\n        color: white;\n        font-size: 14px;\n        background: rgba(0,0,0,0.6);\n        padding: 5px 10px 5px 10px;\n        -moz-border-radius: 8px 8px;\n        border-radius: 8px 8px;\n    }\n\n    div#pop-up-title {\n        font-size: 15px;\n        margin-bottom: 4px;\n        font-weight: bolder;\n    }\n    div#pop-up-content {\n        font-size: 12px;\n    }\n\n    rect.graphbox {\n        fill: #DDD;\n    }\n\n    rect.graphbox.frame {\n        stroke: #222;\n        stroke-width: 2px\n    }\n\n    path.link {\n        fill: none;\n        stroke: #666;\n        stroke-width: 1.5px;\n    }\n\n    path.link.registered {\n        stroke: #444;\n    }\n\n    path.link.inuse {\n        stroke-dasharray: 0,2 1;\n    }\n\n    circle {\n        fill: #black;\n    }\n\n    circle.service {\n        fill: blue;\n    }\n\n    circle.bundle {\n        fill: black;\n    }\n\n    circle.package {\n        fill: gray;\n    }\n\n    text {\n        font: 10px sans-serif;\n        pointer-events: none;\n    }\n\n    text.shadow {\n        stroke: #fff;\n        stroke-width: 3px;\n        stroke-opacity: .8;\n    }\n\n</style>\n\n<div ng-controller=\"Osgi.ServiceDependencyController\">\n\n    <div class=\"pull-left\">\n        <form class=\"form-inline no-bottom-margin\">\n            <fieldset>\n                <div class=\"control-group inline-block\">\n                    <input type=\"text\" class=\"search-query\" placeholder=\"Filter Bundle Symbolic Name...\" ng-model=\"bundleFilter\">\n                    <input type=\"text\" class=\"search-query\" placeholder=\"Filter Package Name...\" ng-model=\"packageFilter\" ng-change=\"updatePkgFilter()\">\n                    <label class=\"radio\" for=\"showServices\">\n                        <input id=\"showServices\" type=\"radio\" value=\"services\" ng-model=\"selectView\"> Show Services\n                    </label>\n                    <label class=\"radio\" for=\"showPackages\">\n                        <input id=\"showPackages\" type=\"radio\" value=\"packages\" ng-model=\"selectView\" ng-disabled=\"disablePkg\"> Show Packages\n                    </label>\n                    <label class=\"checkbox\" for=\"hideUnused\">\n                        <input id=\"hideUnused\" type=\"checkbox\" ng-model=\"hideUnused\"> Hide Unused\n                    </label>\n                    <button class=\"btn btn-primary\" ng-click=\"updateGraph()\" title=\"Apply the selected criteria to the Graph.\">Apply</button>\n                </div>\n            </fieldset>\n        </form>\n    </div>\n\n  <div ng-hide=\"inDashboard\" class=\"add-link\">\n    <a ng-href=\"{{addToDashboardLink()}}\" title=\"Add this view to a Dashboard\"><i class=\"icon-share\"></i></a>\n  </div>\n\n    <div id=\"pop-up\">\n        <div id=\"pop-up-title\"></div>\n        <div id=\"pop-up-content\"></div>\n    </div>\n\n  <div class=\"row-fluid\">\n    <div class=\"span12 canvas\" style=\"min-height: 800px\">\n      <div hawtio-force-graph graph=\"graph\" link-distance=\"100\" charge=\"-300\" nodesize=\"6\"></div>\n    </div>\n  </div>\n\n</div>\n");
+$templateCache.put("plugins/wiki/exemplar/document.html","<h2>This is a title</h2>\n\n<p>Here are some notes</p>");
 $templateCache.put("plugins/wiki/html/camelCanvas.html","<div ng-controller=\"Wiki.CamelController\">\n\n  <div class=\"wiki-fixed\" ng-controller=\"Wiki.CamelCanvasController\">\n    <ng-include src=\"\'app/wiki/html/camelNavBar.html\'\"></ng-include>\n\n    <script type=\"text/ng-template\"\n            id=\"nodeTemplate\">\n      <div class=\"component window\"\n           id=\"{{id}}\"\n           title=\"{{node.tooltip}}\">\n        <div class=\"window-inner {{node.type}}\">\n          <img class=\"nodeIcon\"\n               title=\"Click and drag to create a connection\"\n               src=\"{{node.imageUrl}}\">\n          <span class=\"nodeText\"\n                title=\"{{node.label}}\">{{node.label}}</span>\n        </div>\n      </div>\n    </script>\n\n\n    <div class=\"row-fluid\">\n      <div class=\"span12\">\n        <ul class=\"nav nav-tabs\">\n          <li ng-class=\"{active : true}\">\n            <a ng-href=\'{{startLink}}/camel/canvas/{{pageId}}\' title=\"Edit the diagram in a draggy droppy way\"\n               data-placement=\"bottom\">\n              <i class=\"icon-picture\"></i> Canvas</a></li>\n          <li ng-class=\"{active : false}\">\n            <a ng-href=\'{{startLink}}/camel/properties/{{pageId}}\' title=\"Switch to the tree based view\"\n               data-placement=\"bottom\">\n              <i class=\"icon-sitemap\"></i> Tree</a></li>\n\n          <li class=\"pull-right\">\n            <a href=\'\' title=\"Add new pattern node connecting to this pattern\" ng-click=\"addDialog.open()\"\n               data-placement=\"bottom\">\n              <i class=\"icon-plus\"></i> Add</a></li>\n\n          <li class=\"pull-right\">\n            <a href=\'\' title=\"Automatically layout the diagram \" ng-click=\"doLayout()\"\n               data-placement=\"bottom\">\n              <i class=\"icon-magic\"></i> Layout</a></li>\n\n          <li class=\"pull-right\" style=\"margin-top: 0; margin-bottom: 0;\">\n            </li>\n\n          <!--\n          <li class=\"pull-right\">\n            <a href=\'\' title=\"Edit the properties for the selected node\" ng-disabled=\"!selectedFolder\"\n               ng-click=\"propertiesDialog.open()\"\n               data-placement=\"bottom\">\n              <i class=\"icon-edit\"></i> Properties</a></li>\n              -->\n        </ul>\n\n        <div class=\"modal-large\">\n          <div modal=\"addDialog.show\" close=\"addDialog.close()\" ng-options=\"addDialog.options\">\n            <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"addAndCloseDialog()\">\n              <div class=\"modal-header\"><h4>Add Node</h4></div>\n              <div class=\"modal-body\">\n                <tabset>\n                  <tab heading=\"Patterns\">\n                    <div hawtio-tree=\"paletteTree\" hideRoot=\"true\" onSelect=\"onPaletteSelect\"\n                         activateNodes=\"paletteActivations\"></div>\n                  </tab>\n                  <tab heading=\"Endpoints\">\n                    <div hawtio-tree=\"componentTree\" hideRoot=\"true\" onSelect=\"onComponentSelect\"\n                         activateNodes=\"componentActivations\"></div>\n                  </tab>\n                </tabset>\n              </div>\n              <div class=\"modal-footer\">\n                <input id=\"submit\" class=\"btn btn-primary add\" type=\"submit\" ng-disabled=\"!selectedPaletteNode && !selectedComponentNode\"\n                       value=\"Add\">\n                <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"addDialog.close()\">Cancel</button>\n              </div>\n            </form>\n          </div>\n        </div>\n\n\n        <!--\n        <div modal=\"propertiesDialog.show\" close=\"propertiesDialog.close()\" ng-options=\"propertiesDialog.options\">\n          <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"updatePropertiesAndCloseDialog()\">\n            <div class=\"modal-header\"><h4>Properties</h4></div>\n            <div class=\"modal-body\">\n\n              <div ng-show=\"!selectedEndpoint\"> -->\n                <!-- pattern form --> <!--\n                <div simple-form name=\"formEditor\" entity=\'nodeData\' data=\'nodeModel\' schema=\"schema\"\n                     onsubmit=\"updatePropertiesAndCloseDialog\"></div>\n              </div>\n              <div ng-show=\"selectedEndpoint\"> -->\n                <!-- endpoint form -->\n                <!--\n                <div class=\"control-group\">\n                  <label class=\"control-label\" for=\"endpointPath\">Endpoint</label>\n\n                  <div class=\"controls\">\n                    <input id=\"endpointPath\" class=\"span10\" type=\"text\" ng-model=\"endpointPath\" placeholder=\"name\"\n                           typeahead=\"title for title in endpointCompletions($viewValue) | filter:$viewValue\"\n                           typeahead-editable=\'true\'\n                           min-length=\"1\">\n                  </div>\n                </div>\n                <div simple-form name=\"formEditor\" entity=\'endpointParameters\' data=\'endpointSchema\'\n                     schema=\"schema\"></div>\n              </div>\n\n\n            </div>\n            <div class=\"modal-footer\">\n              <input class=\"btn btn-primary add\" type=\"submit\" ng-click=\"updatePropertiesAndCloseDialog()\" value=\"OK\">\n              <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"propertiesDialog.close()\">Cancel</button>\n            </div>\n          </form>\n        </div>\n        -->\n\n      </div>\n    </div>\n\n    <div class=\"row-fluid\">\n    </div>\n\n    <div class=\"panes gridStyle\">\n      <div class=\"left-pane\">\n        <div class=\"camel-viewport camel-canvas\">\n          <div style=\"position: relative;\" class=\"canvas\"></div>\n        </div>\n      </div>\n      <div class=\"right-pane\">\n        <div class=\"camel-props\">\n          <div class=\"button-bar\">\n            <div class=\"centered\">\n              <form class=\"form-inline\">\n                <label>Route: </label>\n                <select ng-model=\"selectedRouteId\" ng-options=\"routeId for routeId in routeIds\"></select>\n              </form>\n              <div class=\"btn-group\">\n                <button class=\"btn\"\n                        title=\"{{getDeleteTitle()}}\"\n                        ng-click=\"removeNode()\"\n                        data-placement=\"bottom\">\n                    <i class=\"icon-remove\"></i> Delete {{getDeleteTarget()}}</button>\n                <button class=\"btn\"\n                        title=\"Apply any changes to the endpoint properties\"\n                        ng-disabled=\"!isFormDirty()\"\n                        ng-click=\"updateProperties()\">\n                    <i class=\"icon-ok\"></i> Apply</button>\n                <!-- TODO Would be good to have this too\n                <button class=\"btn\"\n                        title=\"Clear any changes to the endpoint properties\"\n                        ng-disabled=\"!isFormDirty()\"\n                        ng-click=\"resetForms()\">\n                  <i class=\"icon-remove\"></i> Cancel</button> -->\n              </div>\n            </div>\n          </div>\n          <div class=\"prop-viewport\">\n\n            <div>\n              <!-- pattern form -->\n              <div ng-show=\"!selectedEndpoint\">\n                <div simple-form\n                     name=\"formEditor\"\n                     entity=\'nodeData\'\n                     data=\'nodeModel\'\n                     schema=\"schema\"\n                     onsubmit=\"updateProperties\"></div>\n              </div>\n\n              <!-- endpoint form -->\n              <div class=\"endpoint-props\" ng-show=\"selectedEndpoint\">\n                <p>Endpoint</p>\n                <form name=\"endpointForm\">\n                  <div class=\"control-group\">\n                    <label class=\"control-label\" for=\"endpointPath\">URI:</label>\n\n                    <div class=\"controls\">\n                      <input id=\"endpointPath\" class=\"span10\" type=\"text\" ng-model=\"endpointPath\" placeholder=\"name\"\n                             typeahead=\"title for title in endpointCompletions($viewValue) | filter:$viewValue\"\n                             typeahead-editable=\'true\'\n                             min-length=\"1\">\n                    </div>\n                  </div>\n                </form>\n\n                <div simple-form\n                     name=\"formEditor\"\n                     entity=\'endpointParameters\'\n                     data=\'endpointSchema\'\n                     schema=\"schema\"\n                     onsubmit=\"updateProperties\"></div>\n              </div>\n\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/camelDiagram.html","<div ng-include=\"diagramTemplate\"></div>\n");
 $templateCache.put("plugins/wiki/html/camelNavBar.html","<div class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs connected\">\n      <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href)}\'>\n        <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n      </li>\n\n      <!--\n              <li class=\"pull-right\">\n                <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this camel configuration\"\n                   data-placement=\"bottom\">\n                  <i class=\"icon-edit\"></i> Edit</a></li>\n              <li class=\"pull-right\" ng-show=\"sourceLink()\">\n      -->\n      <li class=\"pull-right\">\n        <a href=\"\" id=\"saveButton\" ng-disabled=\"!modified\" ng-click=\"save()\"\n           ng-class=\"{\'nav-primary\' : modified}\"\n           title=\"Saves the Camel document\">\n          <i class=\"icon-save\"></i> Save</a>\n      </li>\n      <li class=\"pull-right\">\n        <a href=\"\" id=\"cancelButton\" ng-click=\"cancel()\"\n           title=\"Discards any updates\">\n          <i class=\"icon-remove\"></i> Cancel</a>\n      </li>\n\n      <li class=\"pull-right\">\n        <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n           data-placement=\"bottom\">\n          <i class=\"icon-file-alt\"></i> Source</a>\n      </li>\n    </ul>\n  </div>\n</div>\n");
@@ -16764,7 +16766,6 @@ $templateCache.put("plugins/wiki/html/sourceView.html","<textarea id=\"source\" 
 $templateCache.put("plugins/wiki/html/viewBook.html","<div ng-controller=\"Wiki.ViewController\">\n\n  <script type=\"text/ng-template\" id=\"fileCellTemplate.html\">\n    <div class=\"ngCellText\"\n         title=\"{{fileName(row.entity)}} - Last Modified: {{row.entity.lastModified | date:\'medium\'}}, Size: {{row.entity.length}}\">\n      <a href=\"{{childLink(row.entity)}}\" class=\"file-name\">\n        <span class=\"file-icon\"\n              ng-class=\"fileClass(row.entity)\"\n              ng-bind-html-unsafe=\"fileIconHtml(row)\">\n\n              </span>{{fileName(row.entity)}}\n      </a>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"fileColumnTemplate.html\">\n\n    <div class=\"ngHeaderSortColumn {{col.headerClass}}\"\n         ng-style=\"{\'cursor\': col.cursor}\"\n         ng-class=\"{ \'ngSorted\': !noSortVisible }\">\n\n      <div class=\"ngHeaderText\" ng-hide=\"pageId === \'/\'\">\n        <a ng-href=\"{{parentLink()}}\"\n           class=\"wiki-file-list-up\"\n           title=\"Open the parent folder\">\n          <i class=\"icon-level-up\"></i> Up a directory\n        </a>\n      </div>\n    </div>\n\n  </script>\n\n  <ng-include src=\"\'app/wiki/html/viewNavBar.html\'\"></ng-include>\n\n  <div class=\"wiki-fixed form-horizontal\">\n    <div class=\"row-fluid\">\n      <div class=\"tocify\" wiki-href-adjuster>\n        <!-- TODO we maybe want a more flexible way to find the links to include than the current link-filter -->\n        <div hawtio-toc-display get-contents=\"getContents(filename, cb)\"\n             html=\"html\" link-filter=\"[file-extension]\">\n        </div>\n      </div>\n      <div class=\"toc-content\" id=\"toc-content\"></div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/viewNavBar.html","<div ng-hide=\"inDashboard\" class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs\">\n      <li ng-show=\"branches.length || branch\">\n        <div hawtio-drop-down=\"branchMenuConfig\"></div>\n      </li>\n      <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href) && !objectId}\'>\n        <a class=\"breadcrumb-link\" ng-href=\"{{link.href}}\">\n          <span class=\"contained c-medium\">{{link.name}}</span>\n        </a>\n      </li>\n      <li ng-show=\"objectId\">\n        <a ng-href=\"{{historyLink}}{{hash}}\">History</a>\n      </li>\n      <li ng-show=\"objectId\" class=\"active\">\n        <a>{{objectId}}</a>\n      </li>\n\n      <li class=\"pull-right dropdown\">\n        <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\">\n          Actions <span class=\"caret\"></span>\n        </a>\n        <ul class=\"dropdown-menu\">\n          <li ng-show=\"sourceLink()\">\n            <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n               data-placement=\"bottom\">\n              <i class=\"icon-file-alt\"></i> Source</a>\n          </li>\n          <li>\n            <a ng-href=\"{{historyLink}}{{hash}}\" ng-hide=\"!historyLink\" title=\"View the history of this file\"\n               data-placement=\"bottom\">\n              <i class=\"icon-comments-alt\"></i> History</a>\n          </li>\n          <!--\n          <li class=\"divider\">\n          </li>\n          -->\n          <li ng-hide=\"gridOptions.selectedItems.length !== 1\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"rename\">\n            <a ng-click=\"openRenameDialog()\"\n               title=\"Rename the selected document\"\n               data-placement=\"bottom\">\n              <i class=\"icon-adjust\"></i> Rename</a>\n          </li>\n          <li ng-hide=\"!gridOptions.selectedItems.length\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"rename\">\n            <a ng-click=\"openMoveDialog()\"\n               title=\"move the selected documents to a new folder\"\n               data-placement=\"bottom\">\n              <i class=\"icon-move\"></i> Move</a>\n          </li>\n          <!--\n          <li class=\"divider\">\n          </li>\n          -->\n          <li ng-hide=\"!gridOptions.selectedItems.length\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"remove\">\n            <a ng-click=\"openDeleteDialog()\"\n               title=\"Delete the selected document(s)\"\n               data-placement=\"bottom\">\n              <i class=\"icon-remove\"></i> Delete</a>\n          </li>\n          <li class=\"divider\" ng-show=\"childActions.length\">\n          </li>\n          <li ng-repeat=\"childAction in childActions\">\n            <a ng-click=\"childAction.doAction()\"\n               title=\"{{childAction.title}}\"\n               data-placement=\"bottom\">\n              <i class=\"{{childAction.icon}}\"></i> {{childAction.name}}</a>\n          </li>\n        </ul>\n      </li>\n      <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n        <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this page\"\n           data-placement=\"bottom\">\n          <i class=\"icon-edit\"></i> Edit</a>\n      </li>\n      <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n        <a ng-href=\"{{createLink()}}{{hash}}\"\n           title=\"Create new page\"\n           data-placement=\"bottom\">\n          <i class=\"icon-plus\"></i> Create</a>\n      </li>\n      <li class=\"pull-right\">\n        <div class=\"btn-group\" \n             ng-hide=\"!children || profile\">\n          <a class=\"btn btn-small\"\n             ng-disabled=\"mode == ViewMode.List\"\n             href=\"\" \n             ng-click=\"setViewMode(ViewMode.List)\">\n            <i class=\"icon-list\"></i></a>\n          <a class=\"btn btn-small\" \n             ng-disabled=\"mode == ViewMode.Icon\"\n             href=\"\" \n             ng-click=\"setViewMode(ViewMode.Icon)\">\n            <i class=\"icon-th-large\"></i></a>\n        </div>\n      </li>\n      <li class=\"pull-right\">\n        <a href=\"\" ng-hide=\"children || profile\" title=\"Add to dashboard\" ng-href=\"{{createDashboardLink()}}\"\n           data-placement=\"bottom\">\n          <i class=\"icon-share\"></i>\n        </a>\n      </li>\n    </ul>\n  </div>\n</div>\n\n\n");
 $templateCache.put("plugins/wiki/html/viewPage.html","<div ng-controller=\"Wiki.ViewController\">\n  <script type=\"text/ng-template\" id=\"fileCellTemplate.html\">\n    <div class=\"ngCellText\"\n         title=\"{{fileName(row.entity)}} - Last Modified: {{row.entity.lastModified | date:\'medium\'}}, Size: {{row.entity.length}}\">\n      <a href=\"{{childLink(row.entity)}}\" class=\"file-name\" hawtio-file-drop=\"{{row.entity.fileName}}\" download-url=\"{{row.entity.downloadURL}}\">\n        <span class=\"file-icon\"\n              ng-class=\"fileClass(row.entity)\"\n              compile=\"fileIconHtml(row)\">\n        </span>{{fileName(row.entity)}}\n      </a>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"fileColumnTemplate.html\">\n    <div class=\"ngHeaderSortColumn {{col.headerClass}}\"\n         ng-style=\"{\'cursor\': col.cursor}\"\n         ng-class=\"{ \'ngSorted\': !noSortVisible }\">\n      <div class=\"ngHeaderText\" ng-hide=\"pageId === \'/\'\">\n        <a ng-href=\"{{parentLink()}}\"\n           class=\"wiki-file-list-up\"\n           title=\"Open the parent folder\">\n          <i class=\"icon-level-up\"></i> Up a directory\n        </a>\n      </div>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"imageTemplate.html\">\n    <img src=\"{{imageURL}}\">\n  </script>\n\n  <ng-include src=\"\'app/wiki/html/viewNavBar.html\'\"></ng-include>\n\n  <!-- Icon View -->\n  <div ng-show=\"mode == ViewMode.Icon\" class=\"wiki-fixed\">\n    <div ng-hide=\"!showAppHeader\">\n      <div class=\"row-fluid\">\n        <div class=\"span12\">\n          <div kubernetes-json=\"kubernetesJson\"></div>\n        </div>\n      </div>\n    </div>\n    <div ng-hide=\"!html\" wiki-href-adjuster wiki-title-linker>\n      <div class=\"row-fluid\" style=\"margin-left: 10px\">\n        <div class=\"span12\">\n          <div compile=\"html\"></div>\n        </div>\n      </div>\n    </div>\n    <div class=\"row-fluid\" ng-show=\"html && children\">\n      <div class=\"span12 wiki-icon-view-header\">\n        <h5>Directories and Files</h5>\n      </div>\n    </div>\n    <div class=\"row-fluid\" ng-hide=\"!directory\">\n      <div class=\"span12\" ng-controller=\"Wiki.FileDropController\">\n        <div class=\"wiki-icon-view\" nv-file-drop nv-file-over uploader=\"uploader\" over-class=\"ready-drop\">\n          <div class=\"column-box mouse-pointer well\"\n               ng-repeat=\"child in children\" \n               ng-class=\"isInGroup(gridOptions.selectedItems, child, \'selected\', \'\')\"\n               ng-click=\"toggleSelectionFromGroup(gridOptions.selectedItems, child)\">\n            <div class=\"row-fluid\">\n              <div class=\"span2\" hawtio-file-drop=\"{{child.fileName}}\" download-url=\"{{child.downloadURL}}\">\n                  <span class=\"app-logo\" ng-class=\"fileClass(child)\" compile=\"fileIconHtml(child)\"></span>\n              </div>\n              <div class=\"span10\">\n                <h3>\n                  <a href=\"{{childLink(child)}}\">{{child.displayName || child.name}}</a>\n                </h3>\n              </div>\n            </div>\n            <div class=\"row-fluid\" ng-show=\"child.summary\">\n              <div class=\"span12\">\n                <p compile=\"marked(child.summary)\"></p>\n              </div>\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n  <!-- end Icon view -->\n\n  <!-- start List view -->\n  <div ng-show=\"mode == ViewMode.List\" class=\"wiki-fixed\">\n    <hawtio-pane position=\"left\" width=\"300\">\n      <div ng-controller=\"Wiki.FileDropController\">\n        <div class=\"wiki-list-view\" nv-file-drop nv-file-over uploader=\"uploader\" over-class=\"ready-drop\">\n          <div class=\"wiki-grid\" hawtio-list=\"gridOptions\"></div>\n        </div>\n      </div>\n    </hawtio-pane>\n    <div class=\"row-fluid\">\n      <div ng-class=\"span12\">\n        <div ng-hide=\"!showProfileHeader\">\n          <div class=\"row-fluid\">\n            <div class=\"span12\">\n              <div fabric-profile-details version-id=\"versionId\" profile-id=\"profileId\"></div>\n              <p></p>\n            </div>\n          </div>\n        </div>\n        <div ng-hide=\"!showAppHeader\">\n          <div class=\"row-fluid\">\n            <div class=\"span12\">\n              <div kubernetes-json=\"kubernetesJson\" children=\"children\"></div>\n            </div>\n          </div>\n        </div>\n        <div ng-hide=\"!html\" wiki-href-adjuster wiki-title-linker>\n          <div class=\"row-fluid\" style=\"margin-left: 10px\">\n            <div class=\"span12\">\n              <div compile=\"html\"></div>\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n  <!-- end List view -->\n  <div ng-include=\"sourceView\" class=\"editor-autoresize\"></div>\n</div>\n");
-$templateCache.put("plugins/wiki/exemplar/document.html","<h2>This is a title</h2>\n\n<p>Here are some notes</p>");
 $templateCache.put("plugins/wiki/html/modal/deleteDialog.html","<div>\n  <form class=\"form-horizontal\" ng-submit=\"deleteAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Delete Document</h4></div>\n    <div class=\"modal-body\">\n      <div class=\"control-group\">\n        <p>You are about to delete\n          <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                        when=\"{\'1\': \'this document!\', \'other\': \'these {} documents!\'}\">\n          </ng-pluralize>\n        </p>\n\n        <div ng-bind-html-unsafe=\"selectedFileHtml\"></div>\n        <p class=\"alert alert-danger\" ng-show=\"warning\" ng-bind-html-unsafe=\"warning\">\n        </p>\n      </div>\n    </div>\n    <div class=\"modal-footer\">\n      <input class=\"btn btn-primary\" type=\"submit\"\n             value=\"Delete\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"close()\">Cancel</button>\n    </div>\n  </form>\n</div>\n");
 $templateCache.put("plugins/wiki/html/modal/moveDialog.html","<div>\n    <form class=\"form-horizontal\" ng-submit=\"moveAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Move Document</h4></div>\n    <div class=\"modal-body\">\n      <div class=\"control-group\">\n        <label class=\"control-label\" for=\"moveFolder\">Folder</label>\n\n        <div class=\"controls\">\n          <input type=\"text\" id=\"moveFolder\" ng-model=\"move.moveFolder\"\n                 typeahead=\"title for title in folderNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'>\n        </div>\n      </div>\n    </div>\n    <div class=\"modal-footer\">\n      <input class=\"btn btn-primary\" type=\"submit\"\n             ng-disabled=\"!move.moveFolder\"\n             value=\"Move\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"close()\">Cancel</button>\n    </div>\n  </form>\n</div>");
 $templateCache.put("plugins/wiki/html/modal/renameDialog.html","<div>\n  <form class=\"form-horizontal\" ng-submit=\"renameAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Rename Document</h4></div>\n    <div class=\"modal-body\">\n      <div class=\"control-group\">\n        <label class=\"control-label\" for=\"renameFileName\">Name</label>\n\n        <div class=\"controls\">\n          <input type=\"text\" id=\"renameFileName\" ng-model=\"rename.newFileName\">\n        </div>\n      </div>\n\n      <div class=\"control-group\">\n        <div ng-show=\"fileExists.exists\" class=\"alert\">\n          Please choose a different name as <b>{{fileExists.name}}</b> already exists\n        </div>\n      </div>\n    </div>\n    <div class=\"modal-footer\">\n      <input class=\"btn btn-primary\" type=\"submit\"\n             ng-disabled=\"!fileName || fileExists.exists\"\n             value=\"Rename\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"close()\">Cancel</button>\n    </div>\n  </form>\n</div>\n");}]); hawtioPluginLoader.addModule("hawtio-wiki-templates");
