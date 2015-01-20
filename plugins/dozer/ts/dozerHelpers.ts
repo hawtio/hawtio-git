@@ -204,7 +204,7 @@ module Dozer {
     mappingFolder.key = (parentFolder ? parentFolder.key + "_" : "") + Core.toSafeDomID(mappingName);
     mappingFolder.parent = parentFolder;
     mappingFolder.entity = mapping;
-    mappingFolder.icon = Core.url("/app/dozer/img/class.gif");
+    mappingFolder.icon = Core.url("/plugins/dozer/img/class.gif");
     /*
           mappingFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
           */
@@ -223,7 +223,7 @@ module Dozer {
     fieldFolder.key = mappingFolder.key + "_" + Core.toSafeDomID(name);
     fieldFolder.parent = mappingFolder;
     fieldFolder.entity = field;
-    fieldFolder.icon = Core.url("/app/dozer/img/attribute.gif");
+    fieldFolder.icon = Core.url("/plugins/dozer/img/attribute.gif");
     /*
           fieldFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
           */

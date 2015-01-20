@@ -12,17 +12,17 @@ declare module Wiki {
         fileName: () => String;
         callbacks: () => String;
     }
-    function getRenameDialog($dialog: any, $scope: RenameDialogOptions): WikiDialog;
+    function getRenameDialog($dialog: any, $scope: RenameDialogOptions): Wiki.WikiDialog;
     interface MoveDialogOptions {
         move: () => {};
         folderNames: () => {};
         callbacks: () => String;
     }
-    function getMoveDialog($dialog: any, $scope: MoveDialogOptions): WikiDialog;
+    function getMoveDialog($dialog: any, $scope: MoveDialogOptions): Wiki.WikiDialog;
     interface DeleteDialogOptions {
         callbacks: () => String;
         selectedFileHtml: () => String;
         warning: () => string;
     }
-    function getDeleteDialog($dialog: any, $scope: DeleteDialogOptions): WikiDialog;
+    function getDeleteDialog($dialog: any, $scope: DeleteDialogOptions): Wiki.WikiDialog;
 }

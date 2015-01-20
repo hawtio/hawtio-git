@@ -2,14 +2,14 @@
   <div ng-switch-when="true">
     <tabs>
       <pane heading="URL">
-        <ng-include src="'app/camel/html/createEndpointURL.html'"></ng-include>
+        <ng-include src="'plugins/camel/html/createEndpointURL.html'"></ng-include>
       </pane>
       <pane heading="Components">
-        <ng-include src="'app/camel/html/createEndpointWizard.html'"></ng-include>
+        <ng-include src="'plugins/camel/html/createEndpointWizard.html'"></ng-include>
       </pane>
     </tabs>
   </div>
   <div ng-switch-default="false">
-    <ng-include src="'app/camel/html/createEndpointURL.html'"></ng-include>
+    <ng-include src="'plugins/camel/html/createEndpointURL.html'"></ng-include>
   </div>
 </div>

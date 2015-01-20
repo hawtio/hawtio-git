@@ -5,7 +5,7 @@ module DockerRegistry {
   export var context = '/docker-registry';
   export var hash = UrlHelpers.join('#', context);
   export var defaultRoute = UrlHelpers.join(hash, 'list');
-  export var basePath = UrlHelpers.join('app', context);
+  export var basePath = UrlHelpers.join('plugins', context);
   export var templatePath = UrlHelpers.join(basePath, 'html');
   export var pluginName = 'DockerRegistry';
   export var log:Logging.Logger = Logger.get(pluginName);

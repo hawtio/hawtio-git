@@ -402,7 +402,7 @@ module Wiki {
       if (folder) {
         var entity = folder.entity;
         $scope.dozerEntity = entity;
-        var propertiesTemplate = "app/wiki/html/dozerPropertiesEdit.html";
+        var propertiesTemplate = "plugins/wiki/html/dozerPropertiesEdit.html";
         if (entity instanceof Dozer.Field) {
           //var field: Dozer.Field = entity;
           $scope.propertiesTemplate = propertiesTemplate;

@@ -103,8 +103,8 @@ module Camel {
               });
             }
           }
-          $scope.graphView = "app/camel/html/routes.html";
-          $scope.tableView = "app/camel/html/browseMessages.html";
+          $scope.graphView = "plugins/camel/html/routes.html";
+          $scope.tableView = "plugins/camel/html/browseMessages.html";
         } else {
           tracerStatus.messages = [];
           $scope.messages = [];

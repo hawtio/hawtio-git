@@ -14,26 +14,26 @@ module ActiveMQ {
 
   _module.config(["$routeProvider", ($routeProvider) => {
     $routeProvider.
-            when('/activemq/browseQueue', {templateUrl: 'app/activemq/html/browseQueue.html'}).
-            when('/activemq/diagram', {templateUrl: 'app/activemq/html/brokerDiagram.html', reloadOnSearch: false}).
-            when('/activemq/createDestination', {templateUrl: 'app/activemq/html/createDestination.html'}).
-            when('/activemq/createQueue', {templateUrl: 'app/activemq/html/createQueue.html'}).
-            when('/activemq/createTopic', {templateUrl: 'app/activemq/html/createTopic.html'}).
-            when('/activemq/deleteQueue', {templateUrl: 'app/activemq/html/deleteQueue.html'}).
-            when('/activemq/deleteTopic', {templateUrl: 'app/activemq/html/deleteTopic.html'}).
-            when('/activemq/sendMessage', {templateUrl: 'app/camel/html/sendMessage.html'}).
-            when('/activemq/durableSubscribers', {templateUrl: 'app/activemq/html/durableSubscribers.html'}).
-            when('/activemq/jobs', {templateUrl: 'app/activemq/html/jobs.html'})
+            when('/activemq/browseQueue', {templateUrl: 'plugins/activemq/html/browseQueue.html'}).
+            when('/activemq/diagram', {templateUrl: 'plugins/activemq/html/brokerDiagram.html', reloadOnSearch: false}).
+            when('/activemq/createDestination', {templateUrl: 'plugins/activemq/html/createDestination.html'}).
+            when('/activemq/createQueue', {templateUrl: 'plugins/activemq/html/createQueue.html'}).
+            when('/activemq/createTopic', {templateUrl: 'plugins/activemq/html/createTopic.html'}).
+            when('/activemq/deleteQueue', {templateUrl: 'plugins/activemq/html/deleteQueue.html'}).
+            when('/activemq/deleteTopic', {templateUrl: 'plugins/activemq/html/deleteTopic.html'}).
+            when('/activemq/sendMessage', {templateUrl: 'plugins/camel/html/sendMessage.html'}).
+            when('/activemq/durableSubscribers', {templateUrl: 'plugins/activemq/html/durableSubscribers.html'}).
+            when('/activemq/jobs', {templateUrl: 'plugins/activemq/html/jobs.html'})
   }]);
 
   _module.run(["$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", ($location:ng.ILocationService, workspace:Workspace, viewRegistry, helpRegistry, preferencesRegistry) => {
 
-    viewRegistry['activemq'] = 'app/activemq/html/layoutActiveMQTree.html';
-    helpRegistry.addUserDoc('activemq', 'app/activemq/doc/help.md', () => {
+    viewRegistry['activemq'] = 'plugins/activemq/html/layoutActiveMQTree.html';
+    helpRegistry.addUserDoc('activemq', 'plugins/activemq/doc/help.md', () => {
       return workspace.treeContainsDomainAndProperties("org.apache.activemq");
     });
 
-    preferencesRegistry.addTab("ActiveMQ", "app/activemq/html/preferences.html", () => {
+    preferencesRegistry.addTab("ActiveMQ", "plugins/activemq/html/preferences.html", () => {
       return workspace.treeContainsDomainAndProperties("org.apache.activemq");              
     });
 

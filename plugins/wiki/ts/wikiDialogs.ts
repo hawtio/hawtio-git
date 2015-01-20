@@ -19,7 +19,7 @@ module Wiki {
   export function getRenameDialog($dialog, $scope:RenameDialogOptions):Wiki.WikiDialog {
     return $dialog.dialog({
       resolve: $scope,
-      templateUrl: 'app/wiki/html/modal/renameDialog.html',
+      templateUrl: 'plugins/wiki/html/modal/renameDialog.html',
       controller: ["$scope", "dialog",  "callbacks", "rename", "fileExists", "fileName", ($scope, dialog, callbacks, rename, fileExists, fileName) => {
         $scope.rename  = rename;
         $scope.fileExists  = fileExists;
@@ -45,7 +45,7 @@ module Wiki {
   export function getMoveDialog($dialog, $scope:MoveDialogOptions):Wiki.WikiDialog {
     return $dialog.dialog({
       resolve: $scope,
-      templateUrl: 'app/wiki/html/modal/moveDialog.html',
+      templateUrl: 'plugins/wiki/html/modal/moveDialog.html',
       controller: ["$scope", "dialog",  "callbacks", "move", "folderNames", ($scope, dialog, callbacks, move, folderNames) => {
         $scope.move  = move;
         $scope.folderNames  = folderNames;
@@ -71,7 +71,7 @@ module Wiki {
   export function getDeleteDialog($dialog, $scope:DeleteDialogOptions):Wiki.WikiDialog {
     return $dialog.dialog({
       resolve: $scope,
-      templateUrl: 'app/wiki/html/modal/deleteDialog.html',
+      templateUrl: 'plugins/wiki/html/modal/deleteDialog.html',
       controller: ["$scope", "dialog",  "callbacks", "selectedFileHtml", "warning", ($scope, dialog, callbacks, selectedFileHtml, warning) => {
 
         $scope.selectedFileHtml = selectedFileHtml;

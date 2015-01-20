@@ -18,7 +18,7 @@ module Maven {
       searchText: ""
     };
     $scope.search = "";
-    $scope.searchForm = 'app/maven/html/searchForm.html';
+    $scope.searchForm = 'plugins/maven/html/searchForm.html';
 
     addMavenFunctions($scope, workspace);
 

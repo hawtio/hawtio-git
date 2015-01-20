@@ -11,29 +11,29 @@ module Camel {
 
   export var pluginName = 'camel';
 
-  var routeToolBar = "app/camel/html/attributeToolBarRoutes.html";
-  var contextToolBar = "app/camel/html/attributeToolBarContext.html";
+  var routeToolBar = "plugins/camel/html/attributeToolBarRoutes.html";
+  var contextToolBar = "plugins/camel/html/attributeToolBarContext.html";
 
   //export var _module = angular.module(pluginName, ['bootstrap', 'ui.bootstrap', 'ui.bootstrap.dialog', 'ui.bootstrap.tabs', 'ui.bootstrap.typeahead', 'ngResource', 'hawtio-core', 'hawtio-ui']);
   export var _module = angular.module(pluginName, ['ngResource', 'hawtio-core', 'hawtio-ui']);
 
   _module.config(["$routeProvider", ($routeProvider) => {
     $routeProvider.
-            when('/camel/browseEndpoint', {templateUrl: 'app/camel/html/browseEndpoint.html'}).
-            when('/camel/endpoint/browse/:contextId/*endpointPath', {templateUrl: 'app/camel/html/browseEndpoint.html'}).
-            when('/camel/createEndpoint', {templateUrl: 'app/camel/html/createEndpoint.html'}).
-            when('/camel/route/diagram/:contextId/:routeId', {templateUrl: 'app/camel/html/routes.html'}).
-            when('/camel/routes', {templateUrl: 'app/camel/html/routes.html'}).
-            when('/camel/fabricDiagram', {templateUrl: 'app/camel/html/fabricDiagram.html', reloadOnSearch: false}).
-            when('/camel/typeConverter', {templateUrl: 'app/camel/html/typeConverter.html', reloadOnSearch: false}).
-            when('/camel/restRegistry', {templateUrl: 'app/camel/html/restRegistry.html', reloadOnSearch: false}).
-            when('/camel/routeMetrics', {templateUrl: 'app/camel/html/routeMetrics.html', reloadOnSearch: false}).
-            when('/camel/sendMessage', {templateUrl: 'app/camel/html/sendMessage.html', reloadOnSearch: false}).
-            when('/camel/source', {templateUrl: 'app/camel/html/source.html'}).
-            when('/camel/traceRoute', {templateUrl: 'app/camel/html/traceRoute.html'}).
-            when('/camel/debugRoute', {templateUrl: 'app/camel/html/debug.html'}).
-            when('/camel/profileRoute', {templateUrl: 'app/camel/html/profileRoute.html'}).
-            when('/camel/properties', {templateUrl: 'app/camel/html/properties.html'});
+            when('/camel/browseEndpoint', {templateUrl: 'plugins/camel/html/browseEndpoint.html'}).
+            when('/camel/endpoint/browse/:contextId/*endpointPath', {templateUrl: 'plugins/camel/html/browseEndpoint.html'}).
+            when('/camel/createEndpoint', {templateUrl: 'plugins/camel/html/createEndpoint.html'}).
+            when('/camel/route/diagram/:contextId/:routeId', {templateUrl: 'plugins/camel/html/routes.html'}).
+            when('/camel/routes', {templateUrl: 'plugins/camel/html/routes.html'}).
+            when('/camel/fabricDiagram', {templateUrl: 'plugins/camel/html/fabricDiagram.html', reloadOnSearch: false}).
+            when('/camel/typeConverter', {templateUrl: 'plugins/camel/html/typeConverter.html', reloadOnSearch: false}).
+            when('/camel/restRegistry', {templateUrl: 'plugins/camel/html/restRegistry.html', reloadOnSearch: false}).
+            when('/camel/routeMetrics', {templateUrl: 'plugins/camel/html/routeMetrics.html', reloadOnSearch: false}).
+            when('/camel/sendMessage', {templateUrl: 'plugins/camel/html/sendMessage.html', reloadOnSearch: false}).
+            when('/camel/source', {templateUrl: 'plugins/camel/html/source.html'}).
+            when('/camel/traceRoute', {templateUrl: 'plugins/camel/html/traceRoute.html'}).
+            when('/camel/debugRoute', {templateUrl: 'plugins/camel/html/debug.html'}).
+            when('/camel/profileRoute', {templateUrl: 'plugins/camel/html/profileRoute.html'}).
+            when('/camel/properties', {templateUrl: 'plugins/camel/html/properties.html'});
   }]);
 
   _module.factory('tracerStatus',function () {
@@ -54,12 +54,12 @@ module Camel {
     viewRegistry['camel/endpoint/'] = layoutFull;
     viewRegistry['camel/route/'] = layoutFull;
     viewRegistry['camel/fabricDiagram'] = layoutFull;
-    viewRegistry['camel'] = 'app/camel/html/layoutCamelTree.html';
+    viewRegistry['camel'] = 'plugins/camel/html/layoutCamelTree.html';
 
-    helpRegistry.addUserDoc('camel', 'app/camel/doc/help.md', () => {
+    helpRegistry.addUserDoc('camel', 'plugins/camel/doc/help.md', () => {
       return workspace.treeContainsDomainAndProperties(jmxDomain);
     });
-    preferencesRegistry.addTab('Camel', 'app/camel/html/preferences.html', () => {
+    preferencesRegistry.addTab('Camel', 'plugins/camel/html/preferences.html', () => {
       return workspace.treeContainsDomainAndProperties(jmxDomain); 
     });
 

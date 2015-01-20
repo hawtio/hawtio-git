@@ -515,13 +515,13 @@ module Wiki {
               });
             }
           } else {
-            $scope.sourceView = "app/wiki/html/sourceView.html";
+            $scope.sourceView = "plugins/wiki/html/sourceView.html";
           }
           break;
         default:
           $scope.html = null;
           $scope.source = contents;
-          $scope.sourceView = "app/wiki/html/sourceView.html";
+          $scope.sourceView = "plugins/wiki/html/sourceView.html";
       }
       Core.$apply($scope);
     }
@@ -531,7 +531,7 @@ module Wiki {
       if ($scope.source) {
         $scope.formEntity = Wiki.parseJson($scope.source);
       }
-      $scope.sourceView = "app/wiki/html/formView.html";
+      $scope.sourceView = "plugins/wiki/html/formView.html";
       Core.$apply($scope);
     }
 

@@ -97,7 +97,7 @@ module Wiki {
       var exemplar = template.exemplar;
 
       var commitMessage = "Created " + template.label;
-      var exemplarUri = Core.url("/app/wiki/exemplar/" + exemplar);
+      var exemplarUri = Core.url("/plugins/wiki/exemplar/" + exemplar);
 
       if (template.folder) {
         Core.notification("success", "Creating new folder " + name);

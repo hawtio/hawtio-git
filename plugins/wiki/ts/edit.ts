@@ -123,7 +123,7 @@ module Wiki {
           });
         }
       } else {
-        $scope.sourceView = "app/wiki/html/sourceEdit.html";
+        $scope.sourceView = "plugins/wiki/html/sourceEdit.html";
       }
     }
 
@@ -132,7 +132,7 @@ module Wiki {
       if ($scope.entity.source) {
         $scope.formEntity = Wiki.parseJson($scope.entity.source);
       }
-      $scope.sourceView = "app/wiki/html/formEdit.html";
+      $scope.sourceView = "plugins/wiki/html/formEdit.html";
       Core.$apply($scope);
     }
 

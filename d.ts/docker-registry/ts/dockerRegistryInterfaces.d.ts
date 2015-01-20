@@ -11,6 +11,6 @@ declare module DockerRegistry {
     interface DockerImageRepositories {
         num_results: number;
         query: string;
-        results: DockerImageRepository[];
+        results: Array<DockerImageRepository>;
     }
 }

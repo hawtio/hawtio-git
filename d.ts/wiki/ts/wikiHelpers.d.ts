@@ -41,7 +41,43 @@ declare module Wiki {
      * @for Wiki
      * @type Array
      */
-    var documentTemplates: {}[];
+    var documentTemplates: ({
+        label: string;
+        tooltip: string;
+        folder: boolean;
+        icon: string;
+        exemplar: string;
+        regex: RegExp;
+        invalid: string;
+    } | {
+        label: string;
+        tooltip: string;
+        profile: boolean;
+        addClass: string;
+        exemplar: string;
+        regex: RegExp;
+        invalid: string;
+        fabricOnly: boolean;
+    } | {
+        label: string;
+        tooltip: string;
+        exemplar: string;
+        regex: RegExp;
+        invalid: string;
+        extension: string;
+    } | {
+        label: string;
+        tooltip: string;
+        children: {
+            label: string;
+            tooltip: string;
+            icon: string;
+            exemplar: string;
+            regex: RegExp;
+            invalid: string;
+            extension: string;
+        }[];
+    })[];
     function isFMCContainer(workspace: any): boolean;
     function isWikiEnabled(workspace: Workspace, jolokia: any, localStorage: any): boolean;
     function goToLink(link: any, $timeout: any, $location: any): void;

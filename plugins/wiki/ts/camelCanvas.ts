@@ -585,7 +585,7 @@ module Wiki {
         $scope.nodeDataChangedFields = {};
         $scope.nodeModel = Camel.getCamelSchema(nodeName);
         if ($scope.nodeModel) {
-          $scope.propertiesTemplate = "app/wiki/html/camelPropertiesEdit.html";
+          $scope.propertiesTemplate = "plugins/wiki/html/camelPropertiesEdit.html";
         }
         $scope.selectedEndpoint = null;
         if ("endpoint" === nodeName) {

@@ -13,23 +13,23 @@ module Osgi {
 
   _module.config(["$routeProvider", ($routeProvider) => {
     $routeProvider.
-            when('/osgi/bundle-list', {templateUrl: 'app/osgi/html/bundle-list.html'}).
-            when('/osgi/bundles', {templateUrl: 'app/osgi/html/bundles.html'}).
-            when('/osgi/bundle/:bundleId', {templateUrl: 'app/osgi/html/bundle.html'}).
-            when('/osgi/services', {templateUrl: 'app/osgi/html/services.html'}).
-            when('/osgi/packages', {templateUrl: 'app/osgi/html/packages.html'}).
-            when('/osgi/package/:package/:version', {templateUrl: 'app/osgi/html/package.html'}).
-            when('/osgi/configurations', {templateUrl: 'app/osgi/html/configurations.html'}).
-            when('/osgi/pid/:pid/:factoryPid', {templateUrl: 'app/osgi/html/pid.html'}).
-            when('/osgi/pid/:pid', {templateUrl: 'app/osgi/html/pid.html'}).
-            when('/osgi/fwk', {templateUrl: 'app/osgi/html/framework.html'}).
-            when('/osgi/dependencies', {templateUrl: 'app/osgi/html/svc-dependencies.html', reloadOnSearch: false })
+            when('/osgi/bundle-list', {templateUrl: 'plugins/osgi/html/bundle-list.html'}).
+            when('/osgi/bundles', {templateUrl: 'plugins/osgi/html/bundles.html'}).
+            when('/osgi/bundle/:bundleId', {templateUrl: 'plugins/osgi/html/bundle.html'}).
+            when('/osgi/services', {templateUrl: 'plugins/osgi/html/services.html'}).
+            when('/osgi/packages', {templateUrl: 'plugins/osgi/html/packages.html'}).
+            when('/osgi/package/:package/:version', {templateUrl: 'plugins/osgi/html/package.html'}).
+            when('/osgi/configurations', {templateUrl: 'plugins/osgi/html/configurations.html'}).
+            when('/osgi/pid/:pid/:factoryPid', {templateUrl: 'plugins/osgi/html/pid.html'}).
+            when('/osgi/pid/:pid', {templateUrl: 'plugins/osgi/html/pid.html'}).
+            when('/osgi/fwk', {templateUrl: 'plugins/osgi/html/framework.html'}).
+            when('/osgi/dependencies', {templateUrl: 'plugins/osgi/html/svc-dependencies.html', reloadOnSearch: false })
   }]);
 
   _module.run(["workspace", "viewRegistry", "helpRegistry", (workspace:Workspace, viewRegistry, helpRegistry) => {
 
-    viewRegistry['osgi'] = "app/osgi/html/layoutOsgi.html";
-    helpRegistry.addUserDoc('osgi', 'app/osgi/doc/help.md', () => {
+    viewRegistry['osgi'] = "plugins/osgi/html/layoutOsgi.html";
+    helpRegistry.addUserDoc('osgi', 'plugins/osgi/doc/help.md', () => {
       return workspace.treeContainsDomainAndProperties("osgi.core");
     });
 

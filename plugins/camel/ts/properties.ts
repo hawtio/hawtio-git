@@ -29,7 +29,7 @@ module Camel {
           console.log("data is: " + JSON.stringify($scope.nodeData, null, "  "));
           console.log("model schema is: " + JSON.stringify($scope.model, null, "  "));
 
-          $scope.viewTemplate = "app/camel/html/nodePropertiesView.html";
+          $scope.viewTemplate = "plugins/camel/html/nodePropertiesView.html";
         }
       }
     }

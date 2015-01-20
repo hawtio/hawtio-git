@@ -13,22 +13,22 @@ module Maven {
 
   _module.config(["$routeProvider", ($routeProvider) => {
     $routeProvider.
-            when('/maven/search', {templateUrl: 'app/maven/html/search.html'}).
-            when('/maven/advancedSearch', {templateUrl: 'app/maven/html/advancedSearch.html'}).
-            when('/maven/artifact/:group/:artifact/:version/:classifier/:packaging', {templateUrl: 'app/maven/html/artifact.html'}).
-            when('/maven/artifact/:group/:artifact/:version/:classifier', {templateUrl: 'app/maven/html/artifact.html'}).
-            when('/maven/artifact/:group/:artifact/:version', {templateUrl: 'app/maven/html/artifact.html'}).
-            when('/maven/dependencies/:group/:artifact/:version/:classifier/:packaging', {templateUrl: 'app/maven/html/dependencies.html'}).
-            when('/maven/dependencies/:group/:artifact/:version/:classifier', {templateUrl: 'app/maven/html/dependencies.html'}).
-            when('/maven/dependencies/:group/:artifact/:version', {templateUrl: 'app/maven/html/dependencies.html'}).
-            when('/maven/versions/:group/:artifact/:classifier/:packaging', {templateUrl: 'app/maven/html/versions.html'}).
-            when('/maven/view/:group/:artifact/:version/:classifier/:packaging', {templateUrl: 'app/maven/html/view.html'}).
-            when('/maven/test', { templateUrl: 'app/maven/html/test.html'});
+            when('/maven/search', {templateUrl: 'plugins/maven/html/search.html'}).
+            when('/maven/advancedSearch', {templateUrl: 'plugins/maven/html/advancedSearch.html'}).
+            when('/maven/artifact/:group/:artifact/:version/:classifier/:packaging', {templateUrl: 'plugins/maven/html/artifact.html'}).
+            when('/maven/artifact/:group/:artifact/:version/:classifier', {templateUrl: 'plugins/maven/html/artifact.html'}).
+            when('/maven/artifact/:group/:artifact/:version', {templateUrl: 'plugins/maven/html/artifact.html'}).
+            when('/maven/dependencies/:group/:artifact/:version/:classifier/:packaging', {templateUrl: 'plugins/maven/html/dependencies.html'}).
+            when('/maven/dependencies/:group/:artifact/:version/:classifier', {templateUrl: 'plugins/maven/html/dependencies.html'}).
+            when('/maven/dependencies/:group/:artifact/:version', {templateUrl: 'plugins/maven/html/dependencies.html'}).
+            when('/maven/versions/:group/:artifact/:classifier/:packaging', {templateUrl: 'plugins/maven/html/versions.html'}).
+            when('/maven/view/:group/:artifact/:version/:classifier/:packaging', {templateUrl: 'plugins/maven/html/view.html'}).
+            when('/maven/test', { templateUrl: 'plugins/maven/html/test.html'});
   }]);
 
   _module.run(["$location", "workspace", "viewRegistry", "helpRegistry", ($location:ng.ILocationService, workspace:Workspace, viewRegistry, helpRegistry) => {
 
-    viewRegistry['maven'] = "app/maven/html/layoutMaven.html";
+    viewRegistry['maven'] = "plugins/maven/html/layoutMaven.html";
 
     workspace.topLevelTabs.push({
       id: "maven",
@@ -39,10 +39,10 @@ module Maven {
       isActive: (workspace: Workspace) => workspace.isLinkActive("/maven")
     });
 
-    helpRegistry.addUserDoc('maven', 'app/maven/doc/help.md', () => {
+    helpRegistry.addUserDoc('maven', 'plugins/maven/doc/help.md', () => {
       return Maven.getMavenIndexerMBean(workspace) !== null;
     });
-    helpRegistry.addDevDoc("maven", 'app/maven/doc/developer.md');
+    helpRegistry.addDevDoc("maven", 'plugins/maven/doc/developer.md');
 
   }]);
 

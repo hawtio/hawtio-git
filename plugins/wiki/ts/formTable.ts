@@ -103,7 +103,7 @@ module Wiki {
         $scope.gridOptions.columnDefs = columnDefs;
 
         // now we have the grid column stuff loaded, lets load the datatable
-        $scope.tableView = "app/wiki/html/formTableDatatable.html";
+        $scope.tableView = "plugins/wiki/html/formTableDatatable.html";
       }
     }
     Core.$apply($scope);

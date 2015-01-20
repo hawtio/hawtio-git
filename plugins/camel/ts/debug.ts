@@ -143,8 +143,8 @@ module Camel {
         if ($scope.debugging) {
           jolokia.execute(mbean, "getBreakpoints", Core.onSuccess(onBreakpoints));
           // get the breakpoints...
-          $scope.graphView = "app/camel/html/routes.html";
-          $scope.tableView = "app/camel/html/browseMessages.html";
+          $scope.graphView = "plugins/camel/html/routes.html";
+          $scope.tableView = "plugins/camel/html/browseMessages.html";
 
           Core.register(jolokia, $scope, {
             type: 'exec', mbean: mbean,
@@ -303,8 +303,8 @@ module Camel {
       return svg.selectAll("g .node");
     }
 
-    var breakpointImage = Core.url("/app/camel/doc/img/debug/breakpoint.gif");
-    var suspendedBreakpointImage = Core.url("/app/camel/doc/img/debug/breakpoint-suspended.gif");
+    var breakpointImage = Core.url("/plugins/camel/doc/img/debug/breakpoint.gif");
+    var suspendedBreakpointImage = Core.url("/plugins/camel/doc/img/debug/breakpoint-suspended.gif");
 
     function updateBreakpointIcons(nodes = getDiagramNodes()) {
       nodes.each(function (object) {
