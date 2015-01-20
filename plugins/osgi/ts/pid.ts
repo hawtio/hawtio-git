@@ -71,7 +71,7 @@ module Osgi {
       };
       var callback = Core.onSuccess(completeFn, errorHandler("Failed to update: " + pid));
       if ($scope.inFabricProfile) {
-        jolokia.execute(Fabric.managerMBean, "setProfileProperties", $scope.versionId, $scope.profileId, pid, data, callback);
+        Fabric.setProfileProperties($scope.versionId, $scope.profileId, pid, data, callback);
       } else {
         var json = JSON.stringify(data);
         $scope.jolokia.execute(mbean, "configAdminUpdate", pid, json, callback);
@@ -177,9 +177,7 @@ module Osgi {
       if ($scope.inFabricProfile) {
         if ($scope.pid) {
           var configFile = $scope.pid + ".properties";
-          jolokia.execute(Fabric.managerMBean, "deleteConfigurationFile",
-            $scope.versionId, $scope.profileId, configFile,
-            Core.onSuccess(successFn, {error: errorFn}));
+          Fabric.deleteConfigurationFile($scope.versionId, $scope.profileId, configFile, successFn, errorFn);
         }
       } else {
         var mbean = getSelectionConfigAdminMBean($scope.workspace);
@@ -218,7 +216,7 @@ module Osgi {
           updateSchemaAndLoadMetaType();
           Core.$apply($scope);
         }
-        jolokia.execute(Fabric.managerMBean, "getProfileProperties", $scope.versionId, $scope.profileId, $scope.zkPid, Core.onSuccess(onProfileProperties));
+        Fabric.getProfileProperties($scope.versionId, $scope.profileId, $scope.zkPid, onProfileProperties);
       } else {
         updateSchemaAndLoadMetaType();
       }
@@ -497,7 +495,7 @@ module Osgi {
     function updateTableContents() {
       $scope.modelLoaded = false;
       if ($scope.inFabricProfile || $scope.profileNotRunning) {
-        jolokia.execute(Fabric.managerMBean, "getOverlayProfileProperties", $scope.versionId, $scope.profileId, $scope.pid, Core.onSuccess(onProfilePropertiesLoaded));
+        Fabric.getOverlayProfileProperties($scope.versionId, $scope.profileId, $scope.pid, onProfilePropertiesLoaded);
       } else {
         Osgi.getConfigurationProperties($scope.workspace, $scope.jolokia, $scope.pid, populateTable);
       }

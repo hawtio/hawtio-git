@@ -11,6 +11,9 @@ module DockerRegistry {
   }]);
 
   _module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', (jolokiaUrl:string, jolokia:Jolokia.IJolokia, $q:ng.IQService, $rootScope:ng.IRootScopeService) => {
+    // TODO use the services plugin to find it?
+
+/*
     var answer = <ng.IDeferred<string>> $q.defer();
     jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined, 
       <Jolokia.IParams> Core.onSuccess((response) => {
@@ -26,6 +29,7 @@ module DockerRegistry {
         }
       }));
     return answer.promise;
+*/
   }]);
 
   _module.run(['viewRegistry', 'workspace', (viewRegistry, workspace:Core.Workspace) => {
@@ -34,7 +38,7 @@ module DockerRegistry {
     workspace.topLevelTabs.push({
       id: 'docker-registry',
       content: 'Images',
-      isValid: (workspace:Core.Workspace) => workspace.treeContainsDomainAndProperties(Fabric.jmxDomain, { type: 'KubernetesManager' }),
+      isValid: (workspace:Core.Workspace) => true, // TODO workspace.treeContainsDomainAndProperties(Fabric.jmxDomain, { type: 'KubernetesManager' }),
       isActive: (workspace:Core.Workspace) => workspace.isLinkActive('docker-registry'),
       href: () => defaultRoute
     });

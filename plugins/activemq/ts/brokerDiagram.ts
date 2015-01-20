@@ -289,7 +289,7 @@ module ActiveMQ {
     });
 
     if (isFmc) {
-      Core.register(jolokia, $scope, {type: 'exec', mbean: Fabric.mqManagerMBean, operation: "loadBrokerStatus()"}, Core.onSuccess(onBrokerData));
+      Fabric.loadBrokerStatus(onBrokerData);
     } else {
       // lets just use the current stuff from the workspace
       $scope.$watch('workspace.tree', function () {

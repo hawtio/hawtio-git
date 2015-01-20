@@ -111,9 +111,7 @@ module Camel {
       // if the current JMX selection does not support sending messages then lets redirect the page
       workspace.moveIfViewInvalid();
 
-      if (Fabric.fabricCreated(workspace)) {
-        loadProfileConfigurationFiles();
-      }
+      loadProfileConfigurationFiles();
     });
 
     /* save the sourceFormat in preferences for later
@@ -229,12 +227,15 @@ module Camel {
             // lets load the file data...
             var profile = $scope.profileFileNameToProfileId[fileName];
             if (profile) {
+              /**
+               TODO
               var body = Fabric.getConfigFile(jolokia, version, profile, fileName);
               if (!body) {
                 log.warn("No body for message " + fileName);
                 body = "";
               }
               doSendMessage(body, onSendFileCompleted);
+              */
             }
           }
         } else {
@@ -258,10 +259,13 @@ module Camel {
     }
 
     function loadProfileConfigurationFiles() {
+/*
+      TODO
       if (Fabric.fabricCreated(workspace)) {
         $scope.container = Fabric.getCurrentContainer(jolokia, ['versionId', 'profileIds']);
         jolokia.execute(Fabric.managerMBean, "currentContainerConfigurationFiles", Core.onSuccess(onFabricConfigFiles));
       }
+*/
     }
 
     function onFabricConfigFiles(response) {
