@@ -2,7 +2,7 @@
 /// <reference path="dockerRegistryHelpers.ts"/>
 module DockerRegistry {
 
-  export var _module = angular.module(pluginName, ['hawtioCore', 'ngResource']);
+  export var _module = angular.module(pluginName, ['hawtio-core', 'ngResource']);
   export var controller = PluginHelpers.createControllerFunction(_module, pluginName);
   export var route = PluginHelpers.createRoutingFunction(templatePath);
 

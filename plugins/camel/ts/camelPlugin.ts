@@ -14,7 +14,8 @@ module Camel {
   var routeToolBar = "app/camel/html/attributeToolBarRoutes.html";
   var contextToolBar = "app/camel/html/attributeToolBarContext.html";
 
-  export var _module = angular.module(pluginName, ['bootstrap', 'ui.bootstrap', 'ui.bootstrap.dialog', 'ui.bootstrap.tabs', 'ui.bootstrap.typeahead', 'ngResource', 'hawtioCore', 'hawtio-ui']);
+  //export var _module = angular.module(pluginName, ['bootstrap', 'ui.bootstrap', 'ui.bootstrap.dialog', 'ui.bootstrap.tabs', 'ui.bootstrap.typeahead', 'ngResource', 'hawtio-core', 'hawtio-ui']);
+  export var _module = angular.module(pluginName, ['ngResource', 'hawtio-core', 'hawtio-ui']);
 
   _module.config(["$routeProvider", ($routeProvider) => {
     $routeProvider.

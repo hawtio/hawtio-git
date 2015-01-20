@@ -9,8 +9,9 @@ module ActiveMQ {
 
   export var pluginName = 'activemq';
 
-  export var _module = angular.module(pluginName, ['bootstrap', 'ngResource', 'ui.bootstrap.dialog', 'hawtioCore', 'camel', 'hawtio-ui']);
-    
+  export var _module = angular.module(pluginName, ['ngResource', 'hawtio-core', 'camel', 'hawtio-ui']);
+  //export var _module = angular.module(pluginName, ['bootstrap', 'ngResource', 'ui.bootstrap.dialog', 'hawtio-core', 'camel', 'hawtio-ui']);
+
   _module.config(["$routeProvider", ($routeProvider) => {
     $routeProvider.
             when('/activemq/browseQueue', {templateUrl: 'app/activemq/html/browseQueue.html'}).

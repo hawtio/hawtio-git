@@ -7,8 +7,9 @@
  */
 module Karaf {
   var pluginName = 'karaf';
-  export var _module = angular.module(pluginName, ['bootstrap', 'ngResource', 'hawtioCore']);
-  
+  //export var _module = angular.module(pluginName, ['bootstrap', 'ngResource', 'hawtio-core']);
+  export var _module = angular.module(pluginName, ['ngResource', 'hawtio-core']);
+
   _module.config(["$routeProvider", ($routeProvider) => {
     $routeProvider.
             when('/osgi/server', {templateUrl: 'app/karaf/html/server.html'}).
