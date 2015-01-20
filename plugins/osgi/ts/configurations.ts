@@ -1,5 +1,6 @@
 /// <reference path="../../includes.ts"/>
 /// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
 
 /**
  * @module Osgi

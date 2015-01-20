@@ -1,8 +1,9 @@
 /// <reference path="mavenHelpers.ts"/>
+/// <reference path="mavenPlugin.ts"/>
+
 /**
  * @module Maven
  */
-/// <reference path="mavenPlugin.ts"/>
 module Maven {
 
   _module.controller("Maven.PomXmlController", ["$scope", ($scope) => {

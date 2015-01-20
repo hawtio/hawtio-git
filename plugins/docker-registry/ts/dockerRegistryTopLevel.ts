@@ -1,5 +1,6 @@
 /// <reference path="../../includes.ts"/>
 /// <reference path="dockerRegistryHelpers.ts"/>
+/// <reference path="dockerRegistryPlugin.ts"/>
 
 module DockerRegistry {
 

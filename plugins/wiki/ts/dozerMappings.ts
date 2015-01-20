@@ -2,6 +2,7 @@
 /// <reference path="../../git/ts/gitHelpers.ts"/>
 /// <reference path="../../dozer/ts/dozerHelpers.ts"/>
 /// <reference path="wikiHelpers.ts"/>
+/// <reference path="wikiPlugin.ts"/>
 
 /**
  * @module Wiki

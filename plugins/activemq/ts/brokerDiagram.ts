@@ -1,6 +1,6 @@
 /// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
 /// <reference path="../../wiki/ts/wikiHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
 
 module ActiveMQ {
 

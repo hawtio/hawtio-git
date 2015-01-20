@@ -1,5 +1,6 @@
 /// <reference path="../../includes.ts"/>
 /// <reference path="wikiHelpers.ts"/>
+/// <reference path="wikiPlugin.ts"/>
 
 /**
  * @module Wiki

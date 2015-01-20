@@ -1,5 +1,6 @@
 /// <reference path="../../includes.ts"/>
 /// <reference path="karafHelpers.ts"/>
+/// <reference path="karafPlugin.ts"/>
 
 /**
  * @module Karaf
