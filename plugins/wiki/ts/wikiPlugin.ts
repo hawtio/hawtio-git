@@ -95,7 +95,12 @@ module Wiki {
 
   _module.filter('fileIconClass', () => iconClass);
 
-  _module.run(["$location", "workspace", "viewRegistry", "jolokia", "localStorage", "layoutFull", "helpRegistry", "preferencesRegistry", "wikiRepository", "postLoginTasks", "$rootScope", ($location:ng.ILocationService,
+  _module.run(["$location", "workspace", "viewRegistry", "jolokia", "localStorage", "layoutFull", "helpRegistry", "preferencesRegistry", "wikiRepository",
+/*
+TODO
+    "postLoginTasks",
+*/
+    "$rootScope", ($location:ng.ILocationService,
         workspace:Workspace,
         viewRegistry,
         jolokia,
@@ -104,7 +109,10 @@ module Wiki {
         helpRegistry,
         preferencesRegistry,
         wikiRepository,
+/*
+TODO
         postLoginTasks,
+*/
         $rootScope) => {
 
     viewRegistry['wiki'] = templatePath + 'layoutWiki.html';
@@ -124,6 +132,8 @@ module Wiki {
     };
     workspace.topLevelTabs.push(tab);
 
+/*
+TODO
     postLoginTasks.addTask('wikiGetRepositoryLabel', () => {
       wikiRepository.getRepositoryLabel((label) => {
         tab.content = label;
@@ -132,6 +142,7 @@ module Wiki {
         // silently ignore
       });
     });
+*/
 
     // add empty regexs to templates that don't define
     // them so ng-pattern doesn't barf
