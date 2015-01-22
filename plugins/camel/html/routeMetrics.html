@@ -1,6 +1,6 @@
-<div class="row-fluid" ng-controller="Camel.RouteMetricsController">
+<div class="row" ng-controller="Camel.RouteMetricsController">
 
-  <div class="row-fluid">
+  <div class="row">
     <div class="pull-right">
       <form class="form-inline no-bottom-margin">
         <fieldset>
@@ -12,11 +12,11 @@
     </div>
   </div>
 
-  <div class="row-fluid" ng-show="!initDone">
+  <div class="row" ng-show="!initDone">
     Loading...
   </div>
 
-  <div class="span8 centered well" ng-show="initDone && metricDivs.length === 0">
+  <div class="col-md-8 centered well" ng-show="initDone && metricDivs.length === 0">
     <form>
       This Camel context has no route metrics data.
     </form>

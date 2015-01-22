@@ -2773,7 +2773,7 @@ var _apacheCamelModel = {
           "tooltip": "Should Append HMAC",
           "title": "Should Append HMAC"
         },
-        "inline": {
+        "list-inline": {
           "type": "bool",
           "description": "Inline",
           "tooltip": "Inline",

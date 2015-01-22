@@ -34,43 +34,43 @@
   <!-- Icon View -->
   <div ng-show="mode == ViewMode.Icon" class="wiki-fixed">
     <div ng-hide="!showAppHeader">
-      <div class="row-fluid">
-        <div class="span12">
+      <div class="row">
+        <div class="col-md-12">
           <div kubernetes-json="kubernetesJson"></div>
         </div>
       </div>
     </div>
     <div ng-hide="!html" wiki-href-adjuster wiki-title-linker>
-      <div class="row-fluid" style="margin-left: 10px">
-        <div class="span12">
+      <div class="row" style="margin-left: 10px">
+        <div class="col-md-12">
           <div compile="html"></div>
         </div>
       </div>
     </div>
-    <div class="row-fluid" ng-show="html && children">
-      <div class="span12 wiki-icon-view-header">
+    <div class="row" ng-show="html && children">
+      <div class="col-md-12 wiki-icon-view-header">
         <h5>Directories and Files</h5>
       </div>
     </div>
-    <div class="row-fluid" ng-hide="!directory">
-      <div class="span12" ng-controller="Wiki.FileDropController">
+    <div class="row" ng-hide="!directory">
+      <div class="col-md-12" ng-controller="Wiki.FileDropController">
         <div class="wiki-icon-view" nv-file-drop nv-file-over uploader="uploader" over-class="ready-drop">
           <div class="column-box mouse-pointer well"
                ng-repeat="child in children" 
                ng-class="isInGroup(gridOptions.selectedItems, child, 'selected', '')"
                ng-click="toggleSelectionFromGroup(gridOptions.selectedItems, child)">
-            <div class="row-fluid">
-              <div class="span2" hawtio-file-drop="{{child.fileName}}" download-url="{{child.downloadURL}}">
+            <div class="row">
+              <div class="col-md-2" hawtio-file-drop="{{child.fileName}}" download-url="{{child.downloadURL}}">
                   <span class="app-logo" ng-class="fileClass(child)" compile="fileIconHtml(child)"></span>
               </div>
-              <div class="span10">
+              <div class="col-md-10">
                 <h3>
                   <a href="{{childLink(child)}}">{{child.displayName || child.name}}</a>
                 </h3>
               </div>
             </div>
-            <div class="row-fluid" ng-show="child.summary">
-              <div class="span12">
+            <div class="row" ng-show="child.summary">
+              <div class="col-md-12">
                 <p compile="marked(child.summary)"></p>
               </div>
             </div>
@@ -90,26 +90,26 @@
         </div>
       </div>
     </hawtio-pane>
-    <div class="row-fluid">
-      <div ng-class="span12">
+    <div class="row">
+      <div ng-class="col-md-12">
         <div ng-hide="!showProfileHeader">
-          <div class="row-fluid">
-            <div class="span12">
+          <div class="row">
+            <div class="col-md-12">
               <div fabric-profile-details version-id="versionId" profile-id="profileId"></div>
               <p></p>
             </div>
           </div>
         </div>
         <div ng-hide="!showAppHeader">
-          <div class="row-fluid">
-            <div class="span12">
+          <div class="row">
+            <div class="col-md-12">
               <div kubernetes-json="kubernetesJson" children="children"></div>
             </div>
           </div>
         </div>
         <div ng-hide="!html" wiki-href-adjuster wiki-title-linker>
-          <div class="row-fluid" style="margin-left: 10px">
-            <div class="span12">
+          <div class="row" style="margin-left: 10px">
+            <div class="col-md-12">
               <div compile="html"></div>
             </div>
           </div>

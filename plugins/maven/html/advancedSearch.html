@@ -1,7 +1,7 @@
 <div ng-controller="Maven.SearchController">
   <div style="height: 8em;" ng-hide="artifacts.length > 0"></div>
 
-  <div class="row-fluid">
+  <div class="row">
     <div class="control-group">
       <div class="controls inline-block" style="white-space: nowrap;">
         <form class="form-horizontal">
@@ -33,7 +33,7 @@
             <div class="controls">
               <button type="submit" class="btn" ng-disabled="!hasAdvancedSearch(form)" ng-click="doSearch()"
                       title="Search the maven repositories for artifacts containing this text" data-placement="bottom">
-                <i class="icon-search"></i> Search
+                <i class="glyphicon glyphicon-search"></i> Search
               </button>
             </div>
           </div>
