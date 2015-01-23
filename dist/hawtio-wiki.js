@@ -8729,99 +8729,6 @@ var DockerRegistry;
 
 /// <reference path="../../includes.ts"/>
 /**
- * A bunch of API stubs for now until we remove references to Fabric or refactor the code
- * to work nicely in Kubernetes
- */
-var Fabric;
-(function (Fabric) {
-    Fabric.fabricTopLevel = "fabric/profiles/";
-    Fabric.profileSuffix = ".profile";
-    function initScope($scope, $location, jolokia, workspace) {
-    }
-    Fabric.initScope = initScope;
-    function brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName) {
-    }
-    Fabric.brokerConfigLink = brokerConfigLink;
-    function containerJolokia(jolokia, id, fn) {
-    }
-    Fabric.containerJolokia = containerJolokia;
-    function pagePathToProfileId(pageId) {
-    }
-    Fabric.pagePathToProfileId = pagePathToProfileId;
-    function profileJolokia(jolokia, profileId, versionId, callback) {
-    }
-    Fabric.profileJolokia = profileJolokia;
-    function getDefaultVersionId(jolokia) {
-    }
-    Fabric.getDefaultVersionId = getDefaultVersionId;
-    function getContainersFields(jolokia, fields, onFabricContainerData) {
-    }
-    Fabric.getContainersFields = getContainersFields;
-    function loadBrokerStatus(onBrokerData) {
-        /** TODO
-         Core.register(jolokia, $scope, {type: 'exec', mbean: Fabric.mqManagerMBean, operation: "loadBrokerStatus()"}, Core.onSuccess(onBrokerData));
-         */
-    }
-    Fabric.loadBrokerStatus = loadBrokerStatus;
-    function connectToBroker($scope, container, postfix) {
-    }
-    Fabric.connectToBroker = connectToBroker;
-    function createJolokia(url) {
-    }
-    Fabric.createJolokia = createJolokia;
-    function hasFabric(workspace) {
-    }
-    Fabric.hasFabric = hasFabric;
-    function profilePath(profileId) {
-    }
-    Fabric.profilePath = profilePath;
-    function getOverlayProfileProperties(versionId, profileId, pid, onProfilePropertiesLoaded) {
-        /**
-         * TODO
-         jolokia.execute(Fabric.managerMBean, "getOverlayProfileProperties", $scope.versionId, $scope.profileId, $scope.pid, Core.onSuccess(onProfilePropertiesLoaded));
-         */
-    }
-    Fabric.getOverlayProfileProperties = getOverlayProfileProperties;
-    function getProfileProperties(versionId, profileId, zkPid, onProfileProperties) {
-        /** TODO
-         jolokia.execute(Fabric.managerMBean, "getProfileProperties", $scope.versionId, $scope.profileId, $scope.zkPid, Core.onSuccess(onProfileProperties));
-         */
-    }
-    Fabric.getProfileProperties = getProfileProperties;
-    function setProfileProperties(versionId, profileId, pid, data, callback) {
-        /*
-         TODO
-         jolokia.execute(Fabric.managerMBean, "setProfileProperties", $scope.versionId, $scope.profileId, pid, data, callback);
-         */
-    }
-    Fabric.setProfileProperties = setProfileProperties;
-    function deleteConfigurationFile(versionId, profileId, configFile, successFn, errorFn) {
-        /** TODO
-        jolokia.execute(Fabric.managerMBean, "deleteConfigurationFile",
-          versionId, profileId, configFile,
-          Core.onSuccess(successFn, {error: errorFn}));
-         */
-    }
-    Fabric.deleteConfigurationFile = deleteConfigurationFile;
-    function getProfile(jolokia, branch, profileName, someFlag) {
-    }
-    Fabric.getProfile = getProfile;
-    function createProfile(jolokia, branch, profileName, baseProfiles, successFn, errorFn) {
-    }
-    Fabric.createProfile = createProfile;
-    function newConfigFile(jolokia, branch, profileName, fileName, successFn, errorFn) {
-    }
-    Fabric.newConfigFile = newConfigFile;
-    function saveConfigFile(jolokia, branch, profileName, fileName, contents, successFn, errorFn) {
-    }
-    Fabric.saveConfigFile = saveConfigFile;
-    function getVersionIds(jolokia) {
-    }
-    Fabric.getVersionIds = getVersionIds;
-})(Fabric || (Fabric = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
  * @module Dozer
  * @main Dozer
  */
@@ -9356,6 +9263,99 @@ var Dozer;
     }
     Dozer.schemaConfigure = schemaConfigure;
 })(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * A bunch of API stubs for now until we remove references to Fabric or refactor the code
+ * to work nicely in Kubernetes
+ */
+var Fabric;
+(function (Fabric) {
+    Fabric.fabricTopLevel = "fabric/profiles/";
+    Fabric.profileSuffix = ".profile";
+    function initScope($scope, $location, jolokia, workspace) {
+    }
+    Fabric.initScope = initScope;
+    function brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName) {
+    }
+    Fabric.brokerConfigLink = brokerConfigLink;
+    function containerJolokia(jolokia, id, fn) {
+    }
+    Fabric.containerJolokia = containerJolokia;
+    function pagePathToProfileId(pageId) {
+    }
+    Fabric.pagePathToProfileId = pagePathToProfileId;
+    function profileJolokia(jolokia, profileId, versionId, callback) {
+    }
+    Fabric.profileJolokia = profileJolokia;
+    function getDefaultVersionId(jolokia) {
+    }
+    Fabric.getDefaultVersionId = getDefaultVersionId;
+    function getContainersFields(jolokia, fields, onFabricContainerData) {
+    }
+    Fabric.getContainersFields = getContainersFields;
+    function loadBrokerStatus(onBrokerData) {
+        /** TODO
+         Core.register(jolokia, $scope, {type: 'exec', mbean: Fabric.mqManagerMBean, operation: "loadBrokerStatus()"}, Core.onSuccess(onBrokerData));
+         */
+    }
+    Fabric.loadBrokerStatus = loadBrokerStatus;
+    function connectToBroker($scope, container, postfix) {
+    }
+    Fabric.connectToBroker = connectToBroker;
+    function createJolokia(url) {
+    }
+    Fabric.createJolokia = createJolokia;
+    function hasFabric(workspace) {
+    }
+    Fabric.hasFabric = hasFabric;
+    function profilePath(profileId) {
+    }
+    Fabric.profilePath = profilePath;
+    function getOverlayProfileProperties(versionId, profileId, pid, onProfilePropertiesLoaded) {
+        /**
+         * TODO
+         jolokia.execute(Fabric.managerMBean, "getOverlayProfileProperties", $scope.versionId, $scope.profileId, $scope.pid, Core.onSuccess(onProfilePropertiesLoaded));
+         */
+    }
+    Fabric.getOverlayProfileProperties = getOverlayProfileProperties;
+    function getProfileProperties(versionId, profileId, zkPid, onProfileProperties) {
+        /** TODO
+         jolokia.execute(Fabric.managerMBean, "getProfileProperties", $scope.versionId, $scope.profileId, $scope.zkPid, Core.onSuccess(onProfileProperties));
+         */
+    }
+    Fabric.getProfileProperties = getProfileProperties;
+    function setProfileProperties(versionId, profileId, pid, data, callback) {
+        /*
+         TODO
+         jolokia.execute(Fabric.managerMBean, "setProfileProperties", $scope.versionId, $scope.profileId, pid, data, callback);
+         */
+    }
+    Fabric.setProfileProperties = setProfileProperties;
+    function deleteConfigurationFile(versionId, profileId, configFile, successFn, errorFn) {
+        /** TODO
+        jolokia.execute(Fabric.managerMBean, "deleteConfigurationFile",
+          versionId, profileId, configFile,
+          Core.onSuccess(successFn, {error: errorFn}));
+         */
+    }
+    Fabric.deleteConfigurationFile = deleteConfigurationFile;
+    function getProfile(jolokia, branch, profileName, someFlag) {
+    }
+    Fabric.getProfile = getProfile;
+    function createProfile(jolokia, branch, profileName, baseProfiles, successFn, errorFn) {
+    }
+    Fabric.createProfile = createProfile;
+    function newConfigFile(jolokia, branch, profileName, fileName, successFn, errorFn) {
+    }
+    Fabric.newConfigFile = newConfigFile;
+    function saveConfigFile(jolokia, branch, profileName, fileName, contents, successFn, errorFn) {
+    }
+    Fabric.saveConfigFile = saveConfigFile;
+    function getVersionIds(jolokia) {
+    }
+    Fabric.getVersionIds = getVersionIds;
+})(Fabric || (Fabric = {}));
 
 /// <reference path="../../includes.ts"/>
 /// <reference path="gitHelpers.ts"/>
