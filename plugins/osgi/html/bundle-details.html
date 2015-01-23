@@ -9,7 +9,7 @@
                   hawtio-show
                   object-name="{{frameworkMBean}}"
                   method-name="stopBundle"
-                  title="stop"><i class="glyphicon glyphicon-off"/></button>
+                  title="stop"><i class="fa fa-off"/></button>
           <button ng-click="startBundle(bundleId)" 
                   class="btn" 
                   hawtio-show
@@ -21,7 +21,7 @@
                   hawtio-show
                   object-name="{{frameworkMBean}}"
                   method-name="refreshBundle"
-                  title="refresh"><i class="glyphicon glyphicon-refresh"/></button>
+                  title="refresh"><i class="fa fa-refresh"/></button>
           <button ng-click="updateBundle(bundleId)" 
                   class="btn" 
                   hawtio-show
@@ -33,7 +33,7 @@
                   hawtio-show
                   object-name="{{frameworkMBean}}"
                   method-name="uninstallBundle"
-                  title="uninstall"><i class="glyphicon glyphicon-eject"/></button>
+                  title="uninstall"><i class="fa fa-eject"/></button>
         </div>
       </td>
     </tr>
@@ -205,14 +205,14 @@
               Registered Services
               <table>
                 <tr ng-repeat="id in row.RegisteredServices">
-                  <td><i class="glyphicon glyphicon-cog less-big text-success" id="registers.service.{{id}}">{{id}}</i></td>
+                  <td><i class="fa fa-cog less-big text-success" id="registers.service.{{id}}">{{id}}</i></td>
                 </tr>
               </table>
               <br/>
               Services used by this Bundle
               <table>
                 <tr ng-repeat="id in row.ServicesInUse">
-                  <td><i class="glyphicon glyphicon-cog less-big text-info" id="uses.service.{{id}}">{{id}}</i></td>
+                  <td><i class="fa fa-cog less-big text-info" id="uses.service.{{id}}">{{id}}</i></td>
                 </tr>
               </table>
             </div>

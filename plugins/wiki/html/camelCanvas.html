@@ -25,21 +25,21 @@
           <li ng-class="{active : true}">
             <a ng-href='{{startLink}}/camel/canvas/{{pageId}}' title="Edit the diagram in a draggy droppy way"
                data-placement="bottom">
-              <i class="glyphicon glyphicon-picture"></i> Canvas</a></li>
+              <i class="fa fa-picture"></i> Canvas</a></li>
           <li ng-class="{active : false}">
             <a ng-href='{{startLink}}/camel/properties/{{pageId}}' title="Switch to the tree based view"
                data-placement="bottom">
-              <i class="glyphicon glyphicon-sitemap"></i> Tree</a></li>
+              <i class="fa fa-sitemap"></i> Tree</a></li>
 
           <li class="pull-right">
             <a href='' title="Add new pattern node connecting to this pattern" ng-click="addDialog.open()"
                data-placement="bottom">
-              <i class="glyphicon glyphicon-plus"></i> Add</a></li>
+              <i class="fa fa-plus"></i> Add</a></li>
 
           <li class="pull-right">
             <a href='' title="Automatically layout the diagram " ng-click="doLayout()"
                data-placement="bottom">
-              <i class="glyphicon glyphicon-magic"></i> Layout</a></li>
+              <i class="fa fa-magic"></i> Layout</a></li>
 
           <li class="pull-right" style="margin-top: 0; margin-bottom: 0;">
             </li>
@@ -49,7 +49,7 @@
             <a href='' title="Edit the properties for the selected node" ng-disabled="!selectedFolder"
                ng-click="propertiesDialog.open()"
                data-placement="bottom">
-              <i class="glyphicon glyphicon-edit"></i> Properties</a></li>
+              <i class="fa fa-edit"></i> Properties</a></li>
               -->
         </ul>
 
@@ -142,18 +142,18 @@
                         title="{{getDeleteTitle()}}"
                         ng-click="removeNode()"
                         data-placement="bottom">
-                    <i class="glyphicon glyphicon-remove"></i> Delete {{getDeleteTarget()}}</button>
+                    <i class="fa fa-remove"></i> Delete {{getDeleteTarget()}}</button>
                 <button class="btn"
                         title="Apply any changes to the endpoint properties"
                         ng-disabled="!isFormDirty()"
                         ng-click="updateProperties()">
-                    <i class="glyphicon glyphicon-ok"></i> Apply</button>
+                    <i class="fa fa-ok"></i> Apply</button>
                 <!-- TODO Would be good to have this too
                 <button class="btn"
                         title="Clear any changes to the endpoint properties"
                         ng-disabled="!isFormDirty()"
                         ng-click="resetForms()">
-                  <i class="glyphicon glyphicon-remove"></i> Cancel</button> -->
+                  <i class="fa fa-remove"></i> Cancel</button> -->
               </div>
             </div>
           </div>

@@ -23,7 +23,8 @@
     "hawtio-jmx": "~2.0.0",
     "hawtio-ui": "~2.0.0",
     "hawtio-utilities": "~2.0.0",
-    "angular-resource": "~1.3.9"
+    "angular-resource": "~1.3.9",
+    "font-awesome": "~4.3.0"
   },
   "devDependencies": {
     "bootstrap": "~3.3.1",

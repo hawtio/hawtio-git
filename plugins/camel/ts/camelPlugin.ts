@@ -213,7 +213,7 @@ module Camel {
 
     // special for route diagram as we want this to be the 1st
     workspace.subLevelTabs.push({
-      content: '<i class="icon-picture"></i> Route Diagram',
+      content: '<i class="fa fa-picture"></i> Route Diagram',
       title: "View a diagram of the Camel routes",
       isValid: (workspace: Workspace) => workspace.isRoute() && workspace.hasInvokeRightsForName(getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"),
       href: () => "#/camel/routes",
@@ -221,7 +221,7 @@ module Camel {
       index: -2
     });
     workspace.subLevelTabs.push({
-      content: '<i class="icon-bar-chart"></i> Route Metrics',
+      content: '<i class="fa fa-bar-chart"></i> Route Metrics',
       title: "View the entire JVMs Camel route metrics",
       isValid: (workspace: Workspace) => !workspace.isEndpointsFolder()
         && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext())
@@ -230,7 +230,7 @@ module Camel {
       href: () => "#/camel/routeMetrics"
     });
     workspace.subLevelTabs.push({
-      content: '<i class=" icon-file-alt"></i> Source',
+      content: '<i class=" fa fa-file-alt"></i> Source',
       title: "View the source of the Camel routes",
       isValid: (workspace: Workspace) => !workspace.isEndpointsFolder()
         && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext())
@@ -238,13 +238,13 @@ module Camel {
       href: () => "#/camel/source"
     });
     workspace.subLevelTabs.push({
-      content: '<i class=" icon-edit"></i> Properties',
+      content: '<i class=" fa fa-edit"></i> Properties',
       title: "View the pattern properties",
       isValid: (workspace: Workspace) => getSelectedRouteNode(workspace),
       href: () => "#/camel/properties"
     });
     workspace.subLevelTabs.push({
-      content: '<i class="icon-list"></i> Type Converters',
+      content: '<i class="fa fa-list"></i> Type Converters',
       title: "List all the type converters registered in the context",
       isValid: (workspace: Workspace) => workspace.isTopTabActive("camel")
         && !workspace.isEndpointsFolder() && !workspace.isRoute()
@@ -253,7 +253,7 @@ module Camel {
       href: () => "#/camel/typeConverter"
     });
     workspace.subLevelTabs.push({
-      content: '<i class="icon-list"></i> Rest Services',
+      content: '<i class="fa fa-list"></i> Rest Services',
       title: "List all the REST services registered in the context",
       isValid: (workspace: Workspace) => workspace.isTopTabActive("camel")
         && !workspace.isEndpointsFolder() && !workspace.isRoute()
@@ -262,14 +262,14 @@ module Camel {
       href: () => "#/camel/restRegistry"
     });
     workspace.subLevelTabs.push({
-      content: '<i class="icon-envelope"></i> Browse',
+      content: '<i class="fa fa-envelope"></i> Browse',
       title: "Browse the messages on the endpoint",
       isValid: (workspace: Workspace) => workspace.isEndpoint()
         && workspace.hasInvokeRights(workspace.selection, "browseAllMessagesAsXml"),
       href: () => "#/camel/browseEndpoint"
     });
     workspace.subLevelTabs.push({
-      content: '<i class="icon-stethoscope"></i> Debug',
+      content: '<i class="fa fa-stethoscope"></i> Debug',
       title: "Debug the Camel route",
       isValid: (workspace: Workspace) => workspace.isRoute()
         && Camel.getSelectionCamelDebugMBean(workspace)
@@ -277,7 +277,7 @@ module Camel {
       href: () => "#/camel/debugRoute"
     });
     workspace.subLevelTabs.push({
-      content: '<i class="icon-envelope"></i> Trace',
+      content: '<i class="fa fa-envelope"></i> Trace',
       title: "Trace the messages flowing through the Camel route",
       isValid: (workspace: Workspace) => workspace.isRoute()
         && Camel.getSelectionCamelTraceMBean(workspace)
@@ -285,7 +285,7 @@ module Camel {
       href: () => "#/camel/traceRoute"
     });
     workspace.subLevelTabs.push({
-      content: '<i class="icon-bar-chart"></i> Profile',
+      content: '<i class="fa fa-bar-chart"></i> Profile',
       title: "Profile the messages flowing through the Camel route",
       isValid: (workspace: Workspace) => workspace.isRoute()
         && Camel.getSelectionCamelTraceMBean(workspace)
@@ -293,14 +293,14 @@ module Camel {
       href: () => "#/camel/profileRoute"
     });
     workspace.subLevelTabs.push({
-      content: '<i class="icon-pencil"></i> Send',
+      content: '<i class="fa fa-pencil"></i> Send',
       title: "Send a message to this endpoint",
       isValid: (workspace: Workspace) => workspace.isEndpoint()
         && workspace.hasInvokeRights(workspace.selection, workspace.selection.domain === "org.apache.camel" ? "sendBodyAndHeaders" : "sendTextMessage"),
       href: () => "#/camel/sendMessage"
     });
     workspace.subLevelTabs.push({
-      content: '<i class="icon-plus"></i> Endpoint',
+      content: '<i class="fa fa-plus"></i> Endpoint',
       title: "Create a new endpoint",
       isValid: (workspace: Workspace) => workspace.isEndpointsFolder()
         && workspace.hasInvokeRights(workspace.selection, "createEndpoint"),

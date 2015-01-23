@@ -886,12 +886,12 @@ module Camel {
     if (state) {
       switch (state.toLowerCase()) {
         case 'started':
-          return "green icon-play-circle";
+          return "green fa fa-play-circle";
         case 'suspended':
-          return "icon-pause";
+          return "fa fa-pause";
       }
     }
-    return "orange icon-off";
+    return "orange fa fa-off";
   }
 
   export function getSelectedRouteId(workspace:Workspace, folder = null) {

@@ -41,7 +41,7 @@
         </li>
         <li class="pull-right">
         <span class="commit-author">
-          <i class="glyphicon glyphicon-user"></i> {{commitInfo.author}}
+          <i class="fa fa-user"></i> {{commitInfo.author}}
         </span>
         </li>
         <li class="pull-right">
@@ -61,13 +61,13 @@
     <div class="col-md-4">
       <div class="control-group">
         <button class="btn" ng-disabled="!selectedItems.length" ng-click="diff()"
-                title="Compare the selected versions of the files to see how they differ"><i class="glyphicon glyphicon-exchange"></i>
+                title="Compare the selected versions of the files to see how they differ"><i class="fa fa-exchange"></i>
           Compare
         </button>
 
         <!--
                 <button class="btn" ng-disabled="!canRevert()" ng-click="revert()"
-                        title="Revert to this version of the file"><i class="glyphicon glyphicon-exchange"></i> Revert
+                        title="Revert to this version of the file"><i class="fa fa-exchange"></i> Revert
                 </button>
         -->
       </div>

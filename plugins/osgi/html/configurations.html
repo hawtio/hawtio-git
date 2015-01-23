@@ -31,16 +31,16 @@
     <div class="configuration-header">
       <div class="configuration-filter">
         <input type="text" class="col-md-8 search-query" placeholder="Filter..." ng-model="filterText">
-        <i class="glyphicon glyphicon-remove clickable" title="Clear filter" ng-click="filterText = ''"></i>
+        <i class="fa fa-remove clickable" title="Clear filter" ng-click="filterText = ''"></i>
         <button class="btn pull-right" ng-click="addPidDialog.open()" title="Add a new configuration" hawtio-show object-name="{{hawtioConfigAdminMBean}}" method-name="configAdminUpdate"><i
-                class="glyphicon glyphicon-plus"></i> Configuration
+                class="fa fa-plus"></i> Configuration
         </button>
       </div>
     </div>
   </div>
 
   <div class="row centered" ng-hide="configurations.length">
-    <i class="glyphicon glyphicon-spinner icon-spin"></i>
+    <i class="fa fa-spinner icon-spin"></i>
   </div>
 
   <ul class="configurations">

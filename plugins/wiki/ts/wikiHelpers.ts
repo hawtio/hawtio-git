@@ -68,7 +68,7 @@ module Wiki {
     {
       label: "App",
       tooltip: "Creates a new App folder used to configure and run containers",
-      addClass: "icon-cog green",
+      addClass: "fa fa-cog green",
       exemplar: 'myapp',
       regex: defaultFileNamePattern,
       invalid: defaultFileNamePatternInvalid,
@@ -149,7 +149,7 @@ module Wiki {
       label: "Fabric8 Profile",
       tooltip: "Create a new empty fabric profile. Using a hyphen ('-') will create a folder heirarchy, for example 'my-awesome-profile' will be available via the path 'my/awesome/profile'.",
       profile: true,
-      addClass: "icon-book green",
+      addClass: "fa fa-book green",
       exemplar: "user-profile",
       regex: defaultLowerCaseFileNamePattern,
       invalid: defaultLowerCaseFileNamePatternInvalid,
@@ -689,11 +689,11 @@ module Wiki {
       if (directory) {
         switch (extension) {
           case 'profile':
-            css = "icon-book";
+            css = "fa fa-book";
             break;
           default:
             // log.debug("No match for extension: ", extension, " using a generic folder icon");
-            css = "icon-folder-close";
+            css = "fa fa-folder-close";
         }
       } else {
         switch (extension) {
@@ -714,14 +714,14 @@ module Wiki {
             break;
           case 'json':
           case 'xml':
-            css = "icon-file-text";
+            css = "fa fa-file-text";
             break;
           case 'md':
-            css = "icon-file-text-alt";
+            css = "fa fa-file-text-alt";
             break;
           default:
             // log.debug("No match for extension: ", extension, " using a generic file icon");
-            css = "icon-file-alt";
+            css = "fa fa-file-alt";
         }
       }
     }
@@ -737,15 +737,15 @@ module Wiki {
     var extension = fileExtension(name);
     var directory = row.getProperty("directory");
     if (directory) {
-      return "icon-folder-close";
+      return "fa fa-folder-close";
     }
     if ("xml" === extension) {
-        return "icon-cog";
+        return "fa fa-cog";
     } else if ("md" === extension) {
-        return "icon-file-text-alt";
+        return "fa fa-file-text-alt";
     }
     // TODO could we use different icons for markdown v xml v html
-    return "icon-file-alt";
+    return "fa fa-file-alt";
   }
 
 

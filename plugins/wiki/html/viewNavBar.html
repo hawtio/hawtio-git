@@ -17,7 +17,7 @@
       </li>
 
       <li class="pull-right dropdown">
-        <a href="#" class="dropdown-toggle" data-toggle="dropdown">
+        <a href="" class="dropdown-toggle" data-toggle="dropdown">
           Actions <span class="caret"></span>
         </a>
         <ul class="dropdown-menu">
@@ -39,13 +39,13 @@
             <a ng-click="openRenameDialog()"
                title="Rename the selected document"
                data-placement="bottom">
-              <i class="glyphicon glyphicon-adjust"></i> Rename</a>
+              <i class="fa fa-adjust"></i> Rename</a>
           </li>
           <li ng-hide="!gridOptions.selectedItems.length" hawtio-show object-name="{{gitMBean}}" method-name="rename">
             <a ng-click="openMoveDialog()"
                title="move the selected documents to a new folder"
                data-placement="bottom">
-              <i class="glyphicon glyphicon-move"></i> Move</a>
+              <i class="fa fa-move"></i> Move</a>
           </li>
           <!--
           <li class="divider">
@@ -55,7 +55,7 @@
             <a ng-click="openDeleteDialog()"
                title="Delete the selected document(s)"
                data-placement="bottom">
-              <i class="glyphicon glyphicon-remove"></i> Delete</a>
+              <i class="fa fa-remove"></i> Delete</a>
           </li>
           <li class="divider" ng-show="childActions.length">
           </li>
@@ -70,13 +70,13 @@
       <li class="pull-right" hawtio-show object-name="{{gitMBean}}" method-name="write">
         <a ng-href="{{editLink()}}{{hash}}" ng-hide="!editLink()" title="Edit this page"
            data-placement="bottom">
-          <i class="glyphicon glyphicon-edit"></i> Edit</a>
+          <i class="fa fa-edit"></i> Edit</a>
       </li>
       <li class="pull-right" hawtio-show object-name="{{gitMBean}}" method-name="write">
         <a ng-href="{{createLink()}}{{hash}}"
            title="Create new page"
            data-placement="bottom">
-          <i class="glyphicon glyphicon-plus"></i> Create</a>
+          <i class="fa fa-plus"></i> Create</a>
       </li>
       <li class="pull-right">
         <div class="btn-group" 
@@ -85,7 +85,7 @@
              ng-disabled="mode == ViewMode.List"
              href="" 
              ng-click="setViewMode(ViewMode.List)">
-            <i class="glyphicon glyphicon-list"></i></a>
+            <i class="fa fa-list"></i></a>
           <a class="btn btn-sm" 
              ng-disabled="mode == ViewMode.Icon"
              href="" 
@@ -96,7 +96,7 @@
       <li class="pull-right">
         <a href="" ng-hide="children || profile" title="Add to dashboard" ng-href="{{createDashboardLink()}}"
            data-placement="bottom">
-          <i class="glyphicon glyphicon-share"></i>
+          <i class="fa fa-share"></i>
         </a>
       </li>
     </ul>

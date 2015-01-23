@@ -41,7 +41,7 @@ module Wiki {
           action: () => {}
         };
         if (item === $scope.branch) {
-          menuItem.icon = "icon-ok";
+          menuItem.icon = "fa fa-ok";
         } else {
           menuItem.action = () => {
             var targetUrl = branchLink(item, <string>$scope.pageId, $location);

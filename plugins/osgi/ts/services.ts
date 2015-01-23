@@ -51,7 +51,7 @@ module Osgi {
       <DataTable.TableColumnConfig> {
         "mDataProp": null,
         "sClass": "control center",
-        "sDefaultContent": '<i class="icon-plus"></i>'
+        "sDefaultContent": '<i class="fa fa-plus"></i>'
       },
       <DataTable.TableColumnConfig> { "mDataProp": "Identifier" },
       <DataTable.TableColumnConfig> { "mDataProp": "BundleIdentifier" },

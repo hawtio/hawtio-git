@@ -233,7 +233,7 @@ module ActiveMQ {
             var brokerLink = Fabric.brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName);
             if (brokerLink) {
               brokerHtml += ' <a title="configuration settings" target="brokerConfig" href="' + brokerLink +
-                '"><i class="icon-tasks"></i></a>';
+                '"><i class="fa fa-tasks"></i></a>';
             }
           }
           var html = $compile(brokerHtml)($scope);
