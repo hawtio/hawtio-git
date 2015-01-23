@@ -203,61 +203,61 @@ var ActiveMQ;
             content: '<i class="fa fa-envelope"></i> Browse',
             title: "Browse the messages on the queue",
             isValid: function (workspace) { return isQueue(workspace) && workspace.hasInvokeRights(workspace.selection, "browse()"); },
-            href: function () { return "#/activemq/browseQueue"; }
+            href: function () { return "/activemq/browseQueue"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-pencil"></i> Send',
             title: "Send a message to this destination",
             isValid: function (workspace) { return (isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(workspace.selection, "sendTextMessage(java.util.Map,java.lang.String,java.lang.String,java.lang.String)"); },
-            href: function () { return "#/activemq/sendMessage"; }
+            href: function () { return "/activemq/sendMessage"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-picture"></i> Diagram',
             title: "View a diagram of the producers, destinations and consumers",
             isValid: function (workspace) { return workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(ActiveMQ.jmxDomain); },
-            href: function () { return "#/activemq/diagram"; }
+            href: function () { return "/activemq/diagram"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-plus"></i> Create',
             title: "Create a new destination",
             isValid: function (workspace) { return isBroker(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"); },
-            href: function () { return "#/activemq/createDestination"; }
+            href: function () { return "/activemq/createDestination"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-plus"></i> Create',
             title: "Create a new queue",
             isValid: function (workspace) { return isQueuesFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
-            href: function () { return "#/activemq/createQueue"; }
+            href: function () { return "/activemq/createQueue"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-plus"></i> Create',
             title: "Create a new topic",
             isValid: function (workspace) { return isTopicsFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
-            href: function () { return "#/activemq/createTopic"; }
+            href: function () { return "/activemq/createTopic"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-remove"></i> Delete Topic',
             title: "Delete this topic",
             isValid: function (workspace) { return isTopic(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeTopic"); },
-            href: function () { return "#/activemq/deleteTopic"; }
+            href: function () { return "/activemq/deleteTopic"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-remove"></i> Delete',
             title: "Delete or purge this queue",
             isValid: function (workspace) { return isQueue(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeQueue"); },
-            href: function () { return "#/activemq/deleteQueue"; }
+            href: function () { return "/activemq/deleteQueue"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-list"></i> Durable Subscribers',
             title: "Manage durable subscribers",
             isValid: function (workspace) { return isBroker(workspace); },
-            href: function () { return "#/activemq/durableSubscribers"; }
+            href: function () { return "/activemq/durableSubscribers"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-list"></i> Jobs',
             title: "Manage jobs",
             isValid: function (workspace) { return isJobScheduler(workspace); },
-            href: function () { return "#/activemq/jobs"; }
+            href: function () { return "/activemq/jobs"; }
         });
         function postProcessTree(tree) {
             var activemq = tree.get("org.apache.activemq");
@@ -833,9 +833,9 @@ var Wiki;
     }
     Wiki.addCreateWizardFolders = addCreateWizardFolders;
     function startLink(branch) {
-        var start = "#/wiki";
+        var start = "/wiki";
         if (branch) {
-            start += "/branch/" + branch;
+            start = UrlHelpers.join(start, 'branch', branch);
         }
         return start;
     }
@@ -1092,7 +1092,7 @@ var Wiki;
                         break;
                     default:
                         // log.debug("No match for extension: ", extension, " using a generic folder icon");
-                        css = "fa fa-folder-close";
+                        css = "fa fa-folder";
                 }
             }
             else {
@@ -1117,7 +1117,7 @@ var Wiki;
                         css = "fa fa-file-text";
                         break;
                     case 'md':
-                        css = "fa fa-file-text-alt";
+                        css = "fa fa-file-text-o";
                         break;
                     default:
                         // log.debug("No match for extension: ", extension, " using a generic file icon");
@@ -1138,13 +1138,13 @@ var Wiki;
         var extension = fileExtension(name);
         var directory = row.getProperty("directory");
         if (directory) {
-            return "fa fa-folder-close";
+            return "fa fa-folder";
         }
         if ("xml" === extension) {
             return "fa fa-cog";
         }
         else if ("md" === extension) {
-            return "fa fa-file-text-alt";
+            return "fa fa-file-text-o";
         }
         // TODO could we use different icons for markdown v xml v html
         return "fa fa-file-alt";
@@ -4689,7 +4689,7 @@ var Camel;
             content: '<i class="fa fa-picture"></i> Route Diagram',
             title: "View a diagram of the Camel routes",
             isValid: function (workspace) { return workspace.isRoute() && workspace.hasInvokeRightsForName(Camel.getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"); },
-            href: function () { return "#/camel/routes"; },
+            href: function () { return "/camel/routes"; },
             // make sure we have route diagram shown first
             index: -2
         });
@@ -4697,67 +4697,67 @@ var Camel;
             content: '<i class="fa fa-bar-chart"></i> Route Metrics',
             title: "View the entire JVMs Camel route metrics",
             isValid: function (workspace) { return !workspace.isEndpointsFolder() && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext()) && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelRouteMetrics(workspace), "dumpStatisticsAsJson"); },
-            href: function () { return "#/camel/routeMetrics"; }
+            href: function () { return "/camel/routeMetrics"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class=" fa fa-file-alt"></i> Source',
             title: "View the source of the Camel routes",
             isValid: function (workspace) { return !workspace.isEndpointsFolder() && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext()) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"); },
-            href: function () { return "#/camel/source"; }
+            href: function () { return "/camel/source"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class=" fa fa-edit"></i> Properties',
             title: "View the pattern properties",
             isValid: function (workspace) { return Camel.getSelectedRouteNode(workspace); },
-            href: function () { return "#/camel/properties"; }
+            href: function () { return "/camel/properties"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-list"></i> Type Converters',
             title: "List all the type converters registered in the context",
             isValid: function (workspace) { return workspace.isTopTabActive("camel") && !workspace.isEndpointsFolder() && !workspace.isRoute() && Camel.isCamelVersionEQGT(2, 13, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTypeConverter(workspace), "listTypeConverters"); },
-            href: function () { return "#/camel/typeConverter"; }
+            href: function () { return "/camel/typeConverter"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-list"></i> Rest Services',
             title: "List all the REST services registered in the context",
             isValid: function (workspace) { return workspace.isTopTabActive("camel") && !workspace.isEndpointsFolder() && !workspace.isRoute() && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelRestRegistry(workspace), "listRestServices"); },
-            href: function () { return "#/camel/restRegistry"; }
+            href: function () { return "/camel/restRegistry"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-envelope"></i> Browse',
             title: "Browse the messages on the endpoint",
             isValid: function (workspace) { return workspace.isEndpoint() && workspace.hasInvokeRights(workspace.selection, "browseAllMessagesAsXml"); },
-            href: function () { return "#/camel/browseEndpoint"; }
+            href: function () { return "/camel/browseEndpoint"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-stethoscope"></i> Debug',
             title: "Debug the Camel route",
             isValid: function (workspace) { return workspace.isRoute() && Camel.getSelectionCamelDebugMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelDebugMBean(workspace), "getBreakpoints"); },
-            href: function () { return "#/camel/debugRoute"; }
+            href: function () { return "/camel/debugRoute"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-envelope"></i> Trace',
             title: "Trace the messages flowing through the Camel route",
             isValid: function (workspace) { return workspace.isRoute() && Camel.getSelectionCamelTraceMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"); },
-            href: function () { return "#/camel/traceRoute"; }
+            href: function () { return "/camel/traceRoute"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-bar-chart"></i> Profile',
             title: "Profile the messages flowing through the Camel route",
             isValid: function (workspace) { return workspace.isRoute() && Camel.getSelectionCamelTraceMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"); },
-            href: function () { return "#/camel/profileRoute"; }
+            href: function () { return "/camel/profileRoute"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-pencil"></i> Send',
             title: "Send a message to this endpoint",
             isValid: function (workspace) { return workspace.isEndpoint() && workspace.hasInvokeRights(workspace.selection, workspace.selection.domain === "org.apache.camel" ? "sendBodyAndHeaders" : "sendTextMessage"); },
-            href: function () { return "#/camel/sendMessage"; }
+            href: function () { return "/camel/sendMessage"; }
         });
         workspace.subLevelTabs.push({
             content: '<i class="fa fa-plus"></i> Endpoint',
             title: "Create a new endpoint",
             isValid: function (workspace) { return workspace.isEndpointsFolder() && workspace.hasInvokeRights(workspace.selection, "createEndpoint"); },
-            href: function () { return "#/camel/createEndpoint"; }
+            href: function () { return "/camel/createEndpoint"; }
         });
     }]);
     hawtioPluginLoader.addModule(Camel.pluginName);
@@ -17541,7 +17541,8 @@ var Wiki;
 /// <reference path="wikiPlugin.ts"/>
 var Wiki;
 (function (Wiki) {
-    Wiki.TopLevelController = Wiki._module.controller("Wiki.TopLevelController", ['$scope', 'workspace', function ($scope, workspace) {
+    Wiki.TopLevelController = Wiki._module.controller("Wiki.TopLevelController", ['$scope', 'workspace', '$route', function ($scope, workspace, $route) {
+        Wiki.log.debug("route: ", $route);
         /*
         TODO
             $scope.managerMBean = Fabric.managerMBean;
@@ -17557,7 +17558,7 @@ var Wiki;
     }]);
 })(Wiki || (Wiki = {}));
 
-angular.module("hawtio-wiki-templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("plugins/activemq/html/brokerDiagram.html","<style type=\"text/css\">\n\n.col-md-4.node-panel {\n  margin-top: 10px;\n  margin-left: 10px;\n  width: 33%;\n}\n.node-attributes dl {\n  margin-top: 5px;\n  margin-bottom: 10px;\n}\n.node-attributes dt {\n  width: 150px;\n}\n.node-attributes dd {\n  margin-left: 160px;\n}\n.node-attributes dd a {\n  /** lets make the destination links wrap */\n  -ms-word-break: break-all;\n  word-break: break-all;\n  -webkit-hyphens: auto;\n  -moz-hyphens: auto;\n  hyphens: auto;\n}\n\nul.viewMenu li {\n  padding-left: 10px;\n  padding-top: 2px;\n  padding-bottom: 2px;\n}\n\ndiv#pop-up {\n  display: none;\n  position: absolute;\n  color: white;\n  font-size: 14px;\n  background: rgba(0, 0, 0, 0.6);\n  padding: 5px 10px 5px 10px;\n  -moz-border-radius: 8px 8px;\n  border-radius: 8px 8px;\n}\n\ndiv#pop-up-title {\n  font-size: 15px;\n  margin-bottom: 4px;\n  font-weight: bolder;\n}\n\ndiv#pop-up-content {\n  font-size: 12px;\n}\n\nrect.graphbox {\n  fill: #FFF;\n}\n\nrect.graphbox.frame {\n  stroke: #222;\n  stroke-width: 2px\n}\n\n/* only things directly related to the network graph should be here */\n\npath.link {\n  fill: none;\n  stroke: #666;\n  stroke-width: 1.5px;  b\n}\n\nmarker.broker {\n  stroke: red;\n  fill: red;\n  stroke-width: 1.5px;\n}\n\ncircle.broker {\n  fill: #0c0;\n}\n\ncircle.brokerSlave {\n  fill: #c00;\n}\n\ncircle.notActive {\n  fill: #c00;\n}\n\npath.link.group {\n  stroke: #ccc;\n}\n\nmarker#group {\n  stroke: #ccc;\n  fill: #ccc;\n}\n\ncircle.group {\n  fill: #eee;\n  stroke: #ccc;\n}\n\ncircle.destination {\n  fill: #bbb;\n  stroke: #ccc;\n}\n\ncircle.pinned {\n  stroke-width: 4.5px;\n}\n\npath.link.profile {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\nmarker#container {\n}\n\ncircle.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\npath.link.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\ncircle {\n  fill: #ccc;\n  stroke: #333;\n  stroke-width: 1.5px;\n  cursor: pointer;\n}\n\ncircle.closeMode {\n  cursor: crosshair;\n}\n\npath.link.destination {\n  stroke: #ccc;\n}\n\ncircle.topic {\n  fill: #c0c;\n}\n\ncircle.queue {\n  fill: #00c;\n}\n\ncircle.consumer {\n  fill: #cfc;\n}\n\ncircle.producer {\n  fill: #ccf;\n}\n\npath.link.producer {\n  stroke: #ccc;\n}\n\npath.link.consumer {\n  stroke: #ccc;\n}\n\npath.link.network {\n  stroke: #ccc;\n}\n\ncircle.selected {\n  stroke-width: 3px;\n}\n\n.selected {\n  stroke-width: 3px;\n}\n\ntext {\n  font: 10px sans-serif;\n  pointer-events: none;\n}\n\ntext.shadow {\n  stroke: #fff;\n  stroke-width: 3px;\n  stroke-opacity: .8;\n}\n</style>\n\n\n<div class=\"row mq-page\" ng-controller=\"ActiveMQ.BrokerDiagramController\">\n\n  <div ng-hide=\"inDashboard\" class=\"col-md-12 page-padded\">\n    <div class=\"section-header\">\n\n      <div class=\"section-filter\">\n        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"searchFilter\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"searchFilter = \'\'\"></i>\n      </div>\n\n      <div class=\"section-controls\">\n        <a href=\"#\"\n           class=\"dropdown-toggle\"\n           data-toggle=\"dropdown\">\n          View &nbsp;<i class=\"icon-caret-down\"></i>\n        </a>\n\n        <ul class=\"dropdown-menu viewMenu\">\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.consumer\"> Consumers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.producer\"> Producers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.queue\"> Queues\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.topic\"> Topics\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.group\"> Broker groups\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.profile\"> Profiles\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.broker\"> Brokers\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.slave\"> Slave brokers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.network\"> Networks\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.container\"> Containers\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li title=\"Should we show the details panel on the left\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.panel\"> Details panel\n            </label>\n          </li>\n          <li title=\"Show the summary popup as you hover over nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.popup\"> Hover text\n            </label>\n          </li>\n          <li title=\"Show the labels next to nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.label\"> Label\n            </label>\n          </li>\n        </ul>\n\n        <a ng-show=\"isFmc\" ng-href=\"#/fabric/mq/brokers{{hash}}\" title=\"View the broker and container diagram\">\n          <i class=\"fa fa-edit\"></i> Configuration\n        </a>\n      </div>\n    </div>\n  </div>\n\n\n  <div id=\"pop-up\">\n    <div id=\"pop-up-title\"></div>\n    <div id=\"pop-up-content\"></div>\n  </div>\n\n  <div class=\"row\">\n    <div class=\"{{viewSettings.panel ? \'col-md-8\' : \'col-md-12\'}} canvas broker-canvas\">\n      <div hawtio-force-graph graph=\"graph\" selected-model=\"selectedNode\" link-distance=\"150\" charge=\"-600\" nodesize=\"10\" marker-kind=\"marker-end\"\n           style=\"min-height: 800px\">\n      </div>\n    </div>\n    <div ng-show=\"viewSettings.panel\" class=\"col-md-4 node-panel\">\n      <div ng-show=\"selectedNode\" class=\"node-attributes\">\n        <dl ng-repeat=\"property in selectedNodeProperties\" class=\"dl-horizontal\">\n          <dt title=\"{{property.key}}\">{{property.key}}:</dt>\n          <dd ng-bind-html-unsafe=\"property.value\"></dd>\n        </dl>\n      </div>\n    </div>\n  </div>\n\n  <div ng-include=\"\'plugins/fabric/html/connectToContainerDialog.html\'\"></div>\n\n</div>\n\n\n");
+angular.module("hawtio-wiki-templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("plugins/activemq/html/brokerDiagram.html","<style type=\"text/css\">\n\n.col-md-4.node-panel {\n  margin-top: 10px;\n  margin-left: 10px;\n  width: 33%;\n}\n.node-attributes dl {\n  margin-top: 5px;\n  margin-bottom: 10px;\n}\n.node-attributes dt {\n  width: 150px;\n}\n.node-attributes dd {\n  margin-left: 160px;\n}\n.node-attributes dd a {\n  /** lets make the destination links wrap */\n  -ms-word-break: break-all;\n  word-break: break-all;\n  -webkit-hyphens: auto;\n  -moz-hyphens: auto;\n  hyphens: auto;\n}\n\nul.viewMenu li {\n  padding-left: 10px;\n  padding-top: 2px;\n  padding-bottom: 2px;\n}\n\ndiv#pop-up {\n  display: none;\n  position: absolute;\n  color: white;\n  font-size: 14px;\n  background: rgba(0, 0, 0, 0.6);\n  padding: 5px 10px 5px 10px;\n  -moz-border-radius: 8px 8px;\n  border-radius: 8px 8px;\n}\n\ndiv#pop-up-title {\n  font-size: 15px;\n  margin-bottom: 4px;\n  font-weight: bolder;\n}\n\ndiv#pop-up-content {\n  font-size: 12px;\n}\n\nrect.graphbox {\n  fill: #FFF;\n}\n\nrect.graphbox.frame {\n  stroke: #222;\n  stroke-width: 2px\n}\n\n/* only things directly related to the network graph should be here */\n\npath.link {\n  fill: none;\n  stroke: #666;\n  stroke-width: 1.5px;  b\n}\n\nmarker.broker {\n  stroke: red;\n  fill: red;\n  stroke-width: 1.5px;\n}\n\ncircle.broker {\n  fill: #0c0;\n}\n\ncircle.brokerSlave {\n  fill: #c00;\n}\n\ncircle.notActive {\n  fill: #c00;\n}\n\npath.link.group {\n  stroke: #ccc;\n}\n\nmarker#group {\n  stroke: #ccc;\n  fill: #ccc;\n}\n\ncircle.group {\n  fill: #eee;\n  stroke: #ccc;\n}\n\ncircle.destination {\n  fill: #bbb;\n  stroke: #ccc;\n}\n\ncircle.pinned {\n  stroke-width: 4.5px;\n}\n\npath.link.profile {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\nmarker#container {\n}\n\ncircle.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\npath.link.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\ncircle {\n  fill: #ccc;\n  stroke: #333;\n  stroke-width: 1.5px;\n  cursor: pointer;\n}\n\ncircle.closeMode {\n  cursor: crosshair;\n}\n\npath.link.destination {\n  stroke: #ccc;\n}\n\ncircle.topic {\n  fill: #c0c;\n}\n\ncircle.queue {\n  fill: #00c;\n}\n\ncircle.consumer {\n  fill: #cfc;\n}\n\ncircle.producer {\n  fill: #ccf;\n}\n\npath.link.producer {\n  stroke: #ccc;\n}\n\npath.link.consumer {\n  stroke: #ccc;\n}\n\npath.link.network {\n  stroke: #ccc;\n}\n\ncircle.selected {\n  stroke-width: 3px;\n}\n\n.selected {\n  stroke-width: 3px;\n}\n\ntext {\n  font: 10px sans-serif;\n  pointer-events: none;\n}\n\ntext.shadow {\n  stroke: #fff;\n  stroke-width: 3px;\n  stroke-opacity: .8;\n}\n</style>\n\n\n<div class=\"row mq-page\" ng-controller=\"ActiveMQ.BrokerDiagramController\">\n\n  <div ng-hide=\"inDashboard\" class=\"col-md-12 page-padded\">\n    <div class=\"section-header\">\n\n      <div class=\"section-filter\">\n        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"searchFilter\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"searchFilter = \'\'\"></i>\n      </div>\n\n      <div class=\"section-controls\">\n        <a href=\"#\"\n           class=\"dropdown-toggle\"\n           data-toggle=\"dropdown\">\n          View &nbsp;<i class=\"icon-caret-down\"></i>\n        </a>\n\n        <ul class=\"dropdown-menu viewMenu\">\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.consumer\"> Consumers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.producer\"> Producers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.queue\"> Queues\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.topic\"> Topics\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.group\"> Broker groups\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.profile\"> Profiles\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.broker\"> Brokers\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.slave\"> Slave brokers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.network\"> Networks\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.container\"> Containers\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li title=\"Should we show the details panel on the left\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.panel\"> Details panel\n            </label>\n          </li>\n          <li title=\"Show the summary popup as you hover over nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.popup\"> Hover text\n            </label>\n          </li>\n          <li title=\"Show the labels next to nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.label\"> Label\n            </label>\n          </li>\n        </ul>\n\n        <a ng-show=\"isFmc\" ng-href=\"#/fabric/mq/brokers{{hash}}\" title=\"View the broker and container diagram\">\n          <i class=\"fa fa-edit\"></i> Configuration\n        </a>\n      </div>\n    </div>\n  </div>\n\n\n  <div id=\"pop-up\">\n    <div id=\"pop-up-title\"></div>\n    <div id=\"pop-up-content\"></div>\n  </div>\n\n  <div class=\"row\">\n    <div class=\"{{viewSettings.panel ? \'col-md-8\' : \'col-md-12\'}} canvas broker-canvas\">\n      <div hawtio-force-graph graph=\"graph\" selected-model=\"selectedNode\" link-distance=\"150\" charge=\"-600\" nodesize=\"10\" marker-kind=\"marker-end\"\n           style=\"min-height: 800px\">\n      </div>\n    </div>\n    <div ng-show=\"viewSettings.panel\" class=\"col-md-4 node-panel\">\n      <div ng-show=\"selectedNode\" class=\"node-attributes\">\n        <dl ng-repeat=\"property in selectedNodeProperties\" class=\"dl-horizontal\">\n          <dt title=\"{{property.key}}\">{{property.key}}:</dt>\n          <dd ng-bind-html-unsafe=\"property.value\"></dd>\n        </dl>\n      </div>\n    </div>\n  </div>\n\n  <!--\n  <div ng-include=\"\'plugins/fabric/html/connectToContainerDialog.html\'\"></div>\n  -->\n\n</div>\n\n\n");
 $templateCache.put("plugins/activemq/html/browseQueue.html","<div ng-controller=\"ActiveMQ.BrowseQueueController\">\n  <div class=\"row\">\n    <div class=\"col-md-6\">\n      <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n             placeholder=\"Filter messages\">\n    </div>\n    <div class=\"col-md-6\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline\">\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-show=\"dlq\" ng-click=\"retryMessages()\"\n                  title=\"Moves the dead letter queue message back to its original destination so it can be retried\" data-placement=\"bottom\">\n            <i class=\"fa fa-reply\"></i> Retry\n          </button>\n          <button class=\"btn\" ng-disabled=\"gridOptions.selectedItems.length !== 1\" ng-click=\"resendMessage()\"\n                    title=\"Edit the message to resend it\" data-placement=\"bottom\">\n           <i class=\"icon-share-alt\"></i> Resend\n          </button>\n\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                  title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n            <i class=\"icon-share-alt\"></i> Move\n          </button>\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                  ng-click=\"deleteDialog = true\"\n                  title=\"Delete the selected messages\">\n            <i class=\"fa fa-remove\"></i> Delete\n          </button>\n          <button class=\"btn\" ng-click=\"refresh()\"\n                  title=\"Refreshes the list of messages\">\n            <i class=\"fa fa-refresh\"></i>\n          </button>\n        </form>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row\">\n    <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n  </div>\n\n  <div hawtio-slideout=\"showMessageDetails\" title=\"{{row.JMSMessageID}}\">\n    <div class=\"dialog-body\">\n\n      <div class=\"row\">\n        <div class=\"pull-right\">\n          <form class=\"form-horizontal no-bottom-margin\">\n\n            <div class=\"btn-group\"\n                 hawtio-pager=\"messages\"\n                 on-index-change=\"selectRowIndex\"\n                 row-index=\"rowIndex\"></div>\n\n            <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                    title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n              <i class=\"icon-share-alt\"></i> Move\n            </button>\n\n            <button class=\"btn btn-danger\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                    ng-click=\"deleteDialog = true\"\n                    title=\"Delete the selected messages\">\n              <i class=\"fa fa-remove\"></i> Delete\n            </button>\n\n            <button class=\"btn\" ng-click=\"showMessageDetails = !showMessageDetails\" title=\"Close this dialog\">\n              <i class=\"fa fa-remove\"></i> Close\n            </button>\n\n          </form>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div class=\"expandable closed\">\n          <div title=\"Headers\" class=\"title\">\n            <i class=\"expandable-indicator\"></i> Headers & Properties\n          </div>\n          <div class=\"expandable-body well\">\n            <table class=\"table table-condensed table-striped\">\n              <thead>\n              <tr>\n                <th>Header</th>\n                <th>Value</th>\n              </tr>\n              </thead>\n              <tbody ng-bind-html-unsafe=\"row.headerHtml\">\n              </tbody>\n              <!--\n                            <tr ng-repeat=\"(key, value) in row.headers\">\n                              <td class=\"property-name\">{{key}}</td>\n                              <td class=\"property-value\">{{value}}</td>\n                            </tr>\n              -->\n            </table>\n          </div>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div>Displaying body as <span ng-bind=\"row.textMode\"></span></div>\n        <div hawtio-editor=\"row.bodyText\" read-only=\"true\" mode=\'mode\'></div>\n      </div>\n\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"deleteDialog\"\n       ok-button-text=\"Delete\"\n       on-ok=\"deleteMessages()\">\n    <div class=\"dialog-body\">\n      <p>You are about to delete\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'a message!\', \'other\': \'{} messages!\'}\">\n        </ng-pluralize>\n      </p>\n      <p>This operation cannot be undone so please be careful.</p>\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"moveDialog\"\n       ok-button-text=\"Move\"\n       on-ok=\"moveMessages()\">\n    <div class=\"dialog-body\">\n      <p>Move\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'{} messages\'}\"></ng-pluralize>\n        to: <input type=\"text\" ng-model=\"queueName\" placeholder=\"Queue name\"\n                   typeahead=\"title.unescapeHTML() for title in queueNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'></p>\n      <p>\n        You cannot undo this operation.<br>\n        Though after the move you can always move the\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'messages\'}\"></ng-pluralize>\n        back again.\n      </p>\n    </div>\n  </div>\n\n</div>\n\n");
 $templateCache.put("plugins/activemq/html/createDestination.html","<form class=\"form-horizontal\" ng-controller=\"ActiveMQ.DestinationController\">\n  <fieldset>\n    <div class=\"control-group\">\n      <label class=\"pull-left\" style=\"margin-top:5px;\"> {{destinationTypeName}} name:</label>\n      <input class=\"col-md-10 pull-left\"  type=\"text\" size=\"60\" style=\"margin-left:15px;\" maxlength=\"300\" name=\"destinationName\" ng-model=\"destinationName\" placeholder=\"{{destinationTypeName}} name\"/>\n    </div>\n    <div class=\"alert alert-warning\">\n        The JMS API does not define a standard address syntax. Although a standard address syntax was considered, it was decided that the differences in address semantics between existing message-oriented middleware (MOM) products were too wide to bridge with a single syntax.\n    </div>\n\n    <div class=\"control-group\">\n      <label class=\"checkbox\">\n        <input type=\"radio\" ng-model=\"queueType\" value=\"true\"> Queue\n      </label>\n      <label class=\"checkbox\">\n        <input type=\"radio\" ng-model=\"queueType\" value=\"\"> Topic\n      </label>\n    </div>\n\n    <div class=\"control-group\">\n      <button type=\"submit\" class=\"btn btn-info\" ng-click=\"createDestination(destinationName, queueType)\"\n              ng-disabled=\"!destinationName\">Create {{destinationTypeName}}\n      </button>\n    </div>\n  </fieldset>\n</form>\n");
 $templateCache.put("plugins/activemq/html/createQueue.html","<form class=\"form-horizontal\" ng-controller=\"ActiveMQ.DestinationController\">\n    <div class=\"control-group\">\n        <label class=\"pull-left\" style=\"margin-top:5px;\"> Queue name:</label>\n        <input class=\"col-md-10 pull-left\"  type=\"text\" size=\"60\" style=\"margin-left:15px;\" maxlength=\"300\" name=\"destinationName\" ng-model=\"destinationName\" placeholder=\"Queue name\"/>\n    </div>\n    <div class=\"alert alert-warning\">\n        The JMS API does not define a standard address syntax. Although a standard address syntax was considered, it was decided that the differences in address semantics between existing message-oriented middleware (MOM) products were too wide to bridge with a single syntax.\n    </div>\n\n    <div class=\"control-group\">\n        <button type=\"submit\" class=\"btn btn-info\" ng-click=\"createDestination(destinationName, true)\" ng-disabled=\"!destinationName\">Create queue</button>\n    </div>\n</form>\n");

@@ -439,9 +439,9 @@ module Wiki {
   }
 
   export function startLink(branch:string) {
-    var start = "#/wiki";
+    var start = "/wiki";
     if (branch) {
-      start += "/branch/" + branch;
+      start = UrlHelpers.join(start, 'branch', branch);
     }
     return start;
   }
@@ -693,7 +693,7 @@ module Wiki {
             break;
           default:
             // log.debug("No match for extension: ", extension, " using a generic folder icon");
-            css = "fa fa-folder-close";
+            css = "fa fa-folder";
         }
       } else {
         switch (extension) {
@@ -717,7 +717,7 @@ module Wiki {
             css = "fa fa-file-text";
             break;
           case 'md':
-            css = "fa fa-file-text-alt";
+            css = "fa fa-file-text-o";
             break;
           default:
             // log.debug("No match for extension: ", extension, " using a generic file icon");
@@ -737,12 +737,12 @@ module Wiki {
     var extension = fileExtension(name);
     var directory = row.getProperty("directory");
     if (directory) {
-      return "fa fa-folder-close";
+      return "fa fa-folder";
     }
     if ("xml" === extension) {
         return "fa fa-cog";
     } else if ("md" === extension) {
-        return "fa fa-file-text-alt";
+        return "fa fa-file-text-o";
     }
     // TODO could we use different icons for markdown v xml v html
     return "fa fa-file-alt";

@@ -5,7 +5,9 @@
 
 module Wiki {
 
-  export var TopLevelController = _module.controller("Wiki.TopLevelController", ['$scope', 'workspace', ($scope, workspace:Core.Workspace) => {
+  export var TopLevelController = _module.controller("Wiki.TopLevelController", ['$scope', 'workspace', '$route', ($scope, workspace:Core.Workspace, $route) => {
+
+    log.debug("route: ", $route);
 /*
 TODO
     $scope.managerMBean = Fabric.managerMBean;

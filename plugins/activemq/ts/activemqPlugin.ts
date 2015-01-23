@@ -106,62 +106,62 @@ module ActiveMQ {
       content: '<i class="fa fa-envelope"></i> Browse',
       title: "Browse the messages on the queue",
       isValid: (workspace:Workspace) => isQueue(workspace) && workspace.hasInvokeRights(workspace.selection, "browse()"),
-      href: () => "#/activemq/browseQueue"
+      href: () => "/activemq/browseQueue"
     });
     workspace.subLevelTabs.push({
       content: '<i class="fa fa-pencil"></i> Send',
       title: "Send a message to this destination",
       isValid: (workspace:Workspace) => (isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(workspace.selection, "sendTextMessage(java.util.Map,java.lang.String,java.lang.String,java.lang.String)"),
-      href: () => "#/activemq/sendMessage"
+      href: () => "/activemq/sendMessage"
     });
     workspace.subLevelTabs.push({
       content: '<i class="fa fa-picture"></i> Diagram',
       title: "View a diagram of the producers, destinations and consumers",
       isValid: (workspace:Workspace) =>  workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(jmxDomain),
-      href: () => "#/activemq/diagram"
+      href: () => "/activemq/diagram"
     });
     workspace.subLevelTabs.push({
       content: '<i class="fa fa-plus"></i> Create',
       title: "Create a new destination",
       isValid: (workspace:Workspace) => isBroker(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"),
-      href: () => "#/activemq/createDestination"
+      href: () => "/activemq/createDestination"
     });
     workspace.subLevelTabs.push({
       content: '<i class="fa fa-plus"></i> Create',
       title: "Create a new queue",
       isValid: (workspace:Workspace) => isQueuesFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"),
-      href: () => "#/activemq/createQueue"
+      href: () => "/activemq/createQueue"
     });
     workspace.subLevelTabs.push({
       content: '<i class="fa fa-plus"></i> Create',
       title: "Create a new topic",
       isValid: (workspace:Workspace) => isTopicsFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"),
-      href: () => "#/activemq/createTopic"
+      href: () => "/activemq/createTopic"
     });
     workspace.subLevelTabs.push({
       content: '<i class="fa fa-remove"></i> Delete Topic',
       title: "Delete this topic",
       isValid: (workspace:Workspace) => isTopic(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeTopic"),
-      href: () => "#/activemq/deleteTopic"
+      href: () => "/activemq/deleteTopic"
     });
     workspace.subLevelTabs.push({
       content: '<i class="fa fa-remove"></i> Delete',
       title: "Delete or purge this queue",
       isValid: (workspace:Workspace) => isQueue(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeQueue"),
-      href: () => "#/activemq/deleteQueue"
+      href: () => "/activemq/deleteQueue"
     });
     workspace.subLevelTabs.push({
       content: '<i class="fa fa-list"></i> Durable Subscribers',
       title: "Manage durable subscribers",
       isValid: (workspace:Workspace) => isBroker(workspace),
-      href: () => "#/activemq/durableSubscribers"
+      href: () => "/activemq/durableSubscribers"
     });
 
     workspace.subLevelTabs.push({
         content: '<i class="fa fa-list"></i> Jobs',
         title: "Manage jobs",
         isValid: (workspace:Workspace) => isJobScheduler(workspace),
-        href: () => "#/activemq/jobs"
+        href: () => "/activemq/jobs"
     });
 
     function postProcessTree(tree) {
