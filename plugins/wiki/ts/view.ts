@@ -50,8 +50,8 @@ module Wiki {
     uploader.onProgressAll = function (progress) {
       log.debug('onProgressAll', progress);
     };
-    uploader.Core.onSuccessItem = function (fileItem, response, status, headers) {
-      log.debug('Core.onSuccessItem', fileItem, response, status, headers);
+    uploader.onSuccessItem = function (fileItem, response, status, headers) {
+      log.debug('onSuccessItem', fileItem, response, status, headers);
     };
     uploader.onErrorItem = function (fileItem, response, status, headers) {
       log.debug('onErrorItem', fileItem, response, status, headers);
