@@ -24,12 +24,16 @@
     "hawtio-ui": "~2.0.0",
     "hawtio-utilities": "~2.0.0",
     "angular-resource": "~1.3.9",
-    "font-awesome": "~4.3.0"
+    "font-awesome": "~4.3.0",
+    "hawtio-template-cache": "*"
   },
   "devDependencies": {
     "bootstrap": "~3.3.1",
     "patternfly": "~1.1.2",
     "hawtio-core-dts": "~2.0.0",
     "angular-mocks": "~1.3.7"
+  },
+  "resolutions": {
+    "lodash": "~2.4.1"
   }
 }
