@@ -23,22 +23,22 @@ module Wiki {
     angular.forEach(["", "/branch/:branch"], (path) => {
       $routeProvider.
               when(UrlHelpers.join('/wiki', path, 'view'), route('viewPage.html', false)).
-              when(UrlHelpers.join('/wiki', path, 'create/*page'), route('create.html', false)).
-              when('/wiki' + path + '/view/*page', {templateUrl: 'plugins/wiki/html/viewPage.html', reloadOnSearch: false}).
-              when('/wiki' + path + '/book/*page', {templateUrl: 'plugins/wiki/html/viewBook.html', reloadOnSearch: false}).
-              when('/wiki' + path + '/edit/*page', {templateUrl: 'plugins/wiki/html/editPage.html'}).
-              when('/wiki' + path + '/version/*page/:objectId', {templateUrl: 'plugins/wiki/html/viewPage.html'}).
-              when('/wiki' + path + '/history/*page', {templateUrl: 'plugins/wiki/html/history.html'}).
-              when('/wiki' + path + '/commit/*page/:objectId', {templateUrl: 'plugins/wiki/html/commit.html'}).
-              when('/wiki' + path + '/diff/*page/:objectId/:baseObjectId', {templateUrl: 'plugins/wiki/html/viewPage.html', reloadOnSearch: false}).
-              when('/wiki' + path + '/formTable/*page', {templateUrl: 'plugins/wiki/html/formTable.html'}).
-              when('/wiki' + path + '/dozer/mappings/*page', {templateUrl: 'plugins/wiki/html/dozerMappings.html'}).
-              when('/wiki' + path + '/configurations/*page', { templateUrl: 'plugins/wiki/html/configurations.html' }).
-              when('/wiki' + path + '/configuration/:pid/*page', { templateUrl: 'plugins/wiki/html/configuration.html' }).
-              when('/wiki' + path + '/newConfiguration/:factoryPid/*page', { templateUrl: 'plugins/wiki/html/configuration.html' }).
-              when('/wiki' + path + '/camel/diagram/*page', {templateUrl: 'plugins/wiki/html/camelDiagram.html'}).
-              when('/wiki' + path + '/camel/canvas/*page', {templateUrl: 'plugins/wiki/html/camelCanvas.html'}).
-              when('/wiki' + path + '/camel/properties/*page', {templateUrl: 'plugins/wiki/html/camelProperties.html'});
+              when(UrlHelpers.join('/wiki', path, 'create/:page*'), route('create.html', false)).
+              when('/wiki' + path + '/view/:page*', {templateUrl: 'plugins/wiki/html/viewPage.html', reloadOnSearch: false}).
+              when('/wiki' + path + '/book/:page*', {templateUrl: 'plugins/wiki/html/viewBook.html', reloadOnSearch: false}).
+              when('/wiki' + path + '/edit/:page*', {templateUrl: 'plugins/wiki/html/editPage.html'}).
+              when('/wiki' + path + '/version/:page*\/:objectId', {templateUrl: 'plugins/wiki/html/viewPage.html'}).
+              when('/wiki' + path + '/history/:page*', {templateUrl: 'plugins/wiki/html/history.html'}).
+              when('/wiki' + path + '/commit/:page*\/:objectId', {templateUrl: 'plugins/wiki/html/commit.html'}).
+              when('/wiki' + path + '/diff/:page*\/:objectId/:baseObjectId', {templateUrl: 'plugins/wiki/html/viewPage.html', reloadOnSearch: false}).
+              when('/wiki' + path + '/formTable/:page*', {templateUrl: 'plugins/wiki/html/formTable.html'}).
+              when('/wiki' + path + '/dozer/mappings/:page*', {templateUrl: 'plugins/wiki/html/dozerMappings.html'}).
+              when('/wiki' + path + '/configurations/:page*', { templateUrl: 'plugins/wiki/html/configurations.html' }).
+              when('/wiki' + path + '/configuration/:pid/:page*', { templateUrl: 'plugins/wiki/html/configuration.html' }).
+              when('/wiki' + path + '/newConfiguration/:factoryPid/:page*', { templateUrl: 'plugins/wiki/html/configuration.html' }).
+              when('/wiki' + path + '/camel/diagram/:page*', {templateUrl: 'plugins/wiki/html/camelDiagram.html'}).
+              when('/wiki' + path + '/camel/canvas/:page*', {templateUrl: 'plugins/wiki/html/camelCanvas.html'}).
+              when('/wiki' + path + '/camel/properties/:page*', {templateUrl: 'plugins/wiki/html/camelProperties.html'});
     });
 }]);
 
