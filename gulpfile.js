@@ -115,6 +115,20 @@ gulp.task('connect', ['watch'], function() {
     fallback: 'index.html',
     middleware: function(connect, options) {
       return [
+        function(req, res, next) {
+          var path = req.originalUrl;
+          // avoid returning these files, they should get pulled from js
+          if (s.startsWith(path, '/plugins/')) {
+            console.log("returning 404 for: ", path);
+            res.statusCode = 404;
+            res.end();
+            return;
+          } else {
+            console.log("allowing: ", path);
+            next();
+          }
+
+        },
         (function() {
           var proxyOptions = url.parse('http://localhost:8282/hawtio/jolokia');
           proxyOptions.route = '/jolokia';
