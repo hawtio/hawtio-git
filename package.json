@@ -19,5 +19,8 @@
     "vinyl-map": "^1.0.1",
     "which": "^1.0.8",
     "wiredep": "^2.2.2"
+  },
+  "dependencies": {
+    "hawtio-node-backend": "^2.0.5"
   }
 }

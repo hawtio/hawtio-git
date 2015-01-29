@@ -6,8 +6,7 @@ var gulp = require('gulp'),
     fs = require('fs'),
     path = require('path'),
     s = require('underscore.string'),
-    url = require('url'),
-    proxy = require('proxy-middleware');
+    hawtio = require('hawtio-node-backend');
 
 var plugins = gulpLoadPlugins({});
 var pkg = require('./package.json');
@@ -108,39 +107,45 @@ gulp.task('watch', ['build'], function() {
 });
 
 gulp.task('connect', ['watch'], function() {
-  plugins.connect.server({
-    root: '.',
-    livereload: true,
+  hawtio.setConfig({
     port: 2772,
+    staticProxies: [{
+      port: 8282,
+      path: '/jolokia',
+      targetPath: '/hawtio/jolokia'
+    }],
+    staticAssets: [{
+      path: '/',
+      dir: '.'
+   
+    }],
     fallback: 'index.html',
-    middleware: function(connect, options) {
-      return [
-        function(req, res, next) {
+    liveReload: {
+      enabled: true
+    }
+  });
+  hawtio.use('/', function(req, res, next) {
           var path = req.originalUrl;
           // avoid returning these files, they should get pulled from js
           if (s.startsWith(path, '/plugins/')) {
             console.log("returning 404 for: ", path);
             res.statusCode = 404;
             res.end();
-            return;
           } else {
             console.log("allowing: ", path);
             next();
           }
-
-        },
-        (function() {
-          var proxyOptions = url.parse('http://localhost:8282/hawtio/jolokia');
-          proxyOptions.route = '/jolokia';
-          return proxy(proxyOptions);
-        })() ];
-    }
+        });
+  hawtio.listen(function(server) {
+    var host = server.address().address;
+    var port = server.address().port;
+    console.log("started from gulp file at ", host, ":", port);
   });
 });
 
 gulp.task('reload', function() {
   gulp.src('.')
-    .pipe(plugins.connect.reload());
+    .pipe(hawtio.reload());
 });
 
 gulp.task('build', ['bower', 'path-adjust', 'tsc', 'template', 'concat', 'clean']);
