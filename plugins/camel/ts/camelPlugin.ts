@@ -14,26 +14,25 @@ module Camel {
   var routeToolBar = "plugins/camel/html/attributeToolBarRoutes.html";
   var contextToolBar = "plugins/camel/html/attributeToolBarContext.html";
 
-  //export var _module = angular.module(pluginName, ['bootstrap', 'ui.bootstrap', 'ui.bootstrap.dialog', 'ui.bootstrap.tabs', 'ui.bootstrap.typeahead', 'ngResource', 'hawtio-core', 'hawtio-ui']);
-  export var _module = angular.module(pluginName, ['ngResource', 'hawtio-core', 'hawtio-ui']);
+  export var _module = angular.module(pluginName, []);
 
   _module.config(["$routeProvider", ($routeProvider) => {
-    $routeProvider.
-            when('/camel/browseEndpoint', {templateUrl: 'plugins/camel/html/browseEndpoint.html'}).
-            when('/camel/endpoint/browse/:contextId/*endpointPath', {templateUrl: 'plugins/camel/html/browseEndpoint.html'}).
-            when('/camel/createEndpoint', {templateUrl: 'plugins/camel/html/createEndpoint.html'}).
-            when('/camel/route/diagram/:contextId/:routeId', {templateUrl: 'plugins/camel/html/routes.html'}).
-            when('/camel/routes', {templateUrl: 'plugins/camel/html/routes.html'}).
-            when('/camel/fabricDiagram', {templateUrl: 'plugins/camel/html/fabricDiagram.html', reloadOnSearch: false}).
-            when('/camel/typeConverter', {templateUrl: 'plugins/camel/html/typeConverter.html', reloadOnSearch: false}).
-            when('/camel/restRegistry', {templateUrl: 'plugins/camel/html/restRegistry.html', reloadOnSearch: false}).
-            when('/camel/routeMetrics', {templateUrl: 'plugins/camel/html/routeMetrics.html', reloadOnSearch: false}).
-            when('/camel/sendMessage', {templateUrl: 'plugins/camel/html/sendMessage.html', reloadOnSearch: false}).
-            when('/camel/source', {templateUrl: 'plugins/camel/html/source.html'}).
-            when('/camel/traceRoute', {templateUrl: 'plugins/camel/html/traceRoute.html'}).
-            when('/camel/debugRoute', {templateUrl: 'plugins/camel/html/debug.html'}).
-            when('/camel/profileRoute', {templateUrl: 'plugins/camel/html/profileRoute.html'}).
-            when('/camel/properties', {templateUrl: 'plugins/camel/html/properties.html'});
+    $routeProvider
+            .when('/camel/browseEndpoint', {templateUrl: 'plugins/camel/html/browseEndpoint.html'})
+            .when('/camel/endpoint/browse/:contextId/*endpointPath', {templateUrl: 'plugins/camel/html/browseEndpoint.html'})
+            .when('/camel/createEndpoint', {templateUrl: 'plugins/camel/html/createEndpoint.html'})
+            .when('/camel/route/diagram/:contextId/:routeId', {templateUrl: 'plugins/camel/html/routes.html'})
+            .when('/camel/routes', {templateUrl: 'plugins/camel/html/routes.html'})
+            .when('/camel/fabricDiagram', {templateUrl: 'plugins/camel/html/fabricDiagram.html', reloadOnSearch: false})
+            .when('/camel/typeConverter', {templateUrl: 'plugins/camel/html/typeConverter.html', reloadOnSearch: false})
+            .when('/camel/restRegistry', {templateUrl: 'plugins/camel/html/restRegistry.html', reloadOnSearch: false})
+            .when('/camel/routeMetrics', {templateUrl: 'plugins/camel/html/routeMetrics.html', reloadOnSearch: false})
+            .when('/camel/sendMessage', {templateUrl: 'plugins/camel/html/sendMessage.html', reloadOnSearch: false})
+            .when('/camel/source', {templateUrl: 'plugins/camel/html/source.html'})
+            .when('/camel/traceRoute', {templateUrl: 'plugins/camel/html/traceRoute.html'})
+            .when('/camel/debugRoute', {templateUrl: 'plugins/camel/html/debug.html'})
+            .when('/camel/profileRoute', {templateUrl: 'plugins/camel/html/profileRoute.html'})
+            .when('/camel/properties', {templateUrl: 'plugins/camel/html/properties.html'});
   }]);
 
   _module.factory('tracerStatus',function () {
@@ -49,7 +48,7 @@ module Camel {
       return { 'message' : null}
   });
 
-  _module.run(["workspace", "jolokia", "viewRegistry", "layoutFull", "helpRegistry", "preferencesRegistry", (workspace:Workspace, jolokia, viewRegistry, layoutFull, helpRegistry, preferencesRegistry) => {
+  _module.run(["HawtioNav", "workspace", "jolokia", "viewRegistry", "layoutFull", "helpRegistry", "preferencesRegistry", "$templateCache", (nav:HawtioMainNav.Registry, workspace:Workspace, jolokia, viewRegistry, layoutFull, helpRegistry, preferencesRegistry, $templateCache:ng.ITemplateCacheService) => {
 
     viewRegistry['camel/endpoint/'] = layoutFull;
     viewRegistry['camel/route/'] = layoutFull;
@@ -200,112 +199,139 @@ module Camel {
       {field: 'MaximumRedeliveryDelay', displayName: 'Max Redeliveries Delay'}
     ];
 
-    workspace.topLevelTabs.push({
-      id: "camel",
-      content: "Camel",
-      title: "Manage your Apache Camel applications",
-      isValid: (workspace: Workspace) => workspace.treeContainsDomainAndProperties(jmxDomain),
-      href: () => "#/jmx/attributes?tab=camel",
-      isActive: (workspace: Workspace) => workspace.isTopTabActive("camel")
-    });
+    var builder = nav.builder();
+    var tab = builder.id('camel')
+                .title( () => 'Camel' )
+                .href( () => '/jmx/attributes?tab=camel' )
+                .isSelected( () => workspace.isTopTabActive('camel') )
+                .isValid( () => workspace.treeContainsDomainAndProperties(jmxDomain) )
+                .build();
 
     // add sub level tabs
+    tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
 
     // special for route diagram as we want this to be the 1st
-    workspace.subLevelTabs.push({
-      content: '<i class="fa fa-picture"></i> Route Diagram',
-      title: "View a diagram of the Camel routes",
-      isValid: (workspace: Workspace) => workspace.isRoute() && workspace.hasInvokeRightsForName(getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"),
-      href: () => "/camel/routes",
+    tab.tabs.push({
+      id: 'camel-route-diagram',
+      title: () => 'Route Diagram',
+      //title: "View a diagram of the Camel routes",
+      show: () => workspace.isRoute() && workspace.hasInvokeRightsForName(getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"),
+      isSelected: () => workspace.isLinkActive('camel/routes'),
+      href: () => "/camel/routes" + workspace.hash(),
       // make sure we have route diagram shown first
       index: -2
     });
-    workspace.subLevelTabs.push({
-      content: '<i class="fa fa-bar-chart"></i> Route Metrics',
-      title: "View the entire JVMs Camel route metrics",
-      isValid: (workspace: Workspace) => !workspace.isEndpointsFolder()
+    tab.tabs.push({
+      id: 'camel-route-metrics',
+      title: () => '<i class="fa fa-bar-chart"></i> Route Metrics',
+      //title: "View the entire JVMs Camel route metrics",
+      show: () => !workspace.isEndpointsFolder()
         && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext())
         && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia)
         && workspace.hasInvokeRightsForName(getSelectionCamelRouteMetrics(workspace), "dumpStatisticsAsJson"),
-      href: () => "/camel/routeMetrics"
+      isSelected: () => workspace.isLinkActive('camel/routeMetrics'),
+      href: () => "/camel/routeMetrics" + workspace.hash()
     });
-    workspace.subLevelTabs.push({
-      content: '<i class=" fa fa-file-alt"></i> Source',
-      title: "View the source of the Camel routes",
-      isValid: (workspace: Workspace) => !workspace.isEndpointsFolder()
+    tab.tabs.push({
+      id: 'camel-source',
+      title: () => '<i class=" fa fa-file-alt"></i> Source',
+      //title: "View the source of the Camel routes",
+      show: () => !workspace.isEndpointsFolder()
         && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext())
         && workspace.hasInvokeRightsForName(getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"),
-      href: () => "/camel/source"
+      isSelected: () => workspace.isLinkActive('camel/source'),
+      href: () => "/camel/source" + workspace.hash()
     });
-    workspace.subLevelTabs.push({
-      content: '<i class=" fa fa-edit"></i> Properties',
-      title: "View the pattern properties",
-      isValid: (workspace: Workspace) => getSelectedRouteNode(workspace),
-      href: () => "/camel/properties"
+    tab.tabs.push({
+      id: 'camel-properties',
+      title: () => '<i class=" fa fa-edit"></i> Properties',
+      //title: "View the pattern properties",
+      show: () => getSelectedRouteNode(workspace),
+      isSelected: () => workspace.isLinkActive('camel/properties'),
+      href: () => "/camel/properties" + workspace.hash()
     });
-    workspace.subLevelTabs.push({
-      content: '<i class="fa fa-list"></i> Type Converters',
-      title: "List all the type converters registered in the context",
-      isValid: (workspace: Workspace) => workspace.isTopTabActive("camel")
+    tab.tabs.push({
+      id: 'camel-type-converters',
+      title: () => '<i class="fa fa-list"></i> Type Converters',
+      //title: "List all the type converters registered in the context",
+      show: () => workspace.isTopTabActive("camel")
         && !workspace.isEndpointsFolder() && !workspace.isRoute()
         && Camel.isCamelVersionEQGT(2, 13, workspace, jolokia)
         && workspace.hasInvokeRightsForName(getSelectionCamelTypeConverter(workspace), "listTypeConverters"),
-      href: () => "/camel/typeConverter"
+      isSelected: () => workspace.isLinkActive('camel/typeConverter'),
+      href: () => "/camel/typeConverter" + workspace.hash()
     });
-    workspace.subLevelTabs.push({
-      content: '<i class="fa fa-list"></i> Rest Services',
-      title: "List all the REST services registered in the context",
-      isValid: (workspace: Workspace) => workspace.isTopTabActive("camel")
+    tab.tabs.push({
+      id: 'camel-rest-services',
+      title: () =>'<i class="fa fa-list"></i> Rest Services',
+      //title: "List all the REST services registered in the context",
+      show: () => workspace.isTopTabActive("camel")
         && !workspace.isEndpointsFolder() && !workspace.isRoute()
         && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia)
         && workspace.hasInvokeRightsForName(getSelectionCamelRestRegistry(workspace), "listRestServices"),
-      href: () => "/camel/restRegistry"
+      isSelected: () => workspace.isLinkActive('camel/restRegistry'),
+      href: () => "/camel/restRegistry" + workspace.hash()
     });
-    workspace.subLevelTabs.push({
-      content: '<i class="fa fa-envelope"></i> Browse',
-      title: "Browse the messages on the endpoint",
-      isValid: (workspace: Workspace) => workspace.isEndpoint()
+    tab.tabs.push({
+      id: 'camel-browser',
+      title: () => '<i class="fa fa-envelope"></i> Browse',
+      //title: "Browse the messages on the endpoint",
+      show: () => workspace.isEndpoint()
         && workspace.hasInvokeRights(workspace.selection, "browseAllMessagesAsXml"),
-      href: () => "/camel/browseEndpoint"
+      isSelected: () => workspace.isLinkActive('camel/browseEndpoint'),
+      href: () => "/camel/browseEndpoint" + workspace.hash()
     });
-    workspace.subLevelTabs.push({
-      content: '<i class="fa fa-stethoscope"></i> Debug',
-      title: "Debug the Camel route",
-      isValid: (workspace: Workspace) => workspace.isRoute()
+    tab.tabs.push({
+      id: 'camel-debug',
+      title: () => '<i class="fa fa-stethoscope"></i> Debug',
+      //title: "Debug the Camel route",
+      show: () => workspace.isRoute()
         && Camel.getSelectionCamelDebugMBean(workspace)
         && workspace.hasInvokeRightsForName(Camel.getSelectionCamelDebugMBean(workspace), "getBreakpoints"),
-      href: () => "/camel/debugRoute"
+      isSelected: () => workspace.isLinkActive('camel/debugRoute'),
+      href: () => "/camel/debugRoute" + workspace.hash()
     });
-    workspace.subLevelTabs.push({
-      content: '<i class="fa fa-envelope"></i> Trace',
-      title: "Trace the messages flowing through the Camel route",
-      isValid: (workspace: Workspace) => workspace.isRoute()
+    tab.tabs.push({
+      id: 'camel-trace',
+      title: () => '<i class="fa fa-envelope"></i> Trace',
+      //title: "Trace the messages flowing through the Camel route",
+      show: () => workspace.isRoute()
         && Camel.getSelectionCamelTraceMBean(workspace)
         && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"),
-      href: () => "/camel/traceRoute"
+      isSelected: () => workspace.isLinkActive('camel/traceRoute'),
+      href: () => "/camel/traceRoute" + workspace.hash()
     });
-    workspace.subLevelTabs.push({
-      content: '<i class="fa fa-bar-chart"></i> Profile',
-      title: "Profile the messages flowing through the Camel route",
-      isValid: (workspace: Workspace) => workspace.isRoute()
+    tab.tabs.push({
+      id: 'camel-profile',
+      title: () => '<i class="fa fa-bar-chart"></i> Profile',
+      //title: "Profile the messages flowing through the Camel route",
+      show: () => workspace.isRoute()
         && Camel.getSelectionCamelTraceMBean(workspace)
         && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"),
-      href: () => "/camel/profileRoute"
+      isSelected: () => workspace.isLinkActive('camel/profileRoute'),
+      href: () => "/camel/profileRoute" + workspace.hash()
     });
-    workspace.subLevelTabs.push({
-      content: '<i class="fa fa-pencil"></i> Send',
-      title: "Send a message to this endpoint",
-      isValid: (workspace: Workspace) => workspace.isEndpoint()
+    tab.tabs.push({
+      id: 'camel-send',
+      title: () => '<i class="fa fa-pencil"></i> Send',
+      //title: "Send a message to this endpoint",
+      show: () => workspace.isEndpoint()
         && workspace.hasInvokeRights(workspace.selection, workspace.selection.domain === "org.apache.camel" ? "sendBodyAndHeaders" : "sendTextMessage"),
-      href: () => "/camel/sendMessage"
+      isSelected: () => workspace.isLinkActive('camel/sendMessage'),
+      href: () => "/camel/sendMessage" + workspace.hash()
     });
-    workspace.subLevelTabs.push({
-      content: '<i class="fa fa-plus"></i> Endpoint',
-      title: "Create a new endpoint",
-      isValid: (workspace: Workspace) => workspace.isEndpointsFolder()
+    tab.tabs.push({
+      id: 'camel-endpoint',
+      title: () =>'<i class="fa fa-plus"></i> Endpoint',
+      //title: "Create a new endpoint",
+      show: () => workspace.isEndpointsFolder()
         && workspace.hasInvokeRights(workspace.selection, "createEndpoint"),
-      href: () => "/camel/createEndpoint"
+      isSelected: () => workspace.isLinkActive('camel/createEndpoint'),
+      href: () => "/camel/createEndpoint" + workspace.hash()
     });
+
+    nav.add(tab);
+
   }]);
 
   hawtioPluginLoader.addModule(pluginName);
