@@ -2,6 +2,7 @@
 
 module ActiveMQ {
 
+  export var pluginName = 'activemq';
   export var log:Logging.Logger = Logger.get("activemq");
   export var jmxDomain = 'org.apache.activemq';
 

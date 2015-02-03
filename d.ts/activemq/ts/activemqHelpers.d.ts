@@ -1,5 +1,6 @@
 /// <reference path="../../includes.d.ts" />
 declare module ActiveMQ {
+    var pluginName: string;
     var log: Logging.Logger;
     var jmxDomain: string;
     function getSelectionQueuesFolder(workspace: any): any;

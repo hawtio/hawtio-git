@@ -5,7 +5,6 @@
  * @main ActiveMQ
  */
 declare module ActiveMQ {
-    var pluginName: string;
     var _module: ng.IModule;
     function getBroker(workspace: Workspace): Core.Folder;
     function isQueue(workspace: Workspace): boolean;

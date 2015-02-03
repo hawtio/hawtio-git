@@ -6,6 +6,7 @@
 /// <reference path="../../includes.ts"/>
 var ActiveMQ;
 (function (ActiveMQ) {
+    ActiveMQ.pluginName = 'activemq';
     ActiveMQ.log = Logger.get("activemq");
     ActiveMQ.jmxDomain = 'org.apache.activemq';
     function getSelectionQueuesFolder(workspace) {
@@ -123,13 +124,11 @@ var ActiveMQ;
  */
 var ActiveMQ;
 (function (ActiveMQ) {
-    ActiveMQ.pluginName = 'activemq';
-    ActiveMQ._module = angular.module(ActiveMQ.pluginName, ['ngResource', 'hawtio-core', 'camel', 'hawtio-ui']);
-    //export var _module = angular.module(pluginName, ['bootstrap', 'ngResource', 'ui.bootstrap.dialog', 'hawtio-core', 'camel', 'hawtio-ui']);
+    ActiveMQ._module = angular.module(ActiveMQ.pluginName, []);
     ActiveMQ._module.config(["$routeProvider", function ($routeProvider) {
         $routeProvider.when('/activemq/browseQueue', { templateUrl: 'plugins/activemq/html/browseQueue.html' }).when('/activemq/diagram', { templateUrl: 'plugins/activemq/html/brokerDiagram.html', reloadOnSearch: false }).when('/activemq/createDestination', { templateUrl: 'plugins/activemq/html/createDestination.html' }).when('/activemq/createQueue', { templateUrl: 'plugins/activemq/html/createQueue.html' }).when('/activemq/createTopic', { templateUrl: 'plugins/activemq/html/createTopic.html' }).when('/activemq/deleteQueue', { templateUrl: 'plugins/activemq/html/deleteQueue.html' }).when('/activemq/deleteTopic', { templateUrl: 'plugins/activemq/html/deleteTopic.html' }).when('/activemq/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html' }).when('/activemq/durableSubscribers', { templateUrl: 'plugins/activemq/html/durableSubscribers.html' }).when('/activemq/jobs', { templateUrl: 'plugins/activemq/html/jobs.html' });
     }]);
-    ActiveMQ._module.run(["$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", function ($location, workspace, viewRegistry, helpRegistry, preferencesRegistry) {
+    ActiveMQ._module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", function (nav, $location, workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache) {
         viewRegistry['activemq'] = 'plugins/activemq/html/layoutActiveMQTree.html';
         helpRegistry.addUserDoc('activemq', 'plugins/activemq/doc/help.md', function () {
             return workspace.treeContainsDomainAndProperties("org.apache.activemq");
@@ -190,75 +189,91 @@ var ActiveMQ;
             { field: 'IndexDirectory', displayName: 'Index Directory', width: "**" },
             { field: 'LogDirectory', displayName: 'Log Directory', width: "**" }
         ];
-        workspace.topLevelTabs.push({
-            id: "activemq",
-            content: "ActiveMQ",
-            title: "Manage your ActiveMQ message brokers",
-            isValid: function (workspace) { return workspace.treeContainsDomainAndProperties("org.apache.activemq"); },
-            href: function () { return "#/jmx/attributes?tab=activemq"; },
-            isActive: function () { return workspace.isTopTabActive("activemq"); }
-        });
+        var builder = nav.builder();
+        var tab = builder.id('activemq').title(function () { return 'ActiveMQ'; }).href(function () { return '/jmx/attributes?tab=activemq'; }).isSelected(function () { return workspace.isTopTabActive('activemq'); }).isValid(function () { return workspace.treeContainsDomainAndProperties(ActiveMQ.jmxDomain); }).build();
+        tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
         // add sub level tabs
-        workspace.subLevelTabs.push({
-            content: '<i class="fa fa-envelope"></i> Browse',
-            title: "Browse the messages on the queue",
-            isValid: function (workspace) { return isQueue(workspace) && workspace.hasInvokeRights(workspace.selection, "browse()"); },
-            href: function () { return "/activemq/browseQueue"; }
-        });
-        workspace.subLevelTabs.push({
-            content: '<i class="fa fa-pencil"></i> Send',
-            title: "Send a message to this destination",
-            isValid: function (workspace) { return (isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(workspace.selection, "sendTextMessage(java.util.Map,java.lang.String,java.lang.String,java.lang.String)"); },
-            href: function () { return "/activemq/sendMessage"; }
-        });
-        workspace.subLevelTabs.push({
-            content: '<i class="fa fa-picture"></i> Diagram',
-            title: "View a diagram of the producers, destinations and consumers",
-            isValid: function (workspace) { return workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(ActiveMQ.jmxDomain); },
+        tab.tabs.push({
+            id: 'activemq-diagram',
+            title: function () { return '<i class="fa fa-picture"></i> Diagram'; },
+            //title: "View a diagram of the producers, destinations and consumers",
+            show: function () { return workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(ActiveMQ.jmxDomain); },
+            isSelected: function () { return workspace.isLinkActive('activemq/diagram'); },
             href: function () { return "/activemq/diagram"; }
         });
-        workspace.subLevelTabs.push({
-            content: '<i class="fa fa-plus"></i> Create',
-            title: "Create a new destination",
-            isValid: function (workspace) { return isBroker(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"); },
-            href: function () { return "/activemq/createDestination"; }
+        tab.tabs.push({
+            id: 'activemq-browse',
+            title: function () { return '<i class="fa fa-envelope"></i> Browse'; },
+            //title: "Browse the messages on the queue",
+            show: function () { return isQueue(workspace) && workspace.hasInvokeRights(workspace.selection, "browse()"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/browseQueue'); },
+            href: function () { return "/activemq/browseQueue"; }
         });
-        workspace.subLevelTabs.push({
-            content: '<i class="fa fa-plus"></i> Create',
-            title: "Create a new queue",
-            isValid: function (workspace) { return isQueuesFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
-            href: function () { return "/activemq/createQueue"; }
+        tab.tabs.push({
+            id: 'activemq-send',
+            title: function () { return '<i class="fa fa-pencil"></i> Send'; },
+            //title: "Send a message to this destination",
+            show: function () { return (isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(workspace.selection, "sendTextMessage(java.util.Map,java.lang.String,java.lang.String,java.lang.String)"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/sendMessage'); },
+            href: function () { return "/activemq/sendMessage"; }
         });
-        workspace.subLevelTabs.push({
-            content: '<i class="fa fa-plus"></i> Create',
-            title: "Create a new topic",
-            isValid: function (workspace) { return isTopicsFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
-            href: function () { return "/activemq/createTopic"; }
-        });
-        workspace.subLevelTabs.push({
-            content: '<i class="fa fa-remove"></i> Delete Topic',
-            title: "Delete this topic",
-            isValid: function (workspace) { return isTopic(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeTopic"); },
-            href: function () { return "/activemq/deleteTopic"; }
-        });
-        workspace.subLevelTabs.push({
-            content: '<i class="fa fa-remove"></i> Delete',
-            title: "Delete or purge this queue",
-            isValid: function (workspace) { return isQueue(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeQueue"); },
-            href: function () { return "/activemq/deleteQueue"; }
-        });
-        workspace.subLevelTabs.push({
-            content: '<i class="fa fa-list"></i> Durable Subscribers',
-            title: "Manage durable subscribers",
-            isValid: function (workspace) { return isBroker(workspace); },
+        tab.tabs.push({
+            id: 'activemq-durable-subscribers',
+            title: function () { return '<i class="fa fa-list"></i> Durable Subscribers'; },
+            //title: "Manage durable subscribers",
+            show: function () { return isBroker(workspace); },
+            isSelected: function () { return workspace.isLinkActive('activemq/durableSubscribers'); },
             href: function () { return "/activemq/durableSubscribers"; }
         });
-        workspace.subLevelTabs.push({
-            content: '<i class="fa fa-list"></i> Jobs',
-            title: "Manage jobs",
-            isValid: function (workspace) { return isJobScheduler(workspace); },
+        tab.tabs.push({
+            id: 'activemq-jobs',
+            title: function () { return '<i class="fa fa-list"></i> Jobs'; },
+            //title: "Manage jobs",
+            show: function () { return isJobScheduler(workspace); },
+            isSelected: function () { return workspace.isLinkActive('activemq/jobs'); },
             href: function () { return "/activemq/jobs"; }
         });
+        tab.tabs.push({
+            id: 'activemq-create-destination',
+            title: function () { return '<i class="fa fa-plus"></i> Create'; },
+            //title: "Create a new destination",
+            show: function () { return isBroker(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/createDestination'); },
+            href: function () { return "/activemq/createDestination"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-create-queue',
+            title: function () { return '<i class="fa fa-plus"></i> Create'; },
+            //title: "Create a new queue",
+            show: function () { return isQueuesFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/createQueue'); },
+            href: function () { return "/activemq/createQueue"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-create-topic',
+            title: function () { return '<i class="fa fa-plus"></i> Create'; },
+            //title: "Create a new topic",
+            show: function () { return isTopicsFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/createTopic'); },
+            href: function () { return "/activemq/createTopic"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-delete-topic',
+            title: function () { return '<i class="fa fa-remove"></i> Delete Topic'; },
+            //title: "Delete this topic",
+            show: function () { return isTopic(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeTopic"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/deleteTopic'); },
+            href: function () { return "/activemq/deleteTopic"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-delete-queue',
+            title: function () { return '<i class="fa fa-remove"></i> Delete'; },
+            //title: "Delete or purge this queue",
+            show: function () { return isQueue(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeQueue"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/deleteQueue'); },
+            href: function () { return "/activemq/deleteQueue"; }
+        });
+        nav.add(tab);
         function postProcessTree(tree) {
             var activemq = tree.get("org.apache.activemq");
             setConsumerType(activemq);
@@ -2995,6 +3010,871 @@ var ActiveMQ;
         }
     }]);
 })(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryInterfaces.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.context = '/docker-registry';
+    DockerRegistry.hash = UrlHelpers.join('#', DockerRegistry.context);
+    DockerRegistry.defaultRoute = UrlHelpers.join(DockerRegistry.hash, 'list');
+    DockerRegistry.basePath = UrlHelpers.join('plugins', DockerRegistry.context);
+    DockerRegistry.templatePath = UrlHelpers.join(DockerRegistry.basePath, 'html');
+    DockerRegistry.pluginName = 'DockerRegistry';
+    DockerRegistry.log = Logger.get(DockerRegistry.pluginName);
+    DockerRegistry.SEARCH_FRAGMENT = '/v1/search';
+    /**
+     * Fetch the available docker images in the registry, can only
+     * be called after app initialization
+     */
+    function getDockerImageRepositories(callback) {
+        var DockerRegistryRestURL = HawtioCore.injector.get("DockerRegistryRestURL");
+        var $http = HawtioCore.injector.get("$http");
+        DockerRegistryRestURL.then(function (restURL) {
+            $http.get(UrlHelpers.join(restURL, DockerRegistry.SEARCH_FRAGMENT)).success(function (data) {
+                callback(restURL, data);
+            }).error(function (data) {
+                DockerRegistry.log.debug("Error fetching image repositories:", data);
+                callback(restURL, null);
+            });
+        });
+    }
+    DockerRegistry.getDockerImageRepositories = getDockerImageRepositories;
+    function completeDockerRegistry() {
+        var $q = HawtioCore.injector.get("$q");
+        var $rootScope = HawtioCore.injector.get("$rootScope");
+        var deferred = $q.defer();
+        getDockerImageRepositories(function (restURL, repositories) {
+            if (repositories && repositories.results) {
+                // log.debug("Got back repositories: ", repositories);
+                var results = repositories.results;
+                results = results.sortBy(function (res) {
+                    return res.name;
+                }).first(15);
+                var names = results.map(function (res) {
+                    return res.name;
+                });
+                // log.debug("Results: ", names);
+                deferred.resolve(names);
+            }
+            else {
+                // log.debug("didn't get back anything, bailing");
+                deferred.reject([]);
+            }
+        });
+        return deferred.promise;
+    }
+    DockerRegistry.completeDockerRegistry = completeDockerRegistry;
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry._module = angular.module(DockerRegistry.pluginName, ['hawtio-core', 'ngResource']);
+    DockerRegistry.controller = PluginHelpers.createControllerFunction(DockerRegistry._module, DockerRegistry.pluginName);
+    DockerRegistry.route = PluginHelpers.createRoutingFunction(DockerRegistry.templatePath);
+    DockerRegistry._module.config(['$routeProvider', function ($routeProvider) {
+        $routeProvider.when(UrlHelpers.join(DockerRegistry.context, 'list'), DockerRegistry.route('list.html', false));
+    }]);
+    DockerRegistry._module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', function (jolokiaUrl, jolokia, $q, $rootScope) {
+        // TODO use the services plugin to find it?
+        /*
+            var answer = <ng.IDeferred<string>> $q.defer();
+            jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined,
+              <Jolokia.IParams> Core.onSuccess((response) => {
+                var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
+                log.debug("Discovered docker registry API URL: " , proxified);
+                answer.resolve(proxified);
+                Core.$apply($rootScope);
+              }, {
+                error: (response) => {
+                  log.debug("error fetching docker registry API details: ", response);
+                  answer.reject(response);
+                  Core.$apply($rootScope);
+                }
+              }));
+            return answer.promise;
+        */
+    }]);
+    DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
+        DockerRegistry.log.debug("Running");
+        viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
+        workspace.topLevelTabs.push({
+            id: 'docker-registry',
+            content: 'Images',
+            isValid: function (workspace) { return true; },
+            isActive: function (workspace) { return workspace.isLinkActive('docker-registry'); },
+            href: function () { return DockerRegistry.defaultRoute; }
+        });
+    }]);
+    hawtioPluginLoader.addModule(DockerRegistry.pluginName);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+/// <reference path="dockerRegistryPlugin.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.TopLevel = DockerRegistry.controller("TopLevel", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
+        $scope.repositories = [];
+        $scope.fetched = false;
+        $scope.restURL = '';
+        DockerRegistry.getDockerImageRepositories(function (restURL, repositories) {
+            $scope.restURL = restURL;
+            $scope.fetched = true;
+            if (repositories) {
+                $scope.repositories = repositories.results;
+                var previous = angular.toJson($scope.repositories);
+                $scope.fetch = PollHelpers.setupPolling($scope, function (next) {
+                    var searchURL = UrlHelpers.join($scope.restURL, DockerRegistry.SEARCH_FRAGMENT);
+                    $http.get(searchURL).success(function (repositories) {
+                        if (repositories && repositories.results) {
+                            if (previous !== angular.toJson(repositories.results)) {
+                                $scope.repositories = repositories.results;
+                                previous = angular.toJson($scope.repositories);
+                            }
+                        }
+                        next();
+                    });
+                });
+                $scope.fetch();
+            }
+            else {
+                DockerRegistry.log.debug("Failed initial fetch of image repositories");
+            }
+        });
+        $scope.$watchCollection('repositories', function (repositories) {
+            if (!Core.isBlank($scope.restURL)) {
+                if (!repositories || repositories.length === 0) {
+                    $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
+                    return;
+                }
+                // we've a new list of repositories, let's refresh our info on 'em
+                var outstanding = repositories.length;
+                function maybeNotify() {
+                    outstanding = outstanding - 1;
+                    if (outstanding <= 0) {
+                        $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
+                    }
+                }
+                repositories.forEach(function (repository) {
+                    var tagURL = UrlHelpers.join($scope.restURL, 'v1/repositories/' + repository.name + '/tags');
+                    // we'll give it half a second as sometimes tag info isn't instantly available
+                    $timeout(function () {
+                        DockerRegistry.log.debug("Fetching tags from URL: ", tagURL);
+                        $http.get(tagURL).success(function (tags) {
+                            DockerRegistry.log.debug("Got tags: ", tags, " for image repository: ", repository.name);
+                            repository.tags = tags;
+                            maybeNotify();
+                        }).error(function (data) {
+                            DockerRegistry.log.debug("Error fetching data for image repository: ", repository.name, " error: ", data);
+                            maybeNotify();
+                        });
+                    }, 500);
+                });
+            }
+        });
+    }]);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+/// <reference path="dockerRegistryPlugin.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.TagController = DockerRegistry.controller("TagController", ["$scope", function ($scope) {
+        $scope.selectImage = function (imageID) {
+            $scope.$emit("DockerRegistry.SelectedImageID", imageID);
+        };
+    }]);
+    DockerRegistry.ListController = DockerRegistry.controller("ListController", ["$scope", "$templateCache", "$http", function ($scope, $templateCache, $http) {
+        $scope.imageRepositories = [];
+        $scope.selectedImage = undefined;
+        $scope.tableConfig = {
+            data: 'imageRepositories',
+            showSelectionCheckbox: true,
+            enableRowClickSelection: false,
+            multiSelect: true,
+            selectedItems: [],
+            filterOptions: {
+                filterText: ''
+            },
+            columnDefs: [
+                { field: 'name', displayName: 'Name', defaultSort: true },
+                { field: 'description', displayName: 'Description' },
+                { field: 'tags', displayName: 'Tags', cellTemplate: $templateCache.get("tagsTemplate.html") }
+            ]
+        };
+        $scope.deletePrompt = function (selectedRepositories) {
+            UI.multiItemConfirmActionDialog({
+                collection: selectedRepositories,
+                index: 'name',
+                onClose: function (result) {
+                    if (result) {
+                        selectedRepositories.forEach(function (repository) {
+                            var deleteURL = UrlHelpers.join($scope.restURL, '/v1/repositories/' + repository.name + '/');
+                            DockerRegistry.log.debug("Using URL: ", deleteURL);
+                            $http.delete(deleteURL).success(function (data) {
+                                DockerRegistry.log.debug("Deleted repository: ", repository.name);
+                            }).error(function (data) {
+                                DockerRegistry.log.debug("Failed to delete repository: ", repository.name);
+                            });
+                        });
+                    }
+                },
+                title: 'Delete Repositories?',
+                action: 'The following repositories will be deleted:',
+                okText: 'Delete',
+                okClass: 'btn-danger',
+                custom: 'This operation is permanent once completed!',
+                customClass: 'alert alert-warning'
+            }).open();
+        };
+        $scope.$on("DockerRegistry.SelectedImageID", function ($event, imageID) {
+            var imageJsonURL = UrlHelpers.join($scope.restURL, '/v1/images/' + imageID + '/json');
+            $http.get(imageJsonURL).success(function (image) {
+                DockerRegistry.log.debug("Got image: ", image);
+                $scope.selectedImage = image;
+            });
+        });
+        $scope.$on('DockerRegistry.Repositories', function ($event, restURL, repositories) {
+            $scope.imageRepositories = repositories;
+        });
+    }]);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Dozer
+ * @main Dozer
+ */
+var Dozer;
+(function (Dozer) {
+    /**
+     * The JMX domain for Dozer
+     * @property jmxDomain
+     * @for Dozer
+     * @type String
+     */
+    Dozer.jmxDomain = 'net.sourceforge.dozer';
+    Dozer.introspectorMBean = "hawtio:type=Introspector";
+    /**
+     * Don't try and load properties for these types
+     * @property excludedPackages
+     * @for Dozer
+     * @type {Array}
+     */
+    Dozer.excludedPackages = [
+        'java.lang',
+        'int',
+        'double',
+        'long'
+    ];
+    /**
+     * Lets map the class names to element names
+     * @property elementNameMappings
+     * @for Dozer
+     * @type {Array}
+     */
+    Dozer.elementNameMappings = {
+        "Mapping": "mapping",
+        "MappingClass": "class",
+        "Field": "field"
+    };
+    Dozer.log = Logger.get("Dozer");
+    /**
+     * Converts the XML string or DOM node to a Dozer model
+     * @method loadDozerModel
+     * @for Dozer
+     * @static
+     * @param {Object} xml
+     * @param {String} pageId
+     * @return {Mappings}
+     */
+    function loadDozerModel(xml, pageId) {
+        var doc = xml;
+        if (angular.isString(xml)) {
+            doc = $.parseXML(xml);
+        }
+        console.log("Has Dozer XML document: " + doc);
+        var model = new Dozer.Mappings(doc);
+        var mappingsElement = doc.documentElement;
+        copyAttributes(model, mappingsElement);
+        $(mappingsElement).children("mapping").each(function (idx, element) {
+            var mapping = createMapping(element);
+            model.mappings.push(mapping);
+        });
+        return model;
+    }
+    Dozer.loadDozerModel = loadDozerModel;
+    function saveToXmlText(model) {
+        // lets copy the original doc then replace the mapping elements
+        var element = model.doc.documentElement.cloneNode(false);
+        appendElement(model.mappings, element, null, 1);
+        Dozer.addTextNode(element, "\n");
+        var xmlText = Core.xmlNodeToString(element);
+        return '<?xml version="1.0" encoding="UTF-8"?>\n' + xmlText;
+    }
+    Dozer.saveToXmlText = saveToXmlText;
+    function findUnmappedFields(workspace, mapping, fn) {
+        // lets find the fields which are unmapped
+        var className = mapping.class_a.value;
+        findProperties(workspace, className, null, function (properties) {
+            var answer = [];
+            angular.forEach(properties, function (property) {
+                console.log("got property " + JSON.stringify(property, null, "  "));
+                var name = property.name;
+                if (name) {
+                    if (mapping.hasFromField(name)) {
+                    }
+                    else {
+                        // TODO auto-detect this property name in the to classes?
+                        answer.push(new Dozer.UnmappedField(name, property));
+                    }
+                }
+            });
+            fn(answer);
+        });
+    }
+    Dozer.findUnmappedFields = findUnmappedFields;
+    /**
+     * Finds the properties on the given class and returns them; and either invokes the given function
+     * or does a sync request and returns them
+     * @method findProperties
+     * @for Dozer
+     * @static
+     * @param {Core.Workspace} workspace
+     * @param {String} className
+     * @param {String} filter
+     * @param {Function} fn
+     * @return {any}
+     */
+    function findProperties(workspace, className, filter, fn) {
+        if (filter === void 0) { filter = null; }
+        if (fn === void 0) { fn = null; }
+        var mbean = getIntrospectorMBean(workspace);
+        if (mbean) {
+            if (filter) {
+                return workspace.jolokia.execute(mbean, "findProperties", className, filter, Core.onSuccess(fn));
+            }
+            else {
+                return workspace.jolokia.execute(mbean, "getProperties", className, Core.onSuccess(fn));
+            }
+        }
+        else {
+            if (fn) {
+                return fn([]);
+            }
+            else {
+                return [];
+            }
+        }
+    }
+    Dozer.findProperties = findProperties;
+    /**
+     * Finds class names matching the given search text and either invokes the function with the results
+     * or does a sync request and returns them.
+     * @method findClassNames
+     * @for Dozer
+     * @static
+     * @param {Core.Workspace} workspace
+     * @param {String} searchText
+     * @param {Number} limit @default 20
+     * @param {Function} fn
+     * @return {any}
+     */
+    function findClassNames(workspace, searchText, limit, fn) {
+        if (limit === void 0) { limit = 20; }
+        if (fn === void 0) { fn = null; }
+        var mbean = getIntrospectorMBean(workspace);
+        if (mbean) {
+            return workspace.jolokia.execute(mbean, "findClassNames", searchText, limit, Core.onSuccess(fn));
+        }
+        else {
+            if (fn) {
+                return fn([]);
+            }
+            else {
+                return [];
+            }
+        }
+    }
+    Dozer.findClassNames = findClassNames;
+    function getIntrospectorMBean(workspace) {
+        // lets hard code this so its easy to use in any JVM
+        return Dozer.introspectorMBean;
+        // return Core.getMBeanTypeObjectName(workspace, "hawtio", "Introspector");
+    }
+    Dozer.getIntrospectorMBean = getIntrospectorMBean;
+    function loadModelFromTree(rootTreeNode, oldModel) {
+        oldModel.mappings = [];
+        angular.forEach(rootTreeNode.childList, function (treeNode) {
+            var mapping = Core.pathGet(treeNode, ["data", "entity"]);
+            if (mapping) {
+                oldModel.mappings.push(mapping);
+            }
+        });
+        return oldModel;
+    }
+    Dozer.loadModelFromTree = loadModelFromTree;
+    function createDozerTree(model) {
+        var id = "mappings";
+        var folder = new Folder(id);
+        folder.addClass = "net-sourceforge-dozer-mappings";
+        folder.domain = Dozer.jmxDomain;
+        folder.typeName = "mappings";
+        folder.entity = model;
+        folder.key = Core.toSafeDomID(id);
+        angular.forEach(model.mappings, function (mapping) {
+            var mappingFolder = createMappingFolder(mapping, folder);
+            folder.children.push(mappingFolder);
+        });
+        return folder;
+    }
+    Dozer.createDozerTree = createDozerTree;
+    function createMappingFolder(mapping, parentFolder) {
+        var mappingName = mapping.name();
+        var mappingFolder = new Folder(mappingName);
+        mappingFolder.addClass = "net-sourceforge-dozer-mapping";
+        mappingFolder.typeName = "mapping";
+        mappingFolder.domain = Dozer.jmxDomain;
+        mappingFolder.key = (parentFolder ? parentFolder.key + "_" : "") + Core.toSafeDomID(mappingName);
+        mappingFolder.parent = parentFolder;
+        mappingFolder.entity = mapping;
+        mappingFolder.icon = Core.url("/plugins/dozer/img/class.gif");
+        /*
+              mappingFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
+              */
+        angular.forEach(mapping.fields, function (field) {
+            addMappingFieldFolder(field, mappingFolder);
+        });
+        return mappingFolder;
+    }
+    Dozer.createMappingFolder = createMappingFolder;
+    function addMappingFieldFolder(field, mappingFolder) {
+        var name = field.name();
+        var fieldFolder = new Folder(name);
+        fieldFolder.addClass = "net-sourceforge-dozer-field";
+        fieldFolder.typeName = "field";
+        fieldFolder.domain = Dozer.jmxDomain;
+        fieldFolder.key = mappingFolder.key + "_" + Core.toSafeDomID(name);
+        fieldFolder.parent = mappingFolder;
+        fieldFolder.entity = field;
+        fieldFolder.icon = Core.url("/plugins/dozer/img/attribute.gif");
+        /*
+              fieldFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
+              */
+        mappingFolder.children.push(fieldFolder);
+        return fieldFolder;
+    }
+    Dozer.addMappingFieldFolder = addMappingFieldFolder;
+    function createMapping(element) {
+        var mapping = new Dozer.Mapping();
+        var elementJQ = $(element);
+        mapping.class_a = createMappingClass(elementJQ.children("class-a"));
+        mapping.class_b = createMappingClass(elementJQ.children("class-b"));
+        elementJQ.children("field").each(function (idx, fieldElement) {
+            var field = createField(fieldElement);
+            mapping.fields.push(field);
+        });
+        copyAttributes(mapping, element);
+        return mapping;
+    }
+    function createField(element) {
+        if (element) {
+            var jqe = $(element);
+            var a = jqe.children("a").text();
+            var b = jqe.children("b").text();
+            var field = new Dozer.Field(new Dozer.FieldDefinition(a), new Dozer.FieldDefinition(b));
+            copyAttributes(field, element);
+            return field;
+        }
+        return new Dozer.Field(new Dozer.FieldDefinition(""), new Dozer.FieldDefinition(""));
+    }
+    function createMappingClass(jqElement) {
+        if (jqElement && jqElement[0]) {
+            var element = jqElement[0];
+            var text = element.textContent;
+            if (text) {
+                var mappingClass = new Dozer.MappingClass(text);
+                copyAttributes(mappingClass, element);
+                return mappingClass;
+            }
+        }
+        // lets create a default empty mapping
+        return new Dozer.MappingClass("");
+    }
+    function copyAttributes(object, element) {
+        var attributeMap = element.attributes;
+        for (var i = 0; i < attributeMap.length; i++) {
+            // TODO hacky work around for compiler issue ;)
+            //var attr = attributeMap.item(i);
+            var attMap = attributeMap;
+            var attr = attMap.item(i);
+            if (attr) {
+                var name = attr.localName;
+                var value = attr.value;
+                if (name && !name.startsWith("xmlns")) {
+                    var safeName = Forms.safeIdentifier(name);
+                    object[safeName] = value;
+                }
+            }
+        }
+    }
+    function appendAttributes(object, element, ignorePropertyNames) {
+        angular.forEach(object, function (value, key) {
+            if (ignorePropertyNames.any(key)) {
+            }
+            else {
+                // lets add an attribute value
+                if (value) {
+                    var text = value.toString();
+                    // lets replace any underscores with dashes
+                    var name = key.replace(/_/g, '-');
+                    element.setAttribute(name, text);
+                }
+            }
+        });
+    }
+    Dozer.appendAttributes = appendAttributes;
+    /**
+     * Adds a new child element for this mapping to the given element
+     * @method appendElement
+     * @for Dozer
+     * @static
+     * @param {any} object
+     * @param {any} element
+     * @param {String} elementName
+     * @param {Number} indentLevel
+     * @return the last child element created
+     */
+    function appendElement(object, element, elementName, indentLevel) {
+        if (elementName === void 0) { elementName = null; }
+        if (indentLevel === void 0) { indentLevel = 0; }
+        var answer = null;
+        if (angular.isArray(object)) {
+            angular.forEach(object, function (child) {
+                answer = appendElement(child, element, elementName, indentLevel);
+            });
+        }
+        else if (object) {
+            if (!elementName) {
+                var className = Core.pathGet(object, ["constructor", "name"]);
+                if (!className) {
+                    console.log("WARNING: no class name for value " + object);
+                }
+                else {
+                    elementName = Dozer.elementNameMappings[className];
+                    if (!elementName) {
+                        console.log("WARNING: could not map class name " + className + " to an XML element name");
+                    }
+                }
+            }
+            if (elementName) {
+                if (indentLevel) {
+                    var text = indentText(indentLevel);
+                    Dozer.addTextNode(element, text);
+                }
+                var doc = element.ownerDocument || document;
+                var child = doc.createElement(elementName);
+                // navigate child properties...
+                var fn = object.saveToElement;
+                if (fn) {
+                    fn.apply(object, [child]);
+                }
+                else {
+                    angular.forEach(object, function (value, key) {
+                        console.log("has key " + key + " value " + value);
+                    });
+                }
+                // if we have any element children then add newline text node
+                if ($(child).children().length) {
+                    //var text = indentText(indentLevel - 1);
+                    var text = indentText(indentLevel);
+                    Dozer.addTextNode(child, text);
+                }
+                element.appendChild(child);
+                answer = child;
+            }
+        }
+        return answer;
+    }
+    Dozer.appendElement = appendElement;
+    function nameOf(object) {
+        var text = angular.isObject(object) ? object["value"] : null;
+        if (!text && angular.isString(object)) {
+            text = object;
+        }
+        return text || "?";
+    }
+    Dozer.nameOf = nameOf;
+    function addTextNode(element, text) {
+        if (text) {
+            var doc = element.ownerDocument || document;
+            var child = doc.createTextNode(text);
+            element.appendChild(child);
+        }
+    }
+    Dozer.addTextNode = addTextNode;
+    function indentText(indentLevel) {
+        var text = "\n";
+        for (var i = 0; i < indentLevel; i++) {
+            text += "  ";
+        }
+        return text;
+    }
+})(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Dozer
+ */
+var Dozer;
+(function (Dozer) {
+    /**
+     * @class Mappings
+     */
+    var Mappings = (function () {
+        function Mappings(doc, mappings) {
+            if (mappings === void 0) { mappings = []; }
+            this.doc = doc;
+            this.mappings = mappings;
+        }
+        return Mappings;
+    })();
+    Dozer.Mappings = Mappings;
+    /**
+     * @class Mapping
+     */
+    var Mapping = (function () {
+        function Mapping() {
+            this.fields = [];
+            this.map_id = Core.getUUID();
+            this.class_a = new MappingClass('');
+            this.class_b = new MappingClass('');
+        }
+        Mapping.prototype.name = function () {
+            return Dozer.nameOf(this.class_a) + " -> " + Dozer.nameOf(this.class_b);
+        };
+        Mapping.prototype.hasFromField = function (name) {
+            return this.fields.find(function (f) { return name === f.a.value; });
+        };
+        Mapping.prototype.hasToField = function (name) {
+            return this.fields.find(function (f) { return name === f.b.value; });
+        };
+        Mapping.prototype.saveToElement = function (element) {
+            Dozer.appendElement(this.class_a, element, "class-a", 2);
+            Dozer.appendElement(this.class_b, element, "class-b", 2);
+            Dozer.appendElement(this.fields, element, "field", 2);
+            Dozer.appendAttributes(this, element, ["class_a", "class_b", "fields"]);
+        };
+        return Mapping;
+    })();
+    Dozer.Mapping = Mapping;
+    /**
+     * @class MappingClass
+     */
+    var MappingClass = (function () {
+        function MappingClass(value) {
+            this.value = value;
+        }
+        MappingClass.prototype.saveToElement = function (element) {
+            Dozer.addTextNode(element, this.value);
+            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
+        };
+        return MappingClass;
+    })();
+    Dozer.MappingClass = MappingClass;
+    /**
+     * @class Field
+     */
+    var Field = (function () {
+        function Field(a, b) {
+            this.a = a;
+            this.b = b;
+        }
+        Field.prototype.name = function () {
+            return Dozer.nameOf(this.a) + " -> " + Dozer.nameOf(this.b);
+        };
+        Field.prototype.saveToElement = function (element) {
+            Dozer.appendElement(this.a, element, "a", 3);
+            Dozer.appendElement(this.b, element, "b", 3);
+            Dozer.appendAttributes(this, element, ["a", "b"]);
+        };
+        return Field;
+    })();
+    Dozer.Field = Field;
+    /**
+     * @class FieldDefinition
+     */
+    var FieldDefinition = (function () {
+        function FieldDefinition(value) {
+            this.value = value;
+        }
+        FieldDefinition.prototype.saveToElement = function (element) {
+            Dozer.addTextNode(element, this.value);
+            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
+        };
+        return FieldDefinition;
+    })();
+    Dozer.FieldDefinition = FieldDefinition;
+    /**
+     * @class UnmappedField
+     */
+    var UnmappedField = (function () {
+        function UnmappedField(fromField, property, toField) {
+            if (toField === void 0) { toField = null; }
+            this.fromField = fromField;
+            this.property = property;
+            this.toField = toField;
+        }
+        return UnmappedField;
+    })();
+    Dozer.UnmappedField = UnmappedField;
+})(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Dozer
+ */
+var Dozer;
+(function (Dozer) {
+    /**
+     * Configures the JSON schemas to improve the UI models
+     * @method schemaConfigure
+     * @for Dozer
+     */
+    function schemaConfigure() {
+        Dozer.io_hawt_dozer_schema_Field["tabs"] = {
+            'Fields': ['a.value', 'b.value'],
+            'From Field': ['a\\..*'],
+            'To Field': ['b\\..*'],
+            'Field Configuration': ['*']
+        };
+        Dozer.io_hawt_dozer_schema_Mapping["tabs"] = {
+            'Classes': ['class-a.value', 'class-b.value'],
+            'From Class': ['class-a\\..*'],
+            'To Class': ['class-b\\..*'],
+            'Class Configuration': ['*']
+        };
+        // hide the fields table from the class configuration tab
+        Dozer.io_hawt_dozer_schema_Mapping.properties.fieldOrFieldExclude.hidden = true;
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "label"], "From Field");
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "label"], "To Field");
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "label"], "From Class");
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "label"], "To Class");
+        // ignore prefixes in the generated labels
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "ignorePrefixInLabel"], true);
+        // add custom widgets
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "formTemplate"], classNameWidget("class_a"));
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "formTemplate"], classNameWidget("class_b"));
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.a.value" ' + 'typeahead="title for title in fromFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.b.value" ' + 'typeahead="title for title in toFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
+        function classNameWidget(propertyName) {
+            return '<input type="text" ng-model="dozerEntity.' + propertyName + '.value" ' + 'typeahead="title for title in classNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>';
+        }
+    }
+    Dozer.schemaConfigure = schemaConfigure;
+})(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * A bunch of API stubs for now until we remove references to Fabric or refactor the code
+ * to work nicely in Kubernetes
+ */
+var Fabric;
+(function (Fabric) {
+    Fabric.fabricTopLevel = "fabric/profiles/";
+    Fabric.profileSuffix = ".profile";
+    function initScope($scope, $location, jolokia, workspace) {
+    }
+    Fabric.initScope = initScope;
+    function brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName) {
+    }
+    Fabric.brokerConfigLink = brokerConfigLink;
+    function containerJolokia(jolokia, id, fn) {
+    }
+    Fabric.containerJolokia = containerJolokia;
+    function pagePathToProfileId(pageId) {
+    }
+    Fabric.pagePathToProfileId = pagePathToProfileId;
+    function profileJolokia(jolokia, profileId, versionId, callback) {
+    }
+    Fabric.profileJolokia = profileJolokia;
+    function getDefaultVersionId(jolokia) {
+    }
+    Fabric.getDefaultVersionId = getDefaultVersionId;
+    function getContainersFields(jolokia, fields, onFabricContainerData) {
+    }
+    Fabric.getContainersFields = getContainersFields;
+    function loadBrokerStatus(onBrokerData) {
+        /** TODO
+         Core.register(jolokia, $scope, {type: 'exec', mbean: Fabric.mqManagerMBean, operation: "loadBrokerStatus()"}, Core.onSuccess(onBrokerData));
+         */
+    }
+    Fabric.loadBrokerStatus = loadBrokerStatus;
+    function connectToBroker($scope, container, postfix) {
+    }
+    Fabric.connectToBroker = connectToBroker;
+    function createJolokia(url) {
+    }
+    Fabric.createJolokia = createJolokia;
+    function hasFabric(workspace) {
+    }
+    Fabric.hasFabric = hasFabric;
+    function profilePath(profileId) {
+    }
+    Fabric.profilePath = profilePath;
+    function getOverlayProfileProperties(versionId, profileId, pid, onProfilePropertiesLoaded) {
+        /**
+         * TODO
+         jolokia.execute(Fabric.managerMBean, "getOverlayProfileProperties", $scope.versionId, $scope.profileId, $scope.pid, Core.onSuccess(onProfilePropertiesLoaded));
+         */
+    }
+    Fabric.getOverlayProfileProperties = getOverlayProfileProperties;
+    function getProfileProperties(versionId, profileId, zkPid, onProfileProperties) {
+        /** TODO
+         jolokia.execute(Fabric.managerMBean, "getProfileProperties", $scope.versionId, $scope.profileId, $scope.zkPid, Core.onSuccess(onProfileProperties));
+         */
+    }
+    Fabric.getProfileProperties = getProfileProperties;
+    function setProfileProperties(versionId, profileId, pid, data, callback) {
+        /*
+         TODO
+         jolokia.execute(Fabric.managerMBean, "setProfileProperties", $scope.versionId, $scope.profileId, pid, data, callback);
+         */
+    }
+    Fabric.setProfileProperties = setProfileProperties;
+    function deleteConfigurationFile(versionId, profileId, configFile, successFn, errorFn) {
+        /** TODO
+        jolokia.execute(Fabric.managerMBean, "deleteConfigurationFile",
+          versionId, profileId, configFile,
+          Core.onSuccess(successFn, {error: errorFn}));
+         */
+    }
+    Fabric.deleteConfigurationFile = deleteConfigurationFile;
+    function getProfile(jolokia, branch, profileName, someFlag) {
+    }
+    Fabric.getProfile = getProfile;
+    function createProfile(jolokia, branch, profileName, baseProfiles, successFn, errorFn) {
+    }
+    Fabric.createProfile = createProfile;
+    function newConfigFile(jolokia, branch, profileName, fileName, successFn, errorFn) {
+    }
+    Fabric.newConfigFile = newConfigFile;
+    function saveConfigFile(jolokia, branch, profileName, fileName, contents, successFn, errorFn) {
+    }
+    Fabric.saveConfigFile = saveConfigFile;
+    function getVersionIds(jolokia) {
+    }
+    Fabric.getVersionIds = getVersionIds;
+})(Fabric || (Fabric = {}));
 
 /// <reference path="../../includes.ts"/>
 /**
@@ -8510,871 +9390,6 @@ var Camel;
         loadConverters();
     }]);
 })(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryInterfaces.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.context = '/docker-registry';
-    DockerRegistry.hash = UrlHelpers.join('#', DockerRegistry.context);
-    DockerRegistry.defaultRoute = UrlHelpers.join(DockerRegistry.hash, 'list');
-    DockerRegistry.basePath = UrlHelpers.join('plugins', DockerRegistry.context);
-    DockerRegistry.templatePath = UrlHelpers.join(DockerRegistry.basePath, 'html');
-    DockerRegistry.pluginName = 'DockerRegistry';
-    DockerRegistry.log = Logger.get(DockerRegistry.pluginName);
-    DockerRegistry.SEARCH_FRAGMENT = '/v1/search';
-    /**
-     * Fetch the available docker images in the registry, can only
-     * be called after app initialization
-     */
-    function getDockerImageRepositories(callback) {
-        var DockerRegistryRestURL = HawtioCore.injector.get("DockerRegistryRestURL");
-        var $http = HawtioCore.injector.get("$http");
-        DockerRegistryRestURL.then(function (restURL) {
-            $http.get(UrlHelpers.join(restURL, DockerRegistry.SEARCH_FRAGMENT)).success(function (data) {
-                callback(restURL, data);
-            }).error(function (data) {
-                DockerRegistry.log.debug("Error fetching image repositories:", data);
-                callback(restURL, null);
-            });
-        });
-    }
-    DockerRegistry.getDockerImageRepositories = getDockerImageRepositories;
-    function completeDockerRegistry() {
-        var $q = HawtioCore.injector.get("$q");
-        var $rootScope = HawtioCore.injector.get("$rootScope");
-        var deferred = $q.defer();
-        getDockerImageRepositories(function (restURL, repositories) {
-            if (repositories && repositories.results) {
-                // log.debug("Got back repositories: ", repositories);
-                var results = repositories.results;
-                results = results.sortBy(function (res) {
-                    return res.name;
-                }).first(15);
-                var names = results.map(function (res) {
-                    return res.name;
-                });
-                // log.debug("Results: ", names);
-                deferred.resolve(names);
-            }
-            else {
-                // log.debug("didn't get back anything, bailing");
-                deferred.reject([]);
-            }
-        });
-        return deferred.promise;
-    }
-    DockerRegistry.completeDockerRegistry = completeDockerRegistry;
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry._module = angular.module(DockerRegistry.pluginName, ['hawtio-core', 'ngResource']);
-    DockerRegistry.controller = PluginHelpers.createControllerFunction(DockerRegistry._module, DockerRegistry.pluginName);
-    DockerRegistry.route = PluginHelpers.createRoutingFunction(DockerRegistry.templatePath);
-    DockerRegistry._module.config(['$routeProvider', function ($routeProvider) {
-        $routeProvider.when(UrlHelpers.join(DockerRegistry.context, 'list'), DockerRegistry.route('list.html', false));
-    }]);
-    DockerRegistry._module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', function (jolokiaUrl, jolokia, $q, $rootScope) {
-        // TODO use the services plugin to find it?
-        /*
-            var answer = <ng.IDeferred<string>> $q.defer();
-            jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined,
-              <Jolokia.IParams> Core.onSuccess((response) => {
-                var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
-                log.debug("Discovered docker registry API URL: " , proxified);
-                answer.resolve(proxified);
-                Core.$apply($rootScope);
-              }, {
-                error: (response) => {
-                  log.debug("error fetching docker registry API details: ", response);
-                  answer.reject(response);
-                  Core.$apply($rootScope);
-                }
-              }));
-            return answer.promise;
-        */
-    }]);
-    DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
-        DockerRegistry.log.debug("Running");
-        viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
-        workspace.topLevelTabs.push({
-            id: 'docker-registry',
-            content: 'Images',
-            isValid: function (workspace) { return true; },
-            isActive: function (workspace) { return workspace.isLinkActive('docker-registry'); },
-            href: function () { return DockerRegistry.defaultRoute; }
-        });
-    }]);
-    hawtioPluginLoader.addModule(DockerRegistry.pluginName);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-/// <reference path="dockerRegistryPlugin.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.TopLevel = DockerRegistry.controller("TopLevel", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
-        $scope.repositories = [];
-        $scope.fetched = false;
-        $scope.restURL = '';
-        DockerRegistry.getDockerImageRepositories(function (restURL, repositories) {
-            $scope.restURL = restURL;
-            $scope.fetched = true;
-            if (repositories) {
-                $scope.repositories = repositories.results;
-                var previous = angular.toJson($scope.repositories);
-                $scope.fetch = PollHelpers.setupPolling($scope, function (next) {
-                    var searchURL = UrlHelpers.join($scope.restURL, DockerRegistry.SEARCH_FRAGMENT);
-                    $http.get(searchURL).success(function (repositories) {
-                        if (repositories && repositories.results) {
-                            if (previous !== angular.toJson(repositories.results)) {
-                                $scope.repositories = repositories.results;
-                                previous = angular.toJson($scope.repositories);
-                            }
-                        }
-                        next();
-                    });
-                });
-                $scope.fetch();
-            }
-            else {
-                DockerRegistry.log.debug("Failed initial fetch of image repositories");
-            }
-        });
-        $scope.$watchCollection('repositories', function (repositories) {
-            if (!Core.isBlank($scope.restURL)) {
-                if (!repositories || repositories.length === 0) {
-                    $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
-                    return;
-                }
-                // we've a new list of repositories, let's refresh our info on 'em
-                var outstanding = repositories.length;
-                function maybeNotify() {
-                    outstanding = outstanding - 1;
-                    if (outstanding <= 0) {
-                        $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
-                    }
-                }
-                repositories.forEach(function (repository) {
-                    var tagURL = UrlHelpers.join($scope.restURL, 'v1/repositories/' + repository.name + '/tags');
-                    // we'll give it half a second as sometimes tag info isn't instantly available
-                    $timeout(function () {
-                        DockerRegistry.log.debug("Fetching tags from URL: ", tagURL);
-                        $http.get(tagURL).success(function (tags) {
-                            DockerRegistry.log.debug("Got tags: ", tags, " for image repository: ", repository.name);
-                            repository.tags = tags;
-                            maybeNotify();
-                        }).error(function (data) {
-                            DockerRegistry.log.debug("Error fetching data for image repository: ", repository.name, " error: ", data);
-                            maybeNotify();
-                        });
-                    }, 500);
-                });
-            }
-        });
-    }]);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-/// <reference path="dockerRegistryPlugin.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.TagController = DockerRegistry.controller("TagController", ["$scope", function ($scope) {
-        $scope.selectImage = function (imageID) {
-            $scope.$emit("DockerRegistry.SelectedImageID", imageID);
-        };
-    }]);
-    DockerRegistry.ListController = DockerRegistry.controller("ListController", ["$scope", "$templateCache", "$http", function ($scope, $templateCache, $http) {
-        $scope.imageRepositories = [];
-        $scope.selectedImage = undefined;
-        $scope.tableConfig = {
-            data: 'imageRepositories',
-            showSelectionCheckbox: true,
-            enableRowClickSelection: false,
-            multiSelect: true,
-            selectedItems: [],
-            filterOptions: {
-                filterText: ''
-            },
-            columnDefs: [
-                { field: 'name', displayName: 'Name', defaultSort: true },
-                { field: 'description', displayName: 'Description' },
-                { field: 'tags', displayName: 'Tags', cellTemplate: $templateCache.get("tagsTemplate.html") }
-            ]
-        };
-        $scope.deletePrompt = function (selectedRepositories) {
-            UI.multiItemConfirmActionDialog({
-                collection: selectedRepositories,
-                index: 'name',
-                onClose: function (result) {
-                    if (result) {
-                        selectedRepositories.forEach(function (repository) {
-                            var deleteURL = UrlHelpers.join($scope.restURL, '/v1/repositories/' + repository.name + '/');
-                            DockerRegistry.log.debug("Using URL: ", deleteURL);
-                            $http.delete(deleteURL).success(function (data) {
-                                DockerRegistry.log.debug("Deleted repository: ", repository.name);
-                            }).error(function (data) {
-                                DockerRegistry.log.debug("Failed to delete repository: ", repository.name);
-                            });
-                        });
-                    }
-                },
-                title: 'Delete Repositories?',
-                action: 'The following repositories will be deleted:',
-                okText: 'Delete',
-                okClass: 'btn-danger',
-                custom: 'This operation is permanent once completed!',
-                customClass: 'alert alert-warning'
-            }).open();
-        };
-        $scope.$on("DockerRegistry.SelectedImageID", function ($event, imageID) {
-            var imageJsonURL = UrlHelpers.join($scope.restURL, '/v1/images/' + imageID + '/json');
-            $http.get(imageJsonURL).success(function (image) {
-                DockerRegistry.log.debug("Got image: ", image);
-                $scope.selectedImage = image;
-            });
-        });
-        $scope.$on('DockerRegistry.Repositories', function ($event, restURL, repositories) {
-            $scope.imageRepositories = repositories;
-        });
-    }]);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Dozer
- * @main Dozer
- */
-var Dozer;
-(function (Dozer) {
-    /**
-     * The JMX domain for Dozer
-     * @property jmxDomain
-     * @for Dozer
-     * @type String
-     */
-    Dozer.jmxDomain = 'net.sourceforge.dozer';
-    Dozer.introspectorMBean = "hawtio:type=Introspector";
-    /**
-     * Don't try and load properties for these types
-     * @property excludedPackages
-     * @for Dozer
-     * @type {Array}
-     */
-    Dozer.excludedPackages = [
-        'java.lang',
-        'int',
-        'double',
-        'long'
-    ];
-    /**
-     * Lets map the class names to element names
-     * @property elementNameMappings
-     * @for Dozer
-     * @type {Array}
-     */
-    Dozer.elementNameMappings = {
-        "Mapping": "mapping",
-        "MappingClass": "class",
-        "Field": "field"
-    };
-    Dozer.log = Logger.get("Dozer");
-    /**
-     * Converts the XML string or DOM node to a Dozer model
-     * @method loadDozerModel
-     * @for Dozer
-     * @static
-     * @param {Object} xml
-     * @param {String} pageId
-     * @return {Mappings}
-     */
-    function loadDozerModel(xml, pageId) {
-        var doc = xml;
-        if (angular.isString(xml)) {
-            doc = $.parseXML(xml);
-        }
-        console.log("Has Dozer XML document: " + doc);
-        var model = new Dozer.Mappings(doc);
-        var mappingsElement = doc.documentElement;
-        copyAttributes(model, mappingsElement);
-        $(mappingsElement).children("mapping").each(function (idx, element) {
-            var mapping = createMapping(element);
-            model.mappings.push(mapping);
-        });
-        return model;
-    }
-    Dozer.loadDozerModel = loadDozerModel;
-    function saveToXmlText(model) {
-        // lets copy the original doc then replace the mapping elements
-        var element = model.doc.documentElement.cloneNode(false);
-        appendElement(model.mappings, element, null, 1);
-        Dozer.addTextNode(element, "\n");
-        var xmlText = Core.xmlNodeToString(element);
-        return '<?xml version="1.0" encoding="UTF-8"?>\n' + xmlText;
-    }
-    Dozer.saveToXmlText = saveToXmlText;
-    function findUnmappedFields(workspace, mapping, fn) {
-        // lets find the fields which are unmapped
-        var className = mapping.class_a.value;
-        findProperties(workspace, className, null, function (properties) {
-            var answer = [];
-            angular.forEach(properties, function (property) {
-                console.log("got property " + JSON.stringify(property, null, "  "));
-                var name = property.name;
-                if (name) {
-                    if (mapping.hasFromField(name)) {
-                    }
-                    else {
-                        // TODO auto-detect this property name in the to classes?
-                        answer.push(new Dozer.UnmappedField(name, property));
-                    }
-                }
-            });
-            fn(answer);
-        });
-    }
-    Dozer.findUnmappedFields = findUnmappedFields;
-    /**
-     * Finds the properties on the given class and returns them; and either invokes the given function
-     * or does a sync request and returns them
-     * @method findProperties
-     * @for Dozer
-     * @static
-     * @param {Core.Workspace} workspace
-     * @param {String} className
-     * @param {String} filter
-     * @param {Function} fn
-     * @return {any}
-     */
-    function findProperties(workspace, className, filter, fn) {
-        if (filter === void 0) { filter = null; }
-        if (fn === void 0) { fn = null; }
-        var mbean = getIntrospectorMBean(workspace);
-        if (mbean) {
-            if (filter) {
-                return workspace.jolokia.execute(mbean, "findProperties", className, filter, Core.onSuccess(fn));
-            }
-            else {
-                return workspace.jolokia.execute(mbean, "getProperties", className, Core.onSuccess(fn));
-            }
-        }
-        else {
-            if (fn) {
-                return fn([]);
-            }
-            else {
-                return [];
-            }
-        }
-    }
-    Dozer.findProperties = findProperties;
-    /**
-     * Finds class names matching the given search text and either invokes the function with the results
-     * or does a sync request and returns them.
-     * @method findClassNames
-     * @for Dozer
-     * @static
-     * @param {Core.Workspace} workspace
-     * @param {String} searchText
-     * @param {Number} limit @default 20
-     * @param {Function} fn
-     * @return {any}
-     */
-    function findClassNames(workspace, searchText, limit, fn) {
-        if (limit === void 0) { limit = 20; }
-        if (fn === void 0) { fn = null; }
-        var mbean = getIntrospectorMBean(workspace);
-        if (mbean) {
-            return workspace.jolokia.execute(mbean, "findClassNames", searchText, limit, Core.onSuccess(fn));
-        }
-        else {
-            if (fn) {
-                return fn([]);
-            }
-            else {
-                return [];
-            }
-        }
-    }
-    Dozer.findClassNames = findClassNames;
-    function getIntrospectorMBean(workspace) {
-        // lets hard code this so its easy to use in any JVM
-        return Dozer.introspectorMBean;
-        // return Core.getMBeanTypeObjectName(workspace, "hawtio", "Introspector");
-    }
-    Dozer.getIntrospectorMBean = getIntrospectorMBean;
-    function loadModelFromTree(rootTreeNode, oldModel) {
-        oldModel.mappings = [];
-        angular.forEach(rootTreeNode.childList, function (treeNode) {
-            var mapping = Core.pathGet(treeNode, ["data", "entity"]);
-            if (mapping) {
-                oldModel.mappings.push(mapping);
-            }
-        });
-        return oldModel;
-    }
-    Dozer.loadModelFromTree = loadModelFromTree;
-    function createDozerTree(model) {
-        var id = "mappings";
-        var folder = new Folder(id);
-        folder.addClass = "net-sourceforge-dozer-mappings";
-        folder.domain = Dozer.jmxDomain;
-        folder.typeName = "mappings";
-        folder.entity = model;
-        folder.key = Core.toSafeDomID(id);
-        angular.forEach(model.mappings, function (mapping) {
-            var mappingFolder = createMappingFolder(mapping, folder);
-            folder.children.push(mappingFolder);
-        });
-        return folder;
-    }
-    Dozer.createDozerTree = createDozerTree;
-    function createMappingFolder(mapping, parentFolder) {
-        var mappingName = mapping.name();
-        var mappingFolder = new Folder(mappingName);
-        mappingFolder.addClass = "net-sourceforge-dozer-mapping";
-        mappingFolder.typeName = "mapping";
-        mappingFolder.domain = Dozer.jmxDomain;
-        mappingFolder.key = (parentFolder ? parentFolder.key + "_" : "") + Core.toSafeDomID(mappingName);
-        mappingFolder.parent = parentFolder;
-        mappingFolder.entity = mapping;
-        mappingFolder.icon = Core.url("/plugins/dozer/img/class.gif");
-        /*
-              mappingFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
-              */
-        angular.forEach(mapping.fields, function (field) {
-            addMappingFieldFolder(field, mappingFolder);
-        });
-        return mappingFolder;
-    }
-    Dozer.createMappingFolder = createMappingFolder;
-    function addMappingFieldFolder(field, mappingFolder) {
-        var name = field.name();
-        var fieldFolder = new Folder(name);
-        fieldFolder.addClass = "net-sourceforge-dozer-field";
-        fieldFolder.typeName = "field";
-        fieldFolder.domain = Dozer.jmxDomain;
-        fieldFolder.key = mappingFolder.key + "_" + Core.toSafeDomID(name);
-        fieldFolder.parent = mappingFolder;
-        fieldFolder.entity = field;
-        fieldFolder.icon = Core.url("/plugins/dozer/img/attribute.gif");
-        /*
-              fieldFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
-              */
-        mappingFolder.children.push(fieldFolder);
-        return fieldFolder;
-    }
-    Dozer.addMappingFieldFolder = addMappingFieldFolder;
-    function createMapping(element) {
-        var mapping = new Dozer.Mapping();
-        var elementJQ = $(element);
-        mapping.class_a = createMappingClass(elementJQ.children("class-a"));
-        mapping.class_b = createMappingClass(elementJQ.children("class-b"));
-        elementJQ.children("field").each(function (idx, fieldElement) {
-            var field = createField(fieldElement);
-            mapping.fields.push(field);
-        });
-        copyAttributes(mapping, element);
-        return mapping;
-    }
-    function createField(element) {
-        if (element) {
-            var jqe = $(element);
-            var a = jqe.children("a").text();
-            var b = jqe.children("b").text();
-            var field = new Dozer.Field(new Dozer.FieldDefinition(a), new Dozer.FieldDefinition(b));
-            copyAttributes(field, element);
-            return field;
-        }
-        return new Dozer.Field(new Dozer.FieldDefinition(""), new Dozer.FieldDefinition(""));
-    }
-    function createMappingClass(jqElement) {
-        if (jqElement && jqElement[0]) {
-            var element = jqElement[0];
-            var text = element.textContent;
-            if (text) {
-                var mappingClass = new Dozer.MappingClass(text);
-                copyAttributes(mappingClass, element);
-                return mappingClass;
-            }
-        }
-        // lets create a default empty mapping
-        return new Dozer.MappingClass("");
-    }
-    function copyAttributes(object, element) {
-        var attributeMap = element.attributes;
-        for (var i = 0; i < attributeMap.length; i++) {
-            // TODO hacky work around for compiler issue ;)
-            //var attr = attributeMap.item(i);
-            var attMap = attributeMap;
-            var attr = attMap.item(i);
-            if (attr) {
-                var name = attr.localName;
-                var value = attr.value;
-                if (name && !name.startsWith("xmlns")) {
-                    var safeName = Forms.safeIdentifier(name);
-                    object[safeName] = value;
-                }
-            }
-        }
-    }
-    function appendAttributes(object, element, ignorePropertyNames) {
-        angular.forEach(object, function (value, key) {
-            if (ignorePropertyNames.any(key)) {
-            }
-            else {
-                // lets add an attribute value
-                if (value) {
-                    var text = value.toString();
-                    // lets replace any underscores with dashes
-                    var name = key.replace(/_/g, '-');
-                    element.setAttribute(name, text);
-                }
-            }
-        });
-    }
-    Dozer.appendAttributes = appendAttributes;
-    /**
-     * Adds a new child element for this mapping to the given element
-     * @method appendElement
-     * @for Dozer
-     * @static
-     * @param {any} object
-     * @param {any} element
-     * @param {String} elementName
-     * @param {Number} indentLevel
-     * @return the last child element created
-     */
-    function appendElement(object, element, elementName, indentLevel) {
-        if (elementName === void 0) { elementName = null; }
-        if (indentLevel === void 0) { indentLevel = 0; }
-        var answer = null;
-        if (angular.isArray(object)) {
-            angular.forEach(object, function (child) {
-                answer = appendElement(child, element, elementName, indentLevel);
-            });
-        }
-        else if (object) {
-            if (!elementName) {
-                var className = Core.pathGet(object, ["constructor", "name"]);
-                if (!className) {
-                    console.log("WARNING: no class name for value " + object);
-                }
-                else {
-                    elementName = Dozer.elementNameMappings[className];
-                    if (!elementName) {
-                        console.log("WARNING: could not map class name " + className + " to an XML element name");
-                    }
-                }
-            }
-            if (elementName) {
-                if (indentLevel) {
-                    var text = indentText(indentLevel);
-                    Dozer.addTextNode(element, text);
-                }
-                var doc = element.ownerDocument || document;
-                var child = doc.createElement(elementName);
-                // navigate child properties...
-                var fn = object.saveToElement;
-                if (fn) {
-                    fn.apply(object, [child]);
-                }
-                else {
-                    angular.forEach(object, function (value, key) {
-                        console.log("has key " + key + " value " + value);
-                    });
-                }
-                // if we have any element children then add newline text node
-                if ($(child).children().length) {
-                    //var text = indentText(indentLevel - 1);
-                    var text = indentText(indentLevel);
-                    Dozer.addTextNode(child, text);
-                }
-                element.appendChild(child);
-                answer = child;
-            }
-        }
-        return answer;
-    }
-    Dozer.appendElement = appendElement;
-    function nameOf(object) {
-        var text = angular.isObject(object) ? object["value"] : null;
-        if (!text && angular.isString(object)) {
-            text = object;
-        }
-        return text || "?";
-    }
-    Dozer.nameOf = nameOf;
-    function addTextNode(element, text) {
-        if (text) {
-            var doc = element.ownerDocument || document;
-            var child = doc.createTextNode(text);
-            element.appendChild(child);
-        }
-    }
-    Dozer.addTextNode = addTextNode;
-    function indentText(indentLevel) {
-        var text = "\n";
-        for (var i = 0; i < indentLevel; i++) {
-            text += "  ";
-        }
-        return text;
-    }
-})(Dozer || (Dozer = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Dozer
- */
-var Dozer;
-(function (Dozer) {
-    /**
-     * @class Mappings
-     */
-    var Mappings = (function () {
-        function Mappings(doc, mappings) {
-            if (mappings === void 0) { mappings = []; }
-            this.doc = doc;
-            this.mappings = mappings;
-        }
-        return Mappings;
-    })();
-    Dozer.Mappings = Mappings;
-    /**
-     * @class Mapping
-     */
-    var Mapping = (function () {
-        function Mapping() {
-            this.fields = [];
-            this.map_id = Core.getUUID();
-            this.class_a = new MappingClass('');
-            this.class_b = new MappingClass('');
-        }
-        Mapping.prototype.name = function () {
-            return Dozer.nameOf(this.class_a) + " -> " + Dozer.nameOf(this.class_b);
-        };
-        Mapping.prototype.hasFromField = function (name) {
-            return this.fields.find(function (f) { return name === f.a.value; });
-        };
-        Mapping.prototype.hasToField = function (name) {
-            return this.fields.find(function (f) { return name === f.b.value; });
-        };
-        Mapping.prototype.saveToElement = function (element) {
-            Dozer.appendElement(this.class_a, element, "class-a", 2);
-            Dozer.appendElement(this.class_b, element, "class-b", 2);
-            Dozer.appendElement(this.fields, element, "field", 2);
-            Dozer.appendAttributes(this, element, ["class_a", "class_b", "fields"]);
-        };
-        return Mapping;
-    })();
-    Dozer.Mapping = Mapping;
-    /**
-     * @class MappingClass
-     */
-    var MappingClass = (function () {
-        function MappingClass(value) {
-            this.value = value;
-        }
-        MappingClass.prototype.saveToElement = function (element) {
-            Dozer.addTextNode(element, this.value);
-            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
-        };
-        return MappingClass;
-    })();
-    Dozer.MappingClass = MappingClass;
-    /**
-     * @class Field
-     */
-    var Field = (function () {
-        function Field(a, b) {
-            this.a = a;
-            this.b = b;
-        }
-        Field.prototype.name = function () {
-            return Dozer.nameOf(this.a) + " -> " + Dozer.nameOf(this.b);
-        };
-        Field.prototype.saveToElement = function (element) {
-            Dozer.appendElement(this.a, element, "a", 3);
-            Dozer.appendElement(this.b, element, "b", 3);
-            Dozer.appendAttributes(this, element, ["a", "b"]);
-        };
-        return Field;
-    })();
-    Dozer.Field = Field;
-    /**
-     * @class FieldDefinition
-     */
-    var FieldDefinition = (function () {
-        function FieldDefinition(value) {
-            this.value = value;
-        }
-        FieldDefinition.prototype.saveToElement = function (element) {
-            Dozer.addTextNode(element, this.value);
-            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
-        };
-        return FieldDefinition;
-    })();
-    Dozer.FieldDefinition = FieldDefinition;
-    /**
-     * @class UnmappedField
-     */
-    var UnmappedField = (function () {
-        function UnmappedField(fromField, property, toField) {
-            if (toField === void 0) { toField = null; }
-            this.fromField = fromField;
-            this.property = property;
-            this.toField = toField;
-        }
-        return UnmappedField;
-    })();
-    Dozer.UnmappedField = UnmappedField;
-})(Dozer || (Dozer = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Dozer
- */
-var Dozer;
-(function (Dozer) {
-    /**
-     * Configures the JSON schemas to improve the UI models
-     * @method schemaConfigure
-     * @for Dozer
-     */
-    function schemaConfigure() {
-        Dozer.io_hawt_dozer_schema_Field["tabs"] = {
-            'Fields': ['a.value', 'b.value'],
-            'From Field': ['a\\..*'],
-            'To Field': ['b\\..*'],
-            'Field Configuration': ['*']
-        };
-        Dozer.io_hawt_dozer_schema_Mapping["tabs"] = {
-            'Classes': ['class-a.value', 'class-b.value'],
-            'From Class': ['class-a\\..*'],
-            'To Class': ['class-b\\..*'],
-            'Class Configuration': ['*']
-        };
-        // hide the fields table from the class configuration tab
-        Dozer.io_hawt_dozer_schema_Mapping.properties.fieldOrFieldExclude.hidden = true;
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "label"], "From Field");
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "label"], "To Field");
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "label"], "From Class");
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "label"], "To Class");
-        // ignore prefixes in the generated labels
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "ignorePrefixInLabel"], true);
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "ignorePrefixInLabel"], true);
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "ignorePrefixInLabel"], true);
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "ignorePrefixInLabel"], true);
-        // add custom widgets
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "formTemplate"], classNameWidget("class_a"));
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "formTemplate"], classNameWidget("class_b"));
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.a.value" ' + 'typeahead="title for title in fromFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.b.value" ' + 'typeahead="title for title in toFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
-        function classNameWidget(propertyName) {
-            return '<input type="text" ng-model="dozerEntity.' + propertyName + '.value" ' + 'typeahead="title for title in classNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>';
-        }
-    }
-    Dozer.schemaConfigure = schemaConfigure;
-})(Dozer || (Dozer = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * A bunch of API stubs for now until we remove references to Fabric or refactor the code
- * to work nicely in Kubernetes
- */
-var Fabric;
-(function (Fabric) {
-    Fabric.fabricTopLevel = "fabric/profiles/";
-    Fabric.profileSuffix = ".profile";
-    function initScope($scope, $location, jolokia, workspace) {
-    }
-    Fabric.initScope = initScope;
-    function brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName) {
-    }
-    Fabric.brokerConfigLink = brokerConfigLink;
-    function containerJolokia(jolokia, id, fn) {
-    }
-    Fabric.containerJolokia = containerJolokia;
-    function pagePathToProfileId(pageId) {
-    }
-    Fabric.pagePathToProfileId = pagePathToProfileId;
-    function profileJolokia(jolokia, profileId, versionId, callback) {
-    }
-    Fabric.profileJolokia = profileJolokia;
-    function getDefaultVersionId(jolokia) {
-    }
-    Fabric.getDefaultVersionId = getDefaultVersionId;
-    function getContainersFields(jolokia, fields, onFabricContainerData) {
-    }
-    Fabric.getContainersFields = getContainersFields;
-    function loadBrokerStatus(onBrokerData) {
-        /** TODO
-         Core.register(jolokia, $scope, {type: 'exec', mbean: Fabric.mqManagerMBean, operation: "loadBrokerStatus()"}, Core.onSuccess(onBrokerData));
-         */
-    }
-    Fabric.loadBrokerStatus = loadBrokerStatus;
-    function connectToBroker($scope, container, postfix) {
-    }
-    Fabric.connectToBroker = connectToBroker;
-    function createJolokia(url) {
-    }
-    Fabric.createJolokia = createJolokia;
-    function hasFabric(workspace) {
-    }
-    Fabric.hasFabric = hasFabric;
-    function profilePath(profileId) {
-    }
-    Fabric.profilePath = profilePath;
-    function getOverlayProfileProperties(versionId, profileId, pid, onProfilePropertiesLoaded) {
-        /**
-         * TODO
-         jolokia.execute(Fabric.managerMBean, "getOverlayProfileProperties", $scope.versionId, $scope.profileId, $scope.pid, Core.onSuccess(onProfilePropertiesLoaded));
-         */
-    }
-    Fabric.getOverlayProfileProperties = getOverlayProfileProperties;
-    function getProfileProperties(versionId, profileId, zkPid, onProfileProperties) {
-        /** TODO
-         jolokia.execute(Fabric.managerMBean, "getProfileProperties", $scope.versionId, $scope.profileId, $scope.zkPid, Core.onSuccess(onProfileProperties));
-         */
-    }
-    Fabric.getProfileProperties = getProfileProperties;
-    function setProfileProperties(versionId, profileId, pid, data, callback) {
-        /*
-         TODO
-         jolokia.execute(Fabric.managerMBean, "setProfileProperties", $scope.versionId, $scope.profileId, pid, data, callback);
-         */
-    }
-    Fabric.setProfileProperties = setProfileProperties;
-    function deleteConfigurationFile(versionId, profileId, configFile, successFn, errorFn) {
-        /** TODO
-        jolokia.execute(Fabric.managerMBean, "deleteConfigurationFile",
-          versionId, profileId, configFile,
-          Core.onSuccess(successFn, {error: errorFn}));
-         */
-    }
-    Fabric.deleteConfigurationFile = deleteConfigurationFile;
-    function getProfile(jolokia, branch, profileName, someFlag) {
-    }
-    Fabric.getProfile = getProfile;
-    function createProfile(jolokia, branch, profileName, baseProfiles, successFn, errorFn) {
-    }
-    Fabric.createProfile = createProfile;
-    function newConfigFile(jolokia, branch, profileName, fileName, successFn, errorFn) {
-    }
-    Fabric.newConfigFile = newConfigFile;
-    function saveConfigFile(jolokia, branch, profileName, fileName, contents, successFn, errorFn) {
-    }
-    Fabric.saveConfigFile = saveConfigFile;
-    function getVersionIds(jolokia) {
-    }
-    Fabric.getVersionIds = getVersionIds;
-})(Fabric || (Fabric = {}));
 
 /// <reference path="../../includes.ts"/>
 /// <reference path="gitHelpers.ts"/>
@@ -17600,7 +17615,7 @@ $templateCache.put("plugins/activemq/html/deleteQueue.html","<div ng-controller=
 $templateCache.put("plugins/activemq/html/deleteTopic.html","<form class=\"form-horizontal\" ng-controller=\"ActiveMQ.DestinationController\">\n    <div class=\"control-group\">\n        <div class=\"alert\">\n          <button type=\"button\" class=\"close\" data-dismiss=\"alert\">×</button>\n          <strong>Warning!</strong> You are about to delete topic \'{{name()}}\'.\n          <br/>\n          This operation cannot be undone!\n        </div>\n    </div>\n    <div class=\"control-group\">\n        <button type=\"submit\" class=\"btn btn-warning\" ng-click=\"deleteDestination()\">Delete topic \'{{name()}}\'</button>\n    </div>\n</form>\n");
 $templateCache.put("plugins/activemq/html/durableSubscribers.html","<div ng-controller=\"ActiveMQ.DurableSubscriberController\">\n\n    <div class=\"row\">\n      <div class=\"col-md-12\">\n        <div class=\"pull-right\">\n            <form class=\"form-inline\">\n                <button class=\"btn\" ng-click=\"createSubscriberDialog.open()\"\n                        hawtio-show object-name=\"{{workspace.selection.objectName}}\" method-name=\"createDurableSubscriber\"\n                        title=\"Create durable subscriber\">\n                    <i class=\"fa fa-plus\"></i> Create\n                </button>\n                <button class=\"btn\" ng-click=\"deleteSubscriberDialog.open()\"\n                        hawtio-show object-name=\"{{$scope.gridOptions.selectedItems[0]._id}}\" method-name=\"destroy\"\n                        title=\"Destroy durable subscriber\" ng-disabled=\"gridOptions.selectedItems.length != 1\">\n                    <i class=\"fa fa-exclamation\"></i> Destroy\n                </button>\n                <button class=\"btn\" ng-click=\"refresh()\"\n                        title=\"Refreshes the list of subscribers\">\n                    <i class=\"fa fa-refresh\"></i>\n                </button>\n            </form>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"row\">\n      <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n    </div>\n\n    <div modal=\"createSubscriberDialog.show\">\n      <form name=\"createSubscriber\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"doCreateSubscriber(clientId, subscriberName, topicName, subSelector)\">\n        <div class=\"modal-header\"><h4>Create Durable Subscriber</h4></div>\n        <div class=\"modal-body\">\n          <label>Client Id: </label>\n          <input name=\"clientId\" class=\"input-xlarge\" type=\"text\" ng-model=\"clientId\" required>\n          <label>Subscriber name: </label>\n          <input name=\"subscriberName\" class=\"input-xlarge\" type=\"text\" ng-model=\"subscriberName\" required>\n          <label>Topic name: </label>\n          <input name=\"topicName\" class=\"input-xlarge\" type=\"text\" ng-model=\"topicName\" required typeahead=\"title for title in topicNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'>\n          <label>Selector: </label>\n          <input name=\"subSelector\" class=\"input-xlarge\" type=\"text\" ng-model=\"subSelector\">\n        </div>\n        <div class=\"modal-footer\">\n          <input class=\"btn btn-success\" type=\"submit\" value=\"Create\">\n          <input class=\"btn btn-primary\" type=\"button\" ng-click=\"createSubscriberDialog.close()\" value=\"Cancel\">\n        </div>\n      </form>\n    </div>\n\n    <div hawtio-slideout=\"showSubscriberDialog.show\" title=\"Details\">\n      <div class=\"dialog-body\">\n\n        <div class=\"row\">\n          <div class=\"pull-right\">\n            <form class=\"form-inline\">\n\n              <button class=\"btn btn-danger\" ng-disabled=\"showSubscriberDialog.subscriber.Status == \'Active\'\"\n                      ng-click=\"deleteSubscriberDialog.open()\"\n                      title=\"Delete subscriber\">\n                <i class=\"fa fa-remove\"></i> Delete\n              </button>\n\n              <button class=\"btn\" ng-click=\"showSubscriberDialog.close()\" title=\"Close this dialog\">\n                <i class=\"fa fa-remove\"></i> Close\n              </button>\n\n            </form>\n          </div>\n        </div>\n\n          <div class=\"row\">\n              <div class=\"expandable-body well\">\n                <table class=\"table table-condensed table-striped\">\n                  <thead>\n                  <tr>\n                    <th>Property</th>\n                    <th>Value</th>\n                  </tr>\n                  </thead>\n                  <tbody>\n                  <tr>\n                    <td class=\"property-name\">Client Id</td>\n                    <td class=\"property-value\">{{showSubscriberDialog.subscriber[\"ClientId\"]}}</td>\n                  </tr>\n                  <tr>\n                    <td class=\"property-name\">Subscription Name</td>\n                    <td class=\"property-value\">{{showSubscriberDialog.subscriber[\"SubscriptionName\"]}}</td>\n                  </tr>\n                  <tr>\n                    <td class=\"property-name\">Topic Name</td>\n                    <td class=\"property-value\">{{showSubscriberDialog.subscriber[\"DestinationName\"]}}</td>\n                  </tr>\n                  <tr>\n                    <td class=\"property-name\">Selector</td>\n                    <td class=\"property-value\">{{showSubscriberDialog.subscriber[\"Selector\"]}}</td>\n                  </tr>\n                  <tr>\n                    <td class=\"property-name\">Status</td>\n                    <td class=\"property-value\">{{showSubscriberDialog.subscriber.Status}}</td>\n                  </tr>\n                  <tr>\n                    <td class=\"property-name\">Enqueue Counter</td>\n                    <td class=\"property-value\">{{showSubscriberDialog.subscriber[\"EnqueueCounter\"]}}</td>\n                  </tr>\n                  <tr>\n                    <td class=\"property-name\">Dequeue Counter</td>\n                    <td class=\"property-value\">{{showSubscriberDialog.subscriber[\"DequeueCounter\"]}}</td>\n                  </tr>\n                  <tr>\n                    <td class=\"property-name\">Dispatched Counter</td>\n                    <td class=\"property-value\">{{showSubscriberDialog.subscriber[\"DispatchedCounter\"]}}</td>\n                  </tr>\n                  <tr>\n                    <td class=\"property-name\">Pending Size</td>\n                    <td class=\"property-value\">{{showSubscriberDialog.subscriber[\"PendingQueueSize\"]}}</td>\n                  </tr>\n                  </tbody>\n                </table>\n              </div>\n            </div>\n\n      </div>\n\n    </div>\n\n    <div hawtio-confirm-dialog=\"deleteSubscriberDialog.show\" ok-button-text=\"Yes\" cancel-button-text=\"No\" on-ok=\"deleteSubscribers()\">\n      <div class=\"dialog-body\">\n        <p>Are you sure you want to delete the subscriber</p>\n      </div>\n    </div>\n\n</div>");
 $templateCache.put("plugins/activemq/html/jobs.html","<div ng-controller=\"ActiveMQ.JobSchedulerController\">\n\n    <div class=\"row\">\n      <div class=\"col-md-12\">\n        <div class=\"pull-right\">\n            <form class=\"form-inline\">\n                <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                        hawtio-show object-name=\"{{workspace.selection.objectName}}\" method-name=\"removeJob\"\n                        ng-click=\"deleteJobsDialog.open()\"\n                        title=\"Delete the selected jobs\">\n                  <i class=\"fa fa-remove\"></i> Delete\n                </button>\n                <button class=\"btn\" ng-click=\"refresh()\"\n                        title=\"Refreshes the list of subscribers\">\n                    <i class=\"fa fa-refresh\"></i>\n                </button>\n            </form>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"row\">\n      <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n    </div>\n\n    <div hawtio-confirm-dialog=\"deleteJobsDialog.show\" ok-button-text=\"Yes\" cancel-button-text=\"No\" on-ok=\"deleteJobs()\">\n      <div class=\"dialog-body\">\n        <p>Are you sure you want to delete the jobs</p>\n      </div>\n    </div>\n\n</div>");
-$templateCache.put("plugins/activemq/html/layoutActiveMQTree.html","<script type=\"text/ng-template\" id=\"header\">\n  <div class=\"tree-header\" ng-controller=\"ActiveMQ.TreeHeaderController\">\n    <div class=\"left\">\n    </div>\n    <div class=\"right\">\n      <i class=\"icon-chevron-down clickable\"\n         title=\"Expand all nodes\"\n         ng-click=\"expandAll()\"></i>\n      <i class=\"icon-chevron-up clickable\"\n         title=\"Unexpand all nodes\"\n         ng-click=\"contractAll()\"></i>\n    </div>\n  </div>\n</script>\n\n<hawtio-pane position=\"left\" width=\"300\" header=\"header\">\n  <div id=\"tree-container\"\n       ng-controller=\"Jmx.MBeansController\">\n    <div id=\"activemqtree\"\n         ng-controller=\"ActiveMQ.TreeController\"></div>\n  </div>\n</hawtio-pane>\n<div class=\"row\">\n  <ng-include src=\"\'plugins/jmx/html/subLevelTabs.html\'\"></ng-include>\n  <div id=\"properties\" ng-view></div>\n</div>\n");
+$templateCache.put("plugins/activemq/html/layoutActiveMQTree.html","<script type=\"text/ng-template\" id=\"header\">\n  <div class=\"tree-header\" ng-controller=\"ActiveMQ.TreeHeaderController\">\n    <div class=\"left\">\n    </div>\n    <div class=\"right\">\n      <i class=\"fa fa-chevron-down clickable\"\n         title=\"Expand all nodes\"\n         ng-click=\"expandAll()\"></i>\n      <i class=\"fa fa-chevron-up clickable\"\n         title=\"Unexpand all nodes\"\n         ng-click=\"contractAll()\"></i>\n    </div>\n  </div>\n</script>\n\n<hawtio-pane position=\"left\" width=\"300\" header=\"header\">\n  <div id=\"tree-container\"\n       ng-controller=\"Jmx.MBeansController\">\n    <div id=\"activemqtree\"\n         ng-controller=\"ActiveMQ.TreeController\"></div>\n  </div>\n</hawtio-pane>\n<div class=\"row\">\n  <!--\n  <ng-include src=\"\'plugins/jmx/html/subLevelTabs.html\'\"></ng-include>\n  -->\n  <div id=\"properties\" ng-view></div>\n</div>\n");
 $templateCache.put("plugins/activemq/html/preferences.html","<div ng-controller=\"ActiveMQ.PreferencesController\">\n  <form class=\"form-horizontal\">\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"activemqUserName\"\n             title=\"The user name to be used when connecting to the broker\">User name</label>\n\n      <div class=\"controls\">\n        <input id=\"activemqUserName\" type=\"text\" placeholder=\"username\" ng-model=\"activemqUserName\" autofill/>\n      </div>\n    </div>\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"activemqPassword\" title=\"Password to be used when connecting to the broker\">Password</label>\n\n      <div class=\"controls\">\n        <input id=\"activemqPassword\" type=\"password\" placeholder=\"password\" ng-model=\"activemqPassword\" autofill/>\n      </div>\n    </div>\n\n    <div class=\"control-group\">\n      <label class=\"control-label\">Filter advisory topics</label>\n\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"activemqFilterAdvisoryTopics\">\n        <span class=\"help-block\">Whether to exclude advisory topics in tree/table</span>\n      </div>\n\n    </div>\n\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"byteMessages\">Browse byte messages</label>\n\n      <div class=\"controls\">\n        <select id=\"byteMessages\" ng-model=\"activemqBrowseBytesMessages\">\n          <option value=\'99\'>Off</option>\n          <option value=\'8\'>Decimal</option>\n          <option value=\'4\'>Hex</option>\n          <option value=\'2\'>Decimal and text</option>\n          <option value=\'1\'>Hex and text</option>\n        </select>\n        <span class=\"help-block\">Browsing byte messages should display the message body as</span>\n      </div>\n    </div>\n\n  </form>\n</div>\n");
 $templateCache.put("plugins/camel/html/attributeToolBarContext.html","<div class=\"row\">\n  <div class=\"col-md-6\" ng-controller=\"Camel.AttributesToolBarController\">\n    <div class=\"control-group\">\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'stop\', \'suspend\'])\" ng-click=\"start()\"><i\n              class=\"icon-play-circle\"></i> Start\n      </button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState(\'start\')\" ng-click=\"pause()\"><i class=\"fa fa-pause\"></i>\n        Pause\n      </button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'start\', \'suspend\'])\" ng-click=\"deleteDialog = true\"><i\n              class=\"fa fa-remove\"></i> Destroy\n      </button>\n    </div>\n\n    <div hawtio-confirm-dialog=\"deleteDialog\"\n         ok-button-text=\"Delete\"\n         on-ok=\"stop()\">\n      <div class=\"dialog-body\">\n        <p>You are about to delete this Camel Context.</p>\n        <p>This operation cannot be undone so please be careful.</p>\n      </div>\n    </div>\n\n  </div>\n  <div class=\"col-md-6\">\n    <div class=\"control-group\">\n      <input class=\"col-md-12 search-query\" type=\"text\" ng-model=\"$parent.gridOptions.filterOptions.filterText\" placeholder=\"Filter...\">\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/attributeToolBarRoutes.html","<div class=\"row\">\n  <div class=\"col-md-6\">\n    <div class=\"control-group\"  ng-controller=\"Camel.AttributesToolBarController\">\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'stop\', \'suspend\'])\" ng-click=\"start()\"><i class=\"icon-play-circle\"></i> Start</button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState(\'start\')\" ng-click=\"pause()\"><i class=\"fa fa-pause\"></i> Pause</button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'start\', \'suspend\'])\" ng-click=\"stop()\"><i class=\"fa fa-off\"></i> Stop</button>\n      <button class=\"btn\" ng-disabled=\"!everySelectionHasState(\'stop\')\" ng-click=\"delete()\"><i class=\"fa fa-remove\"></i> Delete</button>\n    </div>\n  </div>\n  <div class=\"col-md-6\">\n    <div class=\"control-group\">\n      <input type=\"text\" class=\"col-md-12 search-query\" ng-model=\"$parent.gridOptions.filterOptions.filterText\" placeholder=\"Filter...\">\n    </div>\n  </div>\n</div>\n");
@@ -17613,7 +17628,7 @@ $templateCache.put("plugins/camel/html/createEndpointURL.html","<form class=\"fo
 $templateCache.put("plugins/camel/html/createEndpointWizard.html","<div ng-controller=\"Camel.EndpointController\">\n  <form class=\"form-horizontal\">\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"componentName\">Component</label>\n\n      <div class=\"controls\">\n        <select id=\"componentName\" ng-model=\"selectedComponentName\"\n                ng-options=\"componentName for componentName in componentNames\"></select>\n      </div>\n    </div>\n    <div ng-show=\"selectedComponentName\">\n      <div class=\"control-group\">\n        <label class=\"control-label\" for=\"endpointPath\">Endpoint</label>\n\n        <div class=\"controls\">\n          <input id=\"endpointPath\" class=\"col-md-10\" type=\"text\" ng-model=\"endpointPath\" placeholder=\"name\"\n                 typeahead=\"title for title in endpointCompletions($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'\n                 min-length=\"1\">\n        </div>\n      </div>\n\n      <div simple-form name=\"formEditor\" entity=\'endpointParameters\' data=\'endpointSchema\' schema=\"schema\"></div>\n\n      <div class=\"control-group\">\n        <div class=\"controls\">\n          <button type=\"submit\" class=\"btn btn-info\" ng-click=\"createEndpointFromData()\"\n                  ng-disabled=\"!endpointPath || !selectedComponentName\">\n            Create endpoint\n          </button>\n        </div>\n      </div>\n    </div>\n  </form>\n</div>\n");
 $templateCache.put("plugins/camel/html/debug.html","<div ng-controller=\"Camel.DebugRouteController\" ng-switch=\"debugging\">\n  <div ng-switch-when=\"true\">\n    <div class=\"row\">\n      <div class=\"col-md-10\">\n        <div ng-include src=\"graphView\">\n        </div>\n      </div>\n      <div class=\"col-md-2\">\n        <div class=\"btn-toolbar pull-right\">\n          <div class=\"btn-group\">\n            <div ng-switch=\"hasBreakpoint\">\n              <button ng-switch-when=\"true\" class=\"btn\" ng-disabled=\"!selectedDiagramNodeId\"\n                      ng-click=\"removeBreakpoint()\" title=\"Remove the breakpoint on the selected node\"><i\n                      class=\"fa fa-remove\"></i>\n              </button>\n              <button ng-switch-default=\"false\" class=\"btn\" ng-disabled=\"!selectedDiagramNodeId\"\n                      ng-click=\"addBreakpoint()\" title=\"Add a breakpoint on the selected node\"><i class=\"fa fa-plus\"></i>\n              </button>\n            </div>\n          </div>\n          <div class=\"btn-group\">\n            <button class=\"btn\" type=\"submit\" ng-click=\"stopDebugging()\" title=\"Stops the debugger\">Close\n            </button>\n          </div>\n        </div>\n        <div class=\"btn-toolbar pull-right\">\n          <div class=\"btn-group\">\n            <button class=\"btn\" ng-click=\"step()\" ng-disabled=\"!stopped\" title=\"Step into the next node\"><img\n                    ng-src=\"plugins/camel/doc/img/debug/step.gif\"></button>\n            <button class=\"btn\" ng-click=\"resume()\" ng-disabled=\"!stopped\" title=\"Resume running\"><img\n                    ng-src=\"plugins/camel/doc/img/debug/resume.gif\"></button>\n            <button class=\"btn\" ng-click=\"suspend()\" ng-disabled=\"stopped\"\n                    title=\"Suspend all threads in this route\"><img ng-src=\"plugins/camel/doc/img/debug/suspend.gif\"></button>\n          </div>\n        </div>\n        <div class=\"col-md-12 well\">\n          <form>\n            <div class=\"table-header\">Breakpoints:</div>\n            <ul>\n              <li class=\"table-row\" ng-repeat=\"b in breakpoints\">\n                {{b}}\n              </li>\n            </ul>\n            <div class=\"table-row\">Suspended:</div>\n            <ul>\n              <li class=\"table-row\" ng-repeat=\"b in suspendedBreakpoints\">\n                {{b}}\n              </li>\n            </ul>\n          </form>\n        </div>\n      </div>\n    </div>\n\n    <div ng-include src=\"tableView\">\n    </div>\n  </div>\n  <div class=\"col-md-12 well\" ng-switch-default=\"false\">\n    <form>\n      <p>Debugging allows you to step through camel routes to diagnose issues</p>\n\n      <button class=\"btn btn-info\" type=\"submit\" ng-click=\"startDebugging()\">Start debugging</button>\n    </form>\n  </div>\n</div>");
 $templateCache.put("plugins/camel/html/fabricDiagram.html","<style type=\"text/css\">\n\n  .col-md-5.node-panel {\n    margin-top: 5px;\n    margin-left: 5px;\n  }\n\n  .node-attributes dl {\n    margin-top: 5px;\n    margin-bottom: 10px;\n  }\n\n  .node-attributes dt {\n    width: 270px;\n  }\n\n  .node-attributes dd {\n    margin-left: 280px;\n  }\n\n  .node-attributes dd a {\n    /** lets make the destination links wrap */\n    -ms-word-break: break-all;\n    word-break: break-all;\n    -webkit-hyphens: auto;\n    -moz-hyphens: auto;\n    hyphens: auto;\n  }\n\n  ul.viewMenu li {\n    padding-left: 10px;\n    padding-top: 2px;\n    padding-bottom: 2px;\n  }\n\n  div#pop-up {\n    display: none;\n    position: absolute;\n    color: white;\n    font-size: 14px;\n    background: rgba(0, 0, 0, 0.6);\n    padding: 5px 10px 5px 10px;\n    -moz-border-radius: 8px 8px;\n    border-radius: 8px 8px;\n  }\n\n  div#pop-up-title {\n    font-size: 15px;\n    margin-bottom: 4px;\n    font-weight: bolder;\n  }\n\n  div#pop-up-content {\n    font-size: 12px;\n  }\n\n  rect.graphbox {\n    fill: #FFF;\n  }\n\n  rect.graphbox.frame {\n    stroke: #222;\n    stroke-width: 2px\n  }\n\n  /* only things directly related to the network graph should be here */\n\n  path.link {\n    fill: none;\n    stroke: #666;\n    stroke-width: 1.5px;\n  }\n\n  marker.context {\n    stroke: red;\n    fill: red;\n    stroke-width: 1.5px;\n  }\n\n  circle.context {\n    fill: #0c0;\n  }\n\n  circle.route {\n    fill: #c0c;\n    stroke-width: 1.3px;\n  }\n\n  circle.notActive {\n    fill: #c00;\n  }\n\n  path.link.group {\n    stroke: #ccc;\n  }\n\n  marker#group {\n    stroke: #ccc;\n    fill: #ccc;\n  }\n\n  circle.group {\n    fill: #eee;\n    stroke: #ccc;\n  }\n\n  circle.destination {\n    fill: #bbb;\n    stroke: #ccc;\n  }\n\n  circle.pinned {\n    stroke-width: 4.5px;\n  }\n\n  path.link.profile {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  marker#container {\n  }\n\n  circle.container {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  path.link.container {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  circle {\n    fill: #ccc;\n    stroke: #333;\n    stroke-width: 1.5px;\n    cursor: pointer;\n  }\n\n  circle.closeMode {\n    cursor: crosshair;\n  }\n\n  path.link.destination {\n    stroke: #ccc;\n  }\n\n  circle.topic {\n    fill: #c0c;\n  }\n\n  circle.endpoint, circle.endpoints {\n    fill: #00c;\n  }\n\n  circle.selected {\n    stroke-width: 3px;\n  }\n\n  .selected {\n    stroke-width: 3px;\n  }\n\n  text {\n    font: 10px sans-serif;\n    pointer-events: none;\n  }\n\n  text.shadow {\n    stroke: #fff;\n    stroke-width: 3px;\n    stroke-opacity: .8;\n  }\n</style>\n\n\n<div class=\"row mq-page\" ng-controller=\"Camel.FabricDiagramController\">\n\n  <div ng-hide=\"inDashboard\" class=\"col-md-12 page-padded\">\n    <div class=\"section-header\">\n\n      <div class=\"section-filter\">\n        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"searchFilter\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"searchFilter = \'\'\"></i>\n      </div>\n\n      <div class=\"section-controls\">\n        <a href=\"#\"\n           class=\"dropdown-toggle\"\n           data-toggle=\"dropdown\">\n          View &nbsp;<i class=\"icon-caret-down\"></i>\n        </a>\n\n        <ul class=\"dropdown-menu viewMenu\">\n          <!--\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.consumer\"> Consumers\n                      </label>\n                    </li>\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.producer\"> Producers\n                      </label>\n                    </li>\n          -->\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.endpoint\"> Endpoint\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.route\"> Route\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.context\"> Context\n            </label>\n          </li>\n          <!--\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.profile\"> Profiles\n                      </label>\n                    </li>\n          -->\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.container\"> Containers\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li title=\"Should we show the details panel on the left\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.panel\"> Details panel\n            </label>\n          </li>\n          <li title=\"Show the summary popup as you hover over nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.popup\"> Hover text\n            </label>\n          </li>\n          <li title=\"Show the labels next to nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.label\"> Label\n            </label>\n          </li>\n        </ul>\n\n        <!--\n                <a ng-href=\"#/fabric/mq/contexts{{hash}}\" title=\"View the context and container diagram\">\n                  <i class=\"fa fa-edit\"></i> Configuration\n                </a>\n        -->\n      </div>\n    </div>\n  </div>\n\n\n  <div id=\"pop-up\">\n    <div id=\"pop-up-title\"></div>\n    <div id=\"pop-up-content\"></div>\n  </div>\n\n  <div class=\"row\">\n    <div ng-show=\"containerCount\">\n      <div class=\"{{viewSettings.panel ? \'col-md-7\' : \'col-md-12\'}} canvas context-canvas\">\n        <div hawtio-force-graph graph=\"graph\" selected-model=\"selectedNode\" link-distance=\"150\" charge=\"-600\"\n             nodesize=\"10\" marker-kind=\"marker-end\"\n             style=\"min-height: 800px\">\n        </div>\n      </div>\n      <div ng-show=\"viewSettings.panel\" class=\"col-md-5 node-panel\">\n        <div ng-show=\"selectedNode\" class=\"node-attributes\">\n          <dl ng-repeat=\"property in selectedNodeProperties\" class=\"dl-horizontal\">\n            <dt title=\"{{property.key}}\">{{property.key}}:</dt>\n            <dd ng-bind-html-unsafe=\"property.value\"></dd>\n          </dl>\n        </div>\n      </div>\n    </div>\n    <div class=\"jumbotron\" ng-show=\"containerCount === 0 && isFmc\">\n      <p>There are currently no Camel routes running in this fabric</p>\n\n      <p>To try out the EIP browser try create one of the example <a\n              href=\"#/wiki/branch/{{versionId}}/view/fabric/profiles/example/quickstarts\">quickstarts</a></p>\n\n      <p>e.g. Try creating a container for:\n        <a class=\"btn btn-primary\"\n           href=\"#/fabric/containers/createContainer?profileIds=example-quickstarts-cbr&versionId={{versionId}}\">\n          Content Based Router Quickstart\n        </a>\n        <a class=\"btn btn-primary\"\n           href=\"#/fabric/containers/createContainer?profileIds=example-quickstarts-eip&versionId={{versionId}}\">\n          EIP Quickstart\n        </a>\n      </p>\n    </div>\n    <div class=\"jumbotron\" ng-show=\"containerCount === 0 && !isFmc\">\n      <p>There are currently no Camel routes running in this JVM</p>\n\n      <p>To try out the Camel diagram try create one more Camel routes</p>\n    </div>\n  </div>\n\n  <div ng-include=\"\'plugins/fabric/html/connectToContainerDialog.html\'\"></div>\n\n</div>\n\n\n");
-$templateCache.put("plugins/camel/html/layoutCamelTree.html","\n<script type=\"text/ng-template\" id=\"header\">\n  <div class=\"camel tree-header\" ng-controller=\"Camel.TreeHeaderController\">\n    <div class=\"left\">\n      <div class=\"section-filter\">\n        <input id=\"camelContextIdFilter\"\n               class=\"search-query\"\n               type=\"text\"\n               ng-model=\"contextFilterText\"\n               title=\"filter camel context IDs\"\n               placeholder=\"Filter...\">\n        <i class=\"fa fa-remove clickable\"\n           title=\"Clear filter\"\n           ng-click=\"contextFilterText = \'\'\"></i>\n      </div>\n    </div>\n    <div class=\"right\">\n      <i class=\"icon-chevron-down clickable\"\n         title=\"Expand all nodes\"\n         ng-click=\"expandAll()\"></i>\n      <i class=\"icon-chevron-up clickable\"\n         title=\"Unexpand all nodes\"\n         ng-click=\"contractAll()\"></i>\n    </div>\n  </div>\n</script>\n\n<hawtio-pane position=\"left\" width=\"300\" header=\"header\">\n  <div id=\"tree-container\"\n       ng-controller=\"Jmx.MBeansController\">\n    <div class=\"camel-tree\"\n         ng-controller=\"Camel.TreeController\">\n      <div id=\"cameltree\"></div>\n    </div>\n  </div>\n</hawtio-pane>\n<div class=\"row\">\n  <!--\n  <ng-include src=\"\'plugins/jmx/html/subLevelTabs.html\'\"></ng-include>\n  -->\n  <div id=\"properties\" ng-view></div>\n</div>\n");
+$templateCache.put("plugins/camel/html/layoutCamelTree.html","\n<script type=\"text/ng-template\" id=\"header\">\n  <div class=\"camel tree-header\" ng-controller=\"Camel.TreeHeaderController\">\n    <div class=\"left\">\n      <div class=\"section-filter\">\n        <input id=\"camelContextIdFilter\"\n               class=\"search-query\"\n               type=\"text\"\n               ng-model=\"contextFilterText\"\n               title=\"filter camel context IDs\"\n               placeholder=\"Filter...\">\n        <i class=\"fa fa-remove clickable\"\n           title=\"Clear filter\"\n           ng-click=\"contextFilterText = \'\'\"></i>\n      </div>\n    </div>\n    <div class=\"right\">\n      <i class=\"fa fa-chevron-down clickable\"\n         title=\"Expand all nodes\"\n         ng-click=\"expandAll()\"></i>\n      <i class=\"fa fa-chevron-up clickable\"\n         title=\"Unexpand all nodes\"\n         ng-click=\"contractAll()\"></i>\n    </div>\n  </div>\n</script>\n\n<hawtio-pane position=\"left\" width=\"300\" header=\"header\">\n  <div id=\"tree-container\"\n       ng-controller=\"Jmx.MBeansController\">\n    <div class=\"camel-tree\"\n         ng-controller=\"Camel.TreeController\">\n      <div id=\"cameltree\"></div>\n    </div>\n  </div>\n</hawtio-pane>\n<div class=\"row\">\n  <!--\n  <ng-include src=\"\'plugins/jmx/html/subLevelTabs.html\'\"></ng-include>\n  -->\n  <div id=\"properties\" ng-view></div>\n</div>\n");
 $templateCache.put("plugins/camel/html/nodePropertiesEdit.html","<div simple-form name=\"formEditor\" entity=\'nodeData\' data=\'model\' schema=\"schema\"></div>\n");
 $templateCache.put("plugins/camel/html/nodePropertiesView.html","<div simple-form name=\"formViewer\" mode=\'view\' entity=\'nodeData\' data=\'model\' schema=\"schema\"></div>\n");
 $templateCache.put("plugins/camel/html/preferences.html","<div ng-controller=\"Camel.PreferencesController\">\n  <form class=\"form-horizontal\">\n\n    <label class=\"control-label\">Include Streams</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelTraceOrDebugIncludeStreams\">\n        <span class=\"help-block\">Whether to include stream based message body when using the tracer and debugger</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Maximum body length</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelMaximumTraceOrDebugBodyLength\" min=\"0\">\n        <span class=\"help-block\">The maximum length of the body before its clipped when using the tracer and debugger</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Maximum label length</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelMaximumLabelWidth\" min=\"0\">\n        <span class=\"help-block\">The maximum length of a label in Camel diagrams before it is clipped</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Do not use ID for label</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelIgnoreIdForLabel\">\n        <span class=\"help-block\">If enabled then we will ignore the ID value when viewing a pattern in a Camel diagram; otherwise we will use the ID value as the label (the tooltip will show the actual detail)</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Route Metrics maximum seconds</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelRouteMetricMaxSeconds\" min=\"1\" max=\"100\">\n        <span class=\"help-block\">The maximum value in seconds used by the route metrics duration and histogram charts</span>\n      </div>\n    </div>\n\n  </form>\n</div>\n");
