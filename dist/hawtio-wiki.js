@@ -3012,871 +3012,6 @@ var ActiveMQ;
 })(ActiveMQ || (ActiveMQ = {}));
 
 /// <reference path="../../includes.ts"/>
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryInterfaces.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.context = '/docker-registry';
-    DockerRegistry.hash = UrlHelpers.join('#', DockerRegistry.context);
-    DockerRegistry.defaultRoute = UrlHelpers.join(DockerRegistry.hash, 'list');
-    DockerRegistry.basePath = UrlHelpers.join('plugins', DockerRegistry.context);
-    DockerRegistry.templatePath = UrlHelpers.join(DockerRegistry.basePath, 'html');
-    DockerRegistry.pluginName = 'DockerRegistry';
-    DockerRegistry.log = Logger.get(DockerRegistry.pluginName);
-    DockerRegistry.SEARCH_FRAGMENT = '/v1/search';
-    /**
-     * Fetch the available docker images in the registry, can only
-     * be called after app initialization
-     */
-    function getDockerImageRepositories(callback) {
-        var DockerRegistryRestURL = HawtioCore.injector.get("DockerRegistryRestURL");
-        var $http = HawtioCore.injector.get("$http");
-        DockerRegistryRestURL.then(function (restURL) {
-            $http.get(UrlHelpers.join(restURL, DockerRegistry.SEARCH_FRAGMENT)).success(function (data) {
-                callback(restURL, data);
-            }).error(function (data) {
-                DockerRegistry.log.debug("Error fetching image repositories:", data);
-                callback(restURL, null);
-            });
-        });
-    }
-    DockerRegistry.getDockerImageRepositories = getDockerImageRepositories;
-    function completeDockerRegistry() {
-        var $q = HawtioCore.injector.get("$q");
-        var $rootScope = HawtioCore.injector.get("$rootScope");
-        var deferred = $q.defer();
-        getDockerImageRepositories(function (restURL, repositories) {
-            if (repositories && repositories.results) {
-                // log.debug("Got back repositories: ", repositories);
-                var results = repositories.results;
-                results = results.sortBy(function (res) {
-                    return res.name;
-                }).first(15);
-                var names = results.map(function (res) {
-                    return res.name;
-                });
-                // log.debug("Results: ", names);
-                deferred.resolve(names);
-            }
-            else {
-                // log.debug("didn't get back anything, bailing");
-                deferred.reject([]);
-            }
-        });
-        return deferred.promise;
-    }
-    DockerRegistry.completeDockerRegistry = completeDockerRegistry;
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry._module = angular.module(DockerRegistry.pluginName, ['hawtio-core', 'ngResource']);
-    DockerRegistry.controller = PluginHelpers.createControllerFunction(DockerRegistry._module, DockerRegistry.pluginName);
-    DockerRegistry.route = PluginHelpers.createRoutingFunction(DockerRegistry.templatePath);
-    DockerRegistry._module.config(['$routeProvider', function ($routeProvider) {
-        $routeProvider.when(UrlHelpers.join(DockerRegistry.context, 'list'), DockerRegistry.route('list.html', false));
-    }]);
-    DockerRegistry._module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', function (jolokiaUrl, jolokia, $q, $rootScope) {
-        // TODO use the services plugin to find it?
-        /*
-            var answer = <ng.IDeferred<string>> $q.defer();
-            jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined,
-              <Jolokia.IParams> Core.onSuccess((response) => {
-                var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
-                log.debug("Discovered docker registry API URL: " , proxified);
-                answer.resolve(proxified);
-                Core.$apply($rootScope);
-              }, {
-                error: (response) => {
-                  log.debug("error fetching docker registry API details: ", response);
-                  answer.reject(response);
-                  Core.$apply($rootScope);
-                }
-              }));
-            return answer.promise;
-        */
-    }]);
-    DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
-        DockerRegistry.log.debug("Running");
-        viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
-        workspace.topLevelTabs.push({
-            id: 'docker-registry',
-            content: 'Images',
-            isValid: function (workspace) { return true; },
-            isActive: function (workspace) { return workspace.isLinkActive('docker-registry'); },
-            href: function () { return DockerRegistry.defaultRoute; }
-        });
-    }]);
-    hawtioPluginLoader.addModule(DockerRegistry.pluginName);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-/// <reference path="dockerRegistryPlugin.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.TopLevel = DockerRegistry.controller("TopLevel", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
-        $scope.repositories = [];
-        $scope.fetched = false;
-        $scope.restURL = '';
-        DockerRegistry.getDockerImageRepositories(function (restURL, repositories) {
-            $scope.restURL = restURL;
-            $scope.fetched = true;
-            if (repositories) {
-                $scope.repositories = repositories.results;
-                var previous = angular.toJson($scope.repositories);
-                $scope.fetch = PollHelpers.setupPolling($scope, function (next) {
-                    var searchURL = UrlHelpers.join($scope.restURL, DockerRegistry.SEARCH_FRAGMENT);
-                    $http.get(searchURL).success(function (repositories) {
-                        if (repositories && repositories.results) {
-                            if (previous !== angular.toJson(repositories.results)) {
-                                $scope.repositories = repositories.results;
-                                previous = angular.toJson($scope.repositories);
-                            }
-                        }
-                        next();
-                    });
-                });
-                $scope.fetch();
-            }
-            else {
-                DockerRegistry.log.debug("Failed initial fetch of image repositories");
-            }
-        });
-        $scope.$watchCollection('repositories', function (repositories) {
-            if (!Core.isBlank($scope.restURL)) {
-                if (!repositories || repositories.length === 0) {
-                    $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
-                    return;
-                }
-                // we've a new list of repositories, let's refresh our info on 'em
-                var outstanding = repositories.length;
-                function maybeNotify() {
-                    outstanding = outstanding - 1;
-                    if (outstanding <= 0) {
-                        $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
-                    }
-                }
-                repositories.forEach(function (repository) {
-                    var tagURL = UrlHelpers.join($scope.restURL, 'v1/repositories/' + repository.name + '/tags');
-                    // we'll give it half a second as sometimes tag info isn't instantly available
-                    $timeout(function () {
-                        DockerRegistry.log.debug("Fetching tags from URL: ", tagURL);
-                        $http.get(tagURL).success(function (tags) {
-                            DockerRegistry.log.debug("Got tags: ", tags, " for image repository: ", repository.name);
-                            repository.tags = tags;
-                            maybeNotify();
-                        }).error(function (data) {
-                            DockerRegistry.log.debug("Error fetching data for image repository: ", repository.name, " error: ", data);
-                            maybeNotify();
-                        });
-                    }, 500);
-                });
-            }
-        });
-    }]);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-/// <reference path="dockerRegistryPlugin.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.TagController = DockerRegistry.controller("TagController", ["$scope", function ($scope) {
-        $scope.selectImage = function (imageID) {
-            $scope.$emit("DockerRegistry.SelectedImageID", imageID);
-        };
-    }]);
-    DockerRegistry.ListController = DockerRegistry.controller("ListController", ["$scope", "$templateCache", "$http", function ($scope, $templateCache, $http) {
-        $scope.imageRepositories = [];
-        $scope.selectedImage = undefined;
-        $scope.tableConfig = {
-            data: 'imageRepositories',
-            showSelectionCheckbox: true,
-            enableRowClickSelection: false,
-            multiSelect: true,
-            selectedItems: [],
-            filterOptions: {
-                filterText: ''
-            },
-            columnDefs: [
-                { field: 'name', displayName: 'Name', defaultSort: true },
-                { field: 'description', displayName: 'Description' },
-                { field: 'tags', displayName: 'Tags', cellTemplate: $templateCache.get("tagsTemplate.html") }
-            ]
-        };
-        $scope.deletePrompt = function (selectedRepositories) {
-            UI.multiItemConfirmActionDialog({
-                collection: selectedRepositories,
-                index: 'name',
-                onClose: function (result) {
-                    if (result) {
-                        selectedRepositories.forEach(function (repository) {
-                            var deleteURL = UrlHelpers.join($scope.restURL, '/v1/repositories/' + repository.name + '/');
-                            DockerRegistry.log.debug("Using URL: ", deleteURL);
-                            $http.delete(deleteURL).success(function (data) {
-                                DockerRegistry.log.debug("Deleted repository: ", repository.name);
-                            }).error(function (data) {
-                                DockerRegistry.log.debug("Failed to delete repository: ", repository.name);
-                            });
-                        });
-                    }
-                },
-                title: 'Delete Repositories?',
-                action: 'The following repositories will be deleted:',
-                okText: 'Delete',
-                okClass: 'btn-danger',
-                custom: 'This operation is permanent once completed!',
-                customClass: 'alert alert-warning'
-            }).open();
-        };
-        $scope.$on("DockerRegistry.SelectedImageID", function ($event, imageID) {
-            var imageJsonURL = UrlHelpers.join($scope.restURL, '/v1/images/' + imageID + '/json');
-            $http.get(imageJsonURL).success(function (image) {
-                DockerRegistry.log.debug("Got image: ", image);
-                $scope.selectedImage = image;
-            });
-        });
-        $scope.$on('DockerRegistry.Repositories', function ($event, restURL, repositories) {
-            $scope.imageRepositories = repositories;
-        });
-    }]);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Dozer
- * @main Dozer
- */
-var Dozer;
-(function (Dozer) {
-    /**
-     * The JMX domain for Dozer
-     * @property jmxDomain
-     * @for Dozer
-     * @type String
-     */
-    Dozer.jmxDomain = 'net.sourceforge.dozer';
-    Dozer.introspectorMBean = "hawtio:type=Introspector";
-    /**
-     * Don't try and load properties for these types
-     * @property excludedPackages
-     * @for Dozer
-     * @type {Array}
-     */
-    Dozer.excludedPackages = [
-        'java.lang',
-        'int',
-        'double',
-        'long'
-    ];
-    /**
-     * Lets map the class names to element names
-     * @property elementNameMappings
-     * @for Dozer
-     * @type {Array}
-     */
-    Dozer.elementNameMappings = {
-        "Mapping": "mapping",
-        "MappingClass": "class",
-        "Field": "field"
-    };
-    Dozer.log = Logger.get("Dozer");
-    /**
-     * Converts the XML string or DOM node to a Dozer model
-     * @method loadDozerModel
-     * @for Dozer
-     * @static
-     * @param {Object} xml
-     * @param {String} pageId
-     * @return {Mappings}
-     */
-    function loadDozerModel(xml, pageId) {
-        var doc = xml;
-        if (angular.isString(xml)) {
-            doc = $.parseXML(xml);
-        }
-        console.log("Has Dozer XML document: " + doc);
-        var model = new Dozer.Mappings(doc);
-        var mappingsElement = doc.documentElement;
-        copyAttributes(model, mappingsElement);
-        $(mappingsElement).children("mapping").each(function (idx, element) {
-            var mapping = createMapping(element);
-            model.mappings.push(mapping);
-        });
-        return model;
-    }
-    Dozer.loadDozerModel = loadDozerModel;
-    function saveToXmlText(model) {
-        // lets copy the original doc then replace the mapping elements
-        var element = model.doc.documentElement.cloneNode(false);
-        appendElement(model.mappings, element, null, 1);
-        Dozer.addTextNode(element, "\n");
-        var xmlText = Core.xmlNodeToString(element);
-        return '<?xml version="1.0" encoding="UTF-8"?>\n' + xmlText;
-    }
-    Dozer.saveToXmlText = saveToXmlText;
-    function findUnmappedFields(workspace, mapping, fn) {
-        // lets find the fields which are unmapped
-        var className = mapping.class_a.value;
-        findProperties(workspace, className, null, function (properties) {
-            var answer = [];
-            angular.forEach(properties, function (property) {
-                console.log("got property " + JSON.stringify(property, null, "  "));
-                var name = property.name;
-                if (name) {
-                    if (mapping.hasFromField(name)) {
-                    }
-                    else {
-                        // TODO auto-detect this property name in the to classes?
-                        answer.push(new Dozer.UnmappedField(name, property));
-                    }
-                }
-            });
-            fn(answer);
-        });
-    }
-    Dozer.findUnmappedFields = findUnmappedFields;
-    /**
-     * Finds the properties on the given class and returns them; and either invokes the given function
-     * or does a sync request and returns them
-     * @method findProperties
-     * @for Dozer
-     * @static
-     * @param {Core.Workspace} workspace
-     * @param {String} className
-     * @param {String} filter
-     * @param {Function} fn
-     * @return {any}
-     */
-    function findProperties(workspace, className, filter, fn) {
-        if (filter === void 0) { filter = null; }
-        if (fn === void 0) { fn = null; }
-        var mbean = getIntrospectorMBean(workspace);
-        if (mbean) {
-            if (filter) {
-                return workspace.jolokia.execute(mbean, "findProperties", className, filter, Core.onSuccess(fn));
-            }
-            else {
-                return workspace.jolokia.execute(mbean, "getProperties", className, Core.onSuccess(fn));
-            }
-        }
-        else {
-            if (fn) {
-                return fn([]);
-            }
-            else {
-                return [];
-            }
-        }
-    }
-    Dozer.findProperties = findProperties;
-    /**
-     * Finds class names matching the given search text and either invokes the function with the results
-     * or does a sync request and returns them.
-     * @method findClassNames
-     * @for Dozer
-     * @static
-     * @param {Core.Workspace} workspace
-     * @param {String} searchText
-     * @param {Number} limit @default 20
-     * @param {Function} fn
-     * @return {any}
-     */
-    function findClassNames(workspace, searchText, limit, fn) {
-        if (limit === void 0) { limit = 20; }
-        if (fn === void 0) { fn = null; }
-        var mbean = getIntrospectorMBean(workspace);
-        if (mbean) {
-            return workspace.jolokia.execute(mbean, "findClassNames", searchText, limit, Core.onSuccess(fn));
-        }
-        else {
-            if (fn) {
-                return fn([]);
-            }
-            else {
-                return [];
-            }
-        }
-    }
-    Dozer.findClassNames = findClassNames;
-    function getIntrospectorMBean(workspace) {
-        // lets hard code this so its easy to use in any JVM
-        return Dozer.introspectorMBean;
-        // return Core.getMBeanTypeObjectName(workspace, "hawtio", "Introspector");
-    }
-    Dozer.getIntrospectorMBean = getIntrospectorMBean;
-    function loadModelFromTree(rootTreeNode, oldModel) {
-        oldModel.mappings = [];
-        angular.forEach(rootTreeNode.childList, function (treeNode) {
-            var mapping = Core.pathGet(treeNode, ["data", "entity"]);
-            if (mapping) {
-                oldModel.mappings.push(mapping);
-            }
-        });
-        return oldModel;
-    }
-    Dozer.loadModelFromTree = loadModelFromTree;
-    function createDozerTree(model) {
-        var id = "mappings";
-        var folder = new Folder(id);
-        folder.addClass = "net-sourceforge-dozer-mappings";
-        folder.domain = Dozer.jmxDomain;
-        folder.typeName = "mappings";
-        folder.entity = model;
-        folder.key = Core.toSafeDomID(id);
-        angular.forEach(model.mappings, function (mapping) {
-            var mappingFolder = createMappingFolder(mapping, folder);
-            folder.children.push(mappingFolder);
-        });
-        return folder;
-    }
-    Dozer.createDozerTree = createDozerTree;
-    function createMappingFolder(mapping, parentFolder) {
-        var mappingName = mapping.name();
-        var mappingFolder = new Folder(mappingName);
-        mappingFolder.addClass = "net-sourceforge-dozer-mapping";
-        mappingFolder.typeName = "mapping";
-        mappingFolder.domain = Dozer.jmxDomain;
-        mappingFolder.key = (parentFolder ? parentFolder.key + "_" : "") + Core.toSafeDomID(mappingName);
-        mappingFolder.parent = parentFolder;
-        mappingFolder.entity = mapping;
-        mappingFolder.icon = Core.url("/plugins/dozer/img/class.gif");
-        /*
-              mappingFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
-              */
-        angular.forEach(mapping.fields, function (field) {
-            addMappingFieldFolder(field, mappingFolder);
-        });
-        return mappingFolder;
-    }
-    Dozer.createMappingFolder = createMappingFolder;
-    function addMappingFieldFolder(field, mappingFolder) {
-        var name = field.name();
-        var fieldFolder = new Folder(name);
-        fieldFolder.addClass = "net-sourceforge-dozer-field";
-        fieldFolder.typeName = "field";
-        fieldFolder.domain = Dozer.jmxDomain;
-        fieldFolder.key = mappingFolder.key + "_" + Core.toSafeDomID(name);
-        fieldFolder.parent = mappingFolder;
-        fieldFolder.entity = field;
-        fieldFolder.icon = Core.url("/plugins/dozer/img/attribute.gif");
-        /*
-              fieldFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
-              */
-        mappingFolder.children.push(fieldFolder);
-        return fieldFolder;
-    }
-    Dozer.addMappingFieldFolder = addMappingFieldFolder;
-    function createMapping(element) {
-        var mapping = new Dozer.Mapping();
-        var elementJQ = $(element);
-        mapping.class_a = createMappingClass(elementJQ.children("class-a"));
-        mapping.class_b = createMappingClass(elementJQ.children("class-b"));
-        elementJQ.children("field").each(function (idx, fieldElement) {
-            var field = createField(fieldElement);
-            mapping.fields.push(field);
-        });
-        copyAttributes(mapping, element);
-        return mapping;
-    }
-    function createField(element) {
-        if (element) {
-            var jqe = $(element);
-            var a = jqe.children("a").text();
-            var b = jqe.children("b").text();
-            var field = new Dozer.Field(new Dozer.FieldDefinition(a), new Dozer.FieldDefinition(b));
-            copyAttributes(field, element);
-            return field;
-        }
-        return new Dozer.Field(new Dozer.FieldDefinition(""), new Dozer.FieldDefinition(""));
-    }
-    function createMappingClass(jqElement) {
-        if (jqElement && jqElement[0]) {
-            var element = jqElement[0];
-            var text = element.textContent;
-            if (text) {
-                var mappingClass = new Dozer.MappingClass(text);
-                copyAttributes(mappingClass, element);
-                return mappingClass;
-            }
-        }
-        // lets create a default empty mapping
-        return new Dozer.MappingClass("");
-    }
-    function copyAttributes(object, element) {
-        var attributeMap = element.attributes;
-        for (var i = 0; i < attributeMap.length; i++) {
-            // TODO hacky work around for compiler issue ;)
-            //var attr = attributeMap.item(i);
-            var attMap = attributeMap;
-            var attr = attMap.item(i);
-            if (attr) {
-                var name = attr.localName;
-                var value = attr.value;
-                if (name && !name.startsWith("xmlns")) {
-                    var safeName = Forms.safeIdentifier(name);
-                    object[safeName] = value;
-                }
-            }
-        }
-    }
-    function appendAttributes(object, element, ignorePropertyNames) {
-        angular.forEach(object, function (value, key) {
-            if (ignorePropertyNames.any(key)) {
-            }
-            else {
-                // lets add an attribute value
-                if (value) {
-                    var text = value.toString();
-                    // lets replace any underscores with dashes
-                    var name = key.replace(/_/g, '-');
-                    element.setAttribute(name, text);
-                }
-            }
-        });
-    }
-    Dozer.appendAttributes = appendAttributes;
-    /**
-     * Adds a new child element for this mapping to the given element
-     * @method appendElement
-     * @for Dozer
-     * @static
-     * @param {any} object
-     * @param {any} element
-     * @param {String} elementName
-     * @param {Number} indentLevel
-     * @return the last child element created
-     */
-    function appendElement(object, element, elementName, indentLevel) {
-        if (elementName === void 0) { elementName = null; }
-        if (indentLevel === void 0) { indentLevel = 0; }
-        var answer = null;
-        if (angular.isArray(object)) {
-            angular.forEach(object, function (child) {
-                answer = appendElement(child, element, elementName, indentLevel);
-            });
-        }
-        else if (object) {
-            if (!elementName) {
-                var className = Core.pathGet(object, ["constructor", "name"]);
-                if (!className) {
-                    console.log("WARNING: no class name for value " + object);
-                }
-                else {
-                    elementName = Dozer.elementNameMappings[className];
-                    if (!elementName) {
-                        console.log("WARNING: could not map class name " + className + " to an XML element name");
-                    }
-                }
-            }
-            if (elementName) {
-                if (indentLevel) {
-                    var text = indentText(indentLevel);
-                    Dozer.addTextNode(element, text);
-                }
-                var doc = element.ownerDocument || document;
-                var child = doc.createElement(elementName);
-                // navigate child properties...
-                var fn = object.saveToElement;
-                if (fn) {
-                    fn.apply(object, [child]);
-                }
-                else {
-                    angular.forEach(object, function (value, key) {
-                        console.log("has key " + key + " value " + value);
-                    });
-                }
-                // if we have any element children then add newline text node
-                if ($(child).children().length) {
-                    //var text = indentText(indentLevel - 1);
-                    var text = indentText(indentLevel);
-                    Dozer.addTextNode(child, text);
-                }
-                element.appendChild(child);
-                answer = child;
-            }
-        }
-        return answer;
-    }
-    Dozer.appendElement = appendElement;
-    function nameOf(object) {
-        var text = angular.isObject(object) ? object["value"] : null;
-        if (!text && angular.isString(object)) {
-            text = object;
-        }
-        return text || "?";
-    }
-    Dozer.nameOf = nameOf;
-    function addTextNode(element, text) {
-        if (text) {
-            var doc = element.ownerDocument || document;
-            var child = doc.createTextNode(text);
-            element.appendChild(child);
-        }
-    }
-    Dozer.addTextNode = addTextNode;
-    function indentText(indentLevel) {
-        var text = "\n";
-        for (var i = 0; i < indentLevel; i++) {
-            text += "  ";
-        }
-        return text;
-    }
-})(Dozer || (Dozer = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Dozer
- */
-var Dozer;
-(function (Dozer) {
-    /**
-     * @class Mappings
-     */
-    var Mappings = (function () {
-        function Mappings(doc, mappings) {
-            if (mappings === void 0) { mappings = []; }
-            this.doc = doc;
-            this.mappings = mappings;
-        }
-        return Mappings;
-    })();
-    Dozer.Mappings = Mappings;
-    /**
-     * @class Mapping
-     */
-    var Mapping = (function () {
-        function Mapping() {
-            this.fields = [];
-            this.map_id = Core.getUUID();
-            this.class_a = new MappingClass('');
-            this.class_b = new MappingClass('');
-        }
-        Mapping.prototype.name = function () {
-            return Dozer.nameOf(this.class_a) + " -> " + Dozer.nameOf(this.class_b);
-        };
-        Mapping.prototype.hasFromField = function (name) {
-            return this.fields.find(function (f) { return name === f.a.value; });
-        };
-        Mapping.prototype.hasToField = function (name) {
-            return this.fields.find(function (f) { return name === f.b.value; });
-        };
-        Mapping.prototype.saveToElement = function (element) {
-            Dozer.appendElement(this.class_a, element, "class-a", 2);
-            Dozer.appendElement(this.class_b, element, "class-b", 2);
-            Dozer.appendElement(this.fields, element, "field", 2);
-            Dozer.appendAttributes(this, element, ["class_a", "class_b", "fields"]);
-        };
-        return Mapping;
-    })();
-    Dozer.Mapping = Mapping;
-    /**
-     * @class MappingClass
-     */
-    var MappingClass = (function () {
-        function MappingClass(value) {
-            this.value = value;
-        }
-        MappingClass.prototype.saveToElement = function (element) {
-            Dozer.addTextNode(element, this.value);
-            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
-        };
-        return MappingClass;
-    })();
-    Dozer.MappingClass = MappingClass;
-    /**
-     * @class Field
-     */
-    var Field = (function () {
-        function Field(a, b) {
-            this.a = a;
-            this.b = b;
-        }
-        Field.prototype.name = function () {
-            return Dozer.nameOf(this.a) + " -> " + Dozer.nameOf(this.b);
-        };
-        Field.prototype.saveToElement = function (element) {
-            Dozer.appendElement(this.a, element, "a", 3);
-            Dozer.appendElement(this.b, element, "b", 3);
-            Dozer.appendAttributes(this, element, ["a", "b"]);
-        };
-        return Field;
-    })();
-    Dozer.Field = Field;
-    /**
-     * @class FieldDefinition
-     */
-    var FieldDefinition = (function () {
-        function FieldDefinition(value) {
-            this.value = value;
-        }
-        FieldDefinition.prototype.saveToElement = function (element) {
-            Dozer.addTextNode(element, this.value);
-            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
-        };
-        return FieldDefinition;
-    })();
-    Dozer.FieldDefinition = FieldDefinition;
-    /**
-     * @class UnmappedField
-     */
-    var UnmappedField = (function () {
-        function UnmappedField(fromField, property, toField) {
-            if (toField === void 0) { toField = null; }
-            this.fromField = fromField;
-            this.property = property;
-            this.toField = toField;
-        }
-        return UnmappedField;
-    })();
-    Dozer.UnmappedField = UnmappedField;
-})(Dozer || (Dozer = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Dozer
- */
-var Dozer;
-(function (Dozer) {
-    /**
-     * Configures the JSON schemas to improve the UI models
-     * @method schemaConfigure
-     * @for Dozer
-     */
-    function schemaConfigure() {
-        Dozer.io_hawt_dozer_schema_Field["tabs"] = {
-            'Fields': ['a.value', 'b.value'],
-            'From Field': ['a\\..*'],
-            'To Field': ['b\\..*'],
-            'Field Configuration': ['*']
-        };
-        Dozer.io_hawt_dozer_schema_Mapping["tabs"] = {
-            'Classes': ['class-a.value', 'class-b.value'],
-            'From Class': ['class-a\\..*'],
-            'To Class': ['class-b\\..*'],
-            'Class Configuration': ['*']
-        };
-        // hide the fields table from the class configuration tab
-        Dozer.io_hawt_dozer_schema_Mapping.properties.fieldOrFieldExclude.hidden = true;
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "label"], "From Field");
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "label"], "To Field");
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "label"], "From Class");
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "label"], "To Class");
-        // ignore prefixes in the generated labels
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "ignorePrefixInLabel"], true);
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "ignorePrefixInLabel"], true);
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "ignorePrefixInLabel"], true);
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "ignorePrefixInLabel"], true);
-        // add custom widgets
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "formTemplate"], classNameWidget("class_a"));
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "formTemplate"], classNameWidget("class_b"));
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.a.value" ' + 'typeahead="title for title in fromFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.b.value" ' + 'typeahead="title for title in toFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
-        function classNameWidget(propertyName) {
-            return '<input type="text" ng-model="dozerEntity.' + propertyName + '.value" ' + 'typeahead="title for title in classNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>';
-        }
-    }
-    Dozer.schemaConfigure = schemaConfigure;
-})(Dozer || (Dozer = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * A bunch of API stubs for now until we remove references to Fabric or refactor the code
- * to work nicely in Kubernetes
- */
-var Fabric;
-(function (Fabric) {
-    Fabric.fabricTopLevel = "fabric/profiles/";
-    Fabric.profileSuffix = ".profile";
-    function initScope($scope, $location, jolokia, workspace) {
-    }
-    Fabric.initScope = initScope;
-    function brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName) {
-    }
-    Fabric.brokerConfigLink = brokerConfigLink;
-    function containerJolokia(jolokia, id, fn) {
-    }
-    Fabric.containerJolokia = containerJolokia;
-    function pagePathToProfileId(pageId) {
-    }
-    Fabric.pagePathToProfileId = pagePathToProfileId;
-    function profileJolokia(jolokia, profileId, versionId, callback) {
-    }
-    Fabric.profileJolokia = profileJolokia;
-    function getDefaultVersionId(jolokia) {
-    }
-    Fabric.getDefaultVersionId = getDefaultVersionId;
-    function getContainersFields(jolokia, fields, onFabricContainerData) {
-    }
-    Fabric.getContainersFields = getContainersFields;
-    function loadBrokerStatus(onBrokerData) {
-        /** TODO
-         Core.register(jolokia, $scope, {type: 'exec', mbean: Fabric.mqManagerMBean, operation: "loadBrokerStatus()"}, Core.onSuccess(onBrokerData));
-         */
-    }
-    Fabric.loadBrokerStatus = loadBrokerStatus;
-    function connectToBroker($scope, container, postfix) {
-    }
-    Fabric.connectToBroker = connectToBroker;
-    function createJolokia(url) {
-    }
-    Fabric.createJolokia = createJolokia;
-    function hasFabric(workspace) {
-    }
-    Fabric.hasFabric = hasFabric;
-    function profilePath(profileId) {
-    }
-    Fabric.profilePath = profilePath;
-    function getOverlayProfileProperties(versionId, profileId, pid, onProfilePropertiesLoaded) {
-        /**
-         * TODO
-         jolokia.execute(Fabric.managerMBean, "getOverlayProfileProperties", $scope.versionId, $scope.profileId, $scope.pid, Core.onSuccess(onProfilePropertiesLoaded));
-         */
-    }
-    Fabric.getOverlayProfileProperties = getOverlayProfileProperties;
-    function getProfileProperties(versionId, profileId, zkPid, onProfileProperties) {
-        /** TODO
-         jolokia.execute(Fabric.managerMBean, "getProfileProperties", $scope.versionId, $scope.profileId, $scope.zkPid, Core.onSuccess(onProfileProperties));
-         */
-    }
-    Fabric.getProfileProperties = getProfileProperties;
-    function setProfileProperties(versionId, profileId, pid, data, callback) {
-        /*
-         TODO
-         jolokia.execute(Fabric.managerMBean, "setProfileProperties", $scope.versionId, $scope.profileId, pid, data, callback);
-         */
-    }
-    Fabric.setProfileProperties = setProfileProperties;
-    function deleteConfigurationFile(versionId, profileId, configFile, successFn, errorFn) {
-        /** TODO
-        jolokia.execute(Fabric.managerMBean, "deleteConfigurationFile",
-          versionId, profileId, configFile,
-          Core.onSuccess(successFn, {error: errorFn}));
-         */
-    }
-    Fabric.deleteConfigurationFile = deleteConfigurationFile;
-    function getProfile(jolokia, branch, profileName, someFlag) {
-    }
-    Fabric.getProfile = getProfile;
-    function createProfile(jolokia, branch, profileName, baseProfiles, successFn, errorFn) {
-    }
-    Fabric.createProfile = createProfile;
-    function newConfigFile(jolokia, branch, profileName, fileName, successFn, errorFn) {
-    }
-    Fabric.newConfigFile = newConfigFile;
-    function saveConfigFile(jolokia, branch, profileName, fileName, contents, successFn, errorFn) {
-    }
-    Fabric.saveConfigFile = saveConfigFile;
-    function getVersionIds(jolokia) {
-    }
-    Fabric.getVersionIds = getVersionIds;
-})(Fabric || (Fabric = {}));
-
-/// <reference path="../../includes.ts"/>
 /**
  * @module Camel
  */
@@ -9392,6 +8527,871 @@ var Camel;
 })(Camel || (Camel = {}));
 
 /// <reference path="../../includes.ts"/>
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryInterfaces.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.context = '/docker-registry';
+    DockerRegistry.hash = UrlHelpers.join('#', DockerRegistry.context);
+    DockerRegistry.defaultRoute = UrlHelpers.join(DockerRegistry.hash, 'list');
+    DockerRegistry.basePath = UrlHelpers.join('plugins', DockerRegistry.context);
+    DockerRegistry.templatePath = UrlHelpers.join(DockerRegistry.basePath, 'html');
+    DockerRegistry.pluginName = 'DockerRegistry';
+    DockerRegistry.log = Logger.get(DockerRegistry.pluginName);
+    DockerRegistry.SEARCH_FRAGMENT = '/v1/search';
+    /**
+     * Fetch the available docker images in the registry, can only
+     * be called after app initialization
+     */
+    function getDockerImageRepositories(callback) {
+        var DockerRegistryRestURL = HawtioCore.injector.get("DockerRegistryRestURL");
+        var $http = HawtioCore.injector.get("$http");
+        DockerRegistryRestURL.then(function (restURL) {
+            $http.get(UrlHelpers.join(restURL, DockerRegistry.SEARCH_FRAGMENT)).success(function (data) {
+                callback(restURL, data);
+            }).error(function (data) {
+                DockerRegistry.log.debug("Error fetching image repositories:", data);
+                callback(restURL, null);
+            });
+        });
+    }
+    DockerRegistry.getDockerImageRepositories = getDockerImageRepositories;
+    function completeDockerRegistry() {
+        var $q = HawtioCore.injector.get("$q");
+        var $rootScope = HawtioCore.injector.get("$rootScope");
+        var deferred = $q.defer();
+        getDockerImageRepositories(function (restURL, repositories) {
+            if (repositories && repositories.results) {
+                // log.debug("Got back repositories: ", repositories);
+                var results = repositories.results;
+                results = results.sortBy(function (res) {
+                    return res.name;
+                }).first(15);
+                var names = results.map(function (res) {
+                    return res.name;
+                });
+                // log.debug("Results: ", names);
+                deferred.resolve(names);
+            }
+            else {
+                // log.debug("didn't get back anything, bailing");
+                deferred.reject([]);
+            }
+        });
+        return deferred.promise;
+    }
+    DockerRegistry.completeDockerRegistry = completeDockerRegistry;
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry._module = angular.module(DockerRegistry.pluginName, ['hawtio-core', 'ngResource']);
+    DockerRegistry.controller = PluginHelpers.createControllerFunction(DockerRegistry._module, DockerRegistry.pluginName);
+    DockerRegistry.route = PluginHelpers.createRoutingFunction(DockerRegistry.templatePath);
+    DockerRegistry._module.config(['$routeProvider', function ($routeProvider) {
+        $routeProvider.when(UrlHelpers.join(DockerRegistry.context, 'list'), DockerRegistry.route('list.html', false));
+    }]);
+    DockerRegistry._module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', function (jolokiaUrl, jolokia, $q, $rootScope) {
+        // TODO use the services plugin to find it?
+        /*
+            var answer = <ng.IDeferred<string>> $q.defer();
+            jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined,
+              <Jolokia.IParams> Core.onSuccess((response) => {
+                var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
+                log.debug("Discovered docker registry API URL: " , proxified);
+                answer.resolve(proxified);
+                Core.$apply($rootScope);
+              }, {
+                error: (response) => {
+                  log.debug("error fetching docker registry API details: ", response);
+                  answer.reject(response);
+                  Core.$apply($rootScope);
+                }
+              }));
+            return answer.promise;
+        */
+    }]);
+    DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
+        DockerRegistry.log.debug("Running");
+        viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
+        workspace.topLevelTabs.push({
+            id: 'docker-registry',
+            content: 'Images',
+            isValid: function (workspace) { return true; },
+            isActive: function (workspace) { return workspace.isLinkActive('docker-registry'); },
+            href: function () { return DockerRegistry.defaultRoute; }
+        });
+    }]);
+    hawtioPluginLoader.addModule(DockerRegistry.pluginName);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+/// <reference path="dockerRegistryPlugin.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.TopLevel = DockerRegistry.controller("TopLevel", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
+        $scope.repositories = [];
+        $scope.fetched = false;
+        $scope.restURL = '';
+        DockerRegistry.getDockerImageRepositories(function (restURL, repositories) {
+            $scope.restURL = restURL;
+            $scope.fetched = true;
+            if (repositories) {
+                $scope.repositories = repositories.results;
+                var previous = angular.toJson($scope.repositories);
+                $scope.fetch = PollHelpers.setupPolling($scope, function (next) {
+                    var searchURL = UrlHelpers.join($scope.restURL, DockerRegistry.SEARCH_FRAGMENT);
+                    $http.get(searchURL).success(function (repositories) {
+                        if (repositories && repositories.results) {
+                            if (previous !== angular.toJson(repositories.results)) {
+                                $scope.repositories = repositories.results;
+                                previous = angular.toJson($scope.repositories);
+                            }
+                        }
+                        next();
+                    });
+                });
+                $scope.fetch();
+            }
+            else {
+                DockerRegistry.log.debug("Failed initial fetch of image repositories");
+            }
+        });
+        $scope.$watchCollection('repositories', function (repositories) {
+            if (!Core.isBlank($scope.restURL)) {
+                if (!repositories || repositories.length === 0) {
+                    $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
+                    return;
+                }
+                // we've a new list of repositories, let's refresh our info on 'em
+                var outstanding = repositories.length;
+                function maybeNotify() {
+                    outstanding = outstanding - 1;
+                    if (outstanding <= 0) {
+                        $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
+                    }
+                }
+                repositories.forEach(function (repository) {
+                    var tagURL = UrlHelpers.join($scope.restURL, 'v1/repositories/' + repository.name + '/tags');
+                    // we'll give it half a second as sometimes tag info isn't instantly available
+                    $timeout(function () {
+                        DockerRegistry.log.debug("Fetching tags from URL: ", tagURL);
+                        $http.get(tagURL).success(function (tags) {
+                            DockerRegistry.log.debug("Got tags: ", tags, " for image repository: ", repository.name);
+                            repository.tags = tags;
+                            maybeNotify();
+                        }).error(function (data) {
+                            DockerRegistry.log.debug("Error fetching data for image repository: ", repository.name, " error: ", data);
+                            maybeNotify();
+                        });
+                    }, 500);
+                });
+            }
+        });
+    }]);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+/// <reference path="dockerRegistryPlugin.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.TagController = DockerRegistry.controller("TagController", ["$scope", function ($scope) {
+        $scope.selectImage = function (imageID) {
+            $scope.$emit("DockerRegistry.SelectedImageID", imageID);
+        };
+    }]);
+    DockerRegistry.ListController = DockerRegistry.controller("ListController", ["$scope", "$templateCache", "$http", function ($scope, $templateCache, $http) {
+        $scope.imageRepositories = [];
+        $scope.selectedImage = undefined;
+        $scope.tableConfig = {
+            data: 'imageRepositories',
+            showSelectionCheckbox: true,
+            enableRowClickSelection: false,
+            multiSelect: true,
+            selectedItems: [],
+            filterOptions: {
+                filterText: ''
+            },
+            columnDefs: [
+                { field: 'name', displayName: 'Name', defaultSort: true },
+                { field: 'description', displayName: 'Description' },
+                { field: 'tags', displayName: 'Tags', cellTemplate: $templateCache.get("tagsTemplate.html") }
+            ]
+        };
+        $scope.deletePrompt = function (selectedRepositories) {
+            UI.multiItemConfirmActionDialog({
+                collection: selectedRepositories,
+                index: 'name',
+                onClose: function (result) {
+                    if (result) {
+                        selectedRepositories.forEach(function (repository) {
+                            var deleteURL = UrlHelpers.join($scope.restURL, '/v1/repositories/' + repository.name + '/');
+                            DockerRegistry.log.debug("Using URL: ", deleteURL);
+                            $http.delete(deleteURL).success(function (data) {
+                                DockerRegistry.log.debug("Deleted repository: ", repository.name);
+                            }).error(function (data) {
+                                DockerRegistry.log.debug("Failed to delete repository: ", repository.name);
+                            });
+                        });
+                    }
+                },
+                title: 'Delete Repositories?',
+                action: 'The following repositories will be deleted:',
+                okText: 'Delete',
+                okClass: 'btn-danger',
+                custom: 'This operation is permanent once completed!',
+                customClass: 'alert alert-warning'
+            }).open();
+        };
+        $scope.$on("DockerRegistry.SelectedImageID", function ($event, imageID) {
+            var imageJsonURL = UrlHelpers.join($scope.restURL, '/v1/images/' + imageID + '/json');
+            $http.get(imageJsonURL).success(function (image) {
+                DockerRegistry.log.debug("Got image: ", image);
+                $scope.selectedImage = image;
+            });
+        });
+        $scope.$on('DockerRegistry.Repositories', function ($event, restURL, repositories) {
+            $scope.imageRepositories = repositories;
+        });
+    }]);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Dozer
+ * @main Dozer
+ */
+var Dozer;
+(function (Dozer) {
+    /**
+     * The JMX domain for Dozer
+     * @property jmxDomain
+     * @for Dozer
+     * @type String
+     */
+    Dozer.jmxDomain = 'net.sourceforge.dozer';
+    Dozer.introspectorMBean = "hawtio:type=Introspector";
+    /**
+     * Don't try and load properties for these types
+     * @property excludedPackages
+     * @for Dozer
+     * @type {Array}
+     */
+    Dozer.excludedPackages = [
+        'java.lang',
+        'int',
+        'double',
+        'long'
+    ];
+    /**
+     * Lets map the class names to element names
+     * @property elementNameMappings
+     * @for Dozer
+     * @type {Array}
+     */
+    Dozer.elementNameMappings = {
+        "Mapping": "mapping",
+        "MappingClass": "class",
+        "Field": "field"
+    };
+    Dozer.log = Logger.get("Dozer");
+    /**
+     * Converts the XML string or DOM node to a Dozer model
+     * @method loadDozerModel
+     * @for Dozer
+     * @static
+     * @param {Object} xml
+     * @param {String} pageId
+     * @return {Mappings}
+     */
+    function loadDozerModel(xml, pageId) {
+        var doc = xml;
+        if (angular.isString(xml)) {
+            doc = $.parseXML(xml);
+        }
+        console.log("Has Dozer XML document: " + doc);
+        var model = new Dozer.Mappings(doc);
+        var mappingsElement = doc.documentElement;
+        copyAttributes(model, mappingsElement);
+        $(mappingsElement).children("mapping").each(function (idx, element) {
+            var mapping = createMapping(element);
+            model.mappings.push(mapping);
+        });
+        return model;
+    }
+    Dozer.loadDozerModel = loadDozerModel;
+    function saveToXmlText(model) {
+        // lets copy the original doc then replace the mapping elements
+        var element = model.doc.documentElement.cloneNode(false);
+        appendElement(model.mappings, element, null, 1);
+        Dozer.addTextNode(element, "\n");
+        var xmlText = Core.xmlNodeToString(element);
+        return '<?xml version="1.0" encoding="UTF-8"?>\n' + xmlText;
+    }
+    Dozer.saveToXmlText = saveToXmlText;
+    function findUnmappedFields(workspace, mapping, fn) {
+        // lets find the fields which are unmapped
+        var className = mapping.class_a.value;
+        findProperties(workspace, className, null, function (properties) {
+            var answer = [];
+            angular.forEach(properties, function (property) {
+                console.log("got property " + JSON.stringify(property, null, "  "));
+                var name = property.name;
+                if (name) {
+                    if (mapping.hasFromField(name)) {
+                    }
+                    else {
+                        // TODO auto-detect this property name in the to classes?
+                        answer.push(new Dozer.UnmappedField(name, property));
+                    }
+                }
+            });
+            fn(answer);
+        });
+    }
+    Dozer.findUnmappedFields = findUnmappedFields;
+    /**
+     * Finds the properties on the given class and returns them; and either invokes the given function
+     * or does a sync request and returns them
+     * @method findProperties
+     * @for Dozer
+     * @static
+     * @param {Core.Workspace} workspace
+     * @param {String} className
+     * @param {String} filter
+     * @param {Function} fn
+     * @return {any}
+     */
+    function findProperties(workspace, className, filter, fn) {
+        if (filter === void 0) { filter = null; }
+        if (fn === void 0) { fn = null; }
+        var mbean = getIntrospectorMBean(workspace);
+        if (mbean) {
+            if (filter) {
+                return workspace.jolokia.execute(mbean, "findProperties", className, filter, Core.onSuccess(fn));
+            }
+            else {
+                return workspace.jolokia.execute(mbean, "getProperties", className, Core.onSuccess(fn));
+            }
+        }
+        else {
+            if (fn) {
+                return fn([]);
+            }
+            else {
+                return [];
+            }
+        }
+    }
+    Dozer.findProperties = findProperties;
+    /**
+     * Finds class names matching the given search text and either invokes the function with the results
+     * or does a sync request and returns them.
+     * @method findClassNames
+     * @for Dozer
+     * @static
+     * @param {Core.Workspace} workspace
+     * @param {String} searchText
+     * @param {Number} limit @default 20
+     * @param {Function} fn
+     * @return {any}
+     */
+    function findClassNames(workspace, searchText, limit, fn) {
+        if (limit === void 0) { limit = 20; }
+        if (fn === void 0) { fn = null; }
+        var mbean = getIntrospectorMBean(workspace);
+        if (mbean) {
+            return workspace.jolokia.execute(mbean, "findClassNames", searchText, limit, Core.onSuccess(fn));
+        }
+        else {
+            if (fn) {
+                return fn([]);
+            }
+            else {
+                return [];
+            }
+        }
+    }
+    Dozer.findClassNames = findClassNames;
+    function getIntrospectorMBean(workspace) {
+        // lets hard code this so its easy to use in any JVM
+        return Dozer.introspectorMBean;
+        // return Core.getMBeanTypeObjectName(workspace, "hawtio", "Introspector");
+    }
+    Dozer.getIntrospectorMBean = getIntrospectorMBean;
+    function loadModelFromTree(rootTreeNode, oldModel) {
+        oldModel.mappings = [];
+        angular.forEach(rootTreeNode.childList, function (treeNode) {
+            var mapping = Core.pathGet(treeNode, ["data", "entity"]);
+            if (mapping) {
+                oldModel.mappings.push(mapping);
+            }
+        });
+        return oldModel;
+    }
+    Dozer.loadModelFromTree = loadModelFromTree;
+    function createDozerTree(model) {
+        var id = "mappings";
+        var folder = new Folder(id);
+        folder.addClass = "net-sourceforge-dozer-mappings";
+        folder.domain = Dozer.jmxDomain;
+        folder.typeName = "mappings";
+        folder.entity = model;
+        folder.key = Core.toSafeDomID(id);
+        angular.forEach(model.mappings, function (mapping) {
+            var mappingFolder = createMappingFolder(mapping, folder);
+            folder.children.push(mappingFolder);
+        });
+        return folder;
+    }
+    Dozer.createDozerTree = createDozerTree;
+    function createMappingFolder(mapping, parentFolder) {
+        var mappingName = mapping.name();
+        var mappingFolder = new Folder(mappingName);
+        mappingFolder.addClass = "net-sourceforge-dozer-mapping";
+        mappingFolder.typeName = "mapping";
+        mappingFolder.domain = Dozer.jmxDomain;
+        mappingFolder.key = (parentFolder ? parentFolder.key + "_" : "") + Core.toSafeDomID(mappingName);
+        mappingFolder.parent = parentFolder;
+        mappingFolder.entity = mapping;
+        mappingFolder.icon = Core.url("/plugins/dozer/img/class.gif");
+        /*
+              mappingFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
+              */
+        angular.forEach(mapping.fields, function (field) {
+            addMappingFieldFolder(field, mappingFolder);
+        });
+        return mappingFolder;
+    }
+    Dozer.createMappingFolder = createMappingFolder;
+    function addMappingFieldFolder(field, mappingFolder) {
+        var name = field.name();
+        var fieldFolder = new Folder(name);
+        fieldFolder.addClass = "net-sourceforge-dozer-field";
+        fieldFolder.typeName = "field";
+        fieldFolder.domain = Dozer.jmxDomain;
+        fieldFolder.key = mappingFolder.key + "_" + Core.toSafeDomID(name);
+        fieldFolder.parent = mappingFolder;
+        fieldFolder.entity = field;
+        fieldFolder.icon = Core.url("/plugins/dozer/img/attribute.gif");
+        /*
+              fieldFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
+              */
+        mappingFolder.children.push(fieldFolder);
+        return fieldFolder;
+    }
+    Dozer.addMappingFieldFolder = addMappingFieldFolder;
+    function createMapping(element) {
+        var mapping = new Dozer.Mapping();
+        var elementJQ = $(element);
+        mapping.class_a = createMappingClass(elementJQ.children("class-a"));
+        mapping.class_b = createMappingClass(elementJQ.children("class-b"));
+        elementJQ.children("field").each(function (idx, fieldElement) {
+            var field = createField(fieldElement);
+            mapping.fields.push(field);
+        });
+        copyAttributes(mapping, element);
+        return mapping;
+    }
+    function createField(element) {
+        if (element) {
+            var jqe = $(element);
+            var a = jqe.children("a").text();
+            var b = jqe.children("b").text();
+            var field = new Dozer.Field(new Dozer.FieldDefinition(a), new Dozer.FieldDefinition(b));
+            copyAttributes(field, element);
+            return field;
+        }
+        return new Dozer.Field(new Dozer.FieldDefinition(""), new Dozer.FieldDefinition(""));
+    }
+    function createMappingClass(jqElement) {
+        if (jqElement && jqElement[0]) {
+            var element = jqElement[0];
+            var text = element.textContent;
+            if (text) {
+                var mappingClass = new Dozer.MappingClass(text);
+                copyAttributes(mappingClass, element);
+                return mappingClass;
+            }
+        }
+        // lets create a default empty mapping
+        return new Dozer.MappingClass("");
+    }
+    function copyAttributes(object, element) {
+        var attributeMap = element.attributes;
+        for (var i = 0; i < attributeMap.length; i++) {
+            // TODO hacky work around for compiler issue ;)
+            //var attr = attributeMap.item(i);
+            var attMap = attributeMap;
+            var attr = attMap.item(i);
+            if (attr) {
+                var name = attr.localName;
+                var value = attr.value;
+                if (name && !name.startsWith("xmlns")) {
+                    var safeName = Forms.safeIdentifier(name);
+                    object[safeName] = value;
+                }
+            }
+        }
+    }
+    function appendAttributes(object, element, ignorePropertyNames) {
+        angular.forEach(object, function (value, key) {
+            if (ignorePropertyNames.any(key)) {
+            }
+            else {
+                // lets add an attribute value
+                if (value) {
+                    var text = value.toString();
+                    // lets replace any underscores with dashes
+                    var name = key.replace(/_/g, '-');
+                    element.setAttribute(name, text);
+                }
+            }
+        });
+    }
+    Dozer.appendAttributes = appendAttributes;
+    /**
+     * Adds a new child element for this mapping to the given element
+     * @method appendElement
+     * @for Dozer
+     * @static
+     * @param {any} object
+     * @param {any} element
+     * @param {String} elementName
+     * @param {Number} indentLevel
+     * @return the last child element created
+     */
+    function appendElement(object, element, elementName, indentLevel) {
+        if (elementName === void 0) { elementName = null; }
+        if (indentLevel === void 0) { indentLevel = 0; }
+        var answer = null;
+        if (angular.isArray(object)) {
+            angular.forEach(object, function (child) {
+                answer = appendElement(child, element, elementName, indentLevel);
+            });
+        }
+        else if (object) {
+            if (!elementName) {
+                var className = Core.pathGet(object, ["constructor", "name"]);
+                if (!className) {
+                    console.log("WARNING: no class name for value " + object);
+                }
+                else {
+                    elementName = Dozer.elementNameMappings[className];
+                    if (!elementName) {
+                        console.log("WARNING: could not map class name " + className + " to an XML element name");
+                    }
+                }
+            }
+            if (elementName) {
+                if (indentLevel) {
+                    var text = indentText(indentLevel);
+                    Dozer.addTextNode(element, text);
+                }
+                var doc = element.ownerDocument || document;
+                var child = doc.createElement(elementName);
+                // navigate child properties...
+                var fn = object.saveToElement;
+                if (fn) {
+                    fn.apply(object, [child]);
+                }
+                else {
+                    angular.forEach(object, function (value, key) {
+                        console.log("has key " + key + " value " + value);
+                    });
+                }
+                // if we have any element children then add newline text node
+                if ($(child).children().length) {
+                    //var text = indentText(indentLevel - 1);
+                    var text = indentText(indentLevel);
+                    Dozer.addTextNode(child, text);
+                }
+                element.appendChild(child);
+                answer = child;
+            }
+        }
+        return answer;
+    }
+    Dozer.appendElement = appendElement;
+    function nameOf(object) {
+        var text = angular.isObject(object) ? object["value"] : null;
+        if (!text && angular.isString(object)) {
+            text = object;
+        }
+        return text || "?";
+    }
+    Dozer.nameOf = nameOf;
+    function addTextNode(element, text) {
+        if (text) {
+            var doc = element.ownerDocument || document;
+            var child = doc.createTextNode(text);
+            element.appendChild(child);
+        }
+    }
+    Dozer.addTextNode = addTextNode;
+    function indentText(indentLevel) {
+        var text = "\n";
+        for (var i = 0; i < indentLevel; i++) {
+            text += "  ";
+        }
+        return text;
+    }
+})(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Dozer
+ */
+var Dozer;
+(function (Dozer) {
+    /**
+     * @class Mappings
+     */
+    var Mappings = (function () {
+        function Mappings(doc, mappings) {
+            if (mappings === void 0) { mappings = []; }
+            this.doc = doc;
+            this.mappings = mappings;
+        }
+        return Mappings;
+    })();
+    Dozer.Mappings = Mappings;
+    /**
+     * @class Mapping
+     */
+    var Mapping = (function () {
+        function Mapping() {
+            this.fields = [];
+            this.map_id = Core.getUUID();
+            this.class_a = new MappingClass('');
+            this.class_b = new MappingClass('');
+        }
+        Mapping.prototype.name = function () {
+            return Dozer.nameOf(this.class_a) + " -> " + Dozer.nameOf(this.class_b);
+        };
+        Mapping.prototype.hasFromField = function (name) {
+            return this.fields.find(function (f) { return name === f.a.value; });
+        };
+        Mapping.prototype.hasToField = function (name) {
+            return this.fields.find(function (f) { return name === f.b.value; });
+        };
+        Mapping.prototype.saveToElement = function (element) {
+            Dozer.appendElement(this.class_a, element, "class-a", 2);
+            Dozer.appendElement(this.class_b, element, "class-b", 2);
+            Dozer.appendElement(this.fields, element, "field", 2);
+            Dozer.appendAttributes(this, element, ["class_a", "class_b", "fields"]);
+        };
+        return Mapping;
+    })();
+    Dozer.Mapping = Mapping;
+    /**
+     * @class MappingClass
+     */
+    var MappingClass = (function () {
+        function MappingClass(value) {
+            this.value = value;
+        }
+        MappingClass.prototype.saveToElement = function (element) {
+            Dozer.addTextNode(element, this.value);
+            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
+        };
+        return MappingClass;
+    })();
+    Dozer.MappingClass = MappingClass;
+    /**
+     * @class Field
+     */
+    var Field = (function () {
+        function Field(a, b) {
+            this.a = a;
+            this.b = b;
+        }
+        Field.prototype.name = function () {
+            return Dozer.nameOf(this.a) + " -> " + Dozer.nameOf(this.b);
+        };
+        Field.prototype.saveToElement = function (element) {
+            Dozer.appendElement(this.a, element, "a", 3);
+            Dozer.appendElement(this.b, element, "b", 3);
+            Dozer.appendAttributes(this, element, ["a", "b"]);
+        };
+        return Field;
+    })();
+    Dozer.Field = Field;
+    /**
+     * @class FieldDefinition
+     */
+    var FieldDefinition = (function () {
+        function FieldDefinition(value) {
+            this.value = value;
+        }
+        FieldDefinition.prototype.saveToElement = function (element) {
+            Dozer.addTextNode(element, this.value);
+            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
+        };
+        return FieldDefinition;
+    })();
+    Dozer.FieldDefinition = FieldDefinition;
+    /**
+     * @class UnmappedField
+     */
+    var UnmappedField = (function () {
+        function UnmappedField(fromField, property, toField) {
+            if (toField === void 0) { toField = null; }
+            this.fromField = fromField;
+            this.property = property;
+            this.toField = toField;
+        }
+        return UnmappedField;
+    })();
+    Dozer.UnmappedField = UnmappedField;
+})(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Dozer
+ */
+var Dozer;
+(function (Dozer) {
+    /**
+     * Configures the JSON schemas to improve the UI models
+     * @method schemaConfigure
+     * @for Dozer
+     */
+    function schemaConfigure() {
+        Dozer.io_hawt_dozer_schema_Field["tabs"] = {
+            'Fields': ['a.value', 'b.value'],
+            'From Field': ['a\\..*'],
+            'To Field': ['b\\..*'],
+            'Field Configuration': ['*']
+        };
+        Dozer.io_hawt_dozer_schema_Mapping["tabs"] = {
+            'Classes': ['class-a.value', 'class-b.value'],
+            'From Class': ['class-a\\..*'],
+            'To Class': ['class-b\\..*'],
+            'Class Configuration': ['*']
+        };
+        // hide the fields table from the class configuration tab
+        Dozer.io_hawt_dozer_schema_Mapping.properties.fieldOrFieldExclude.hidden = true;
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "label"], "From Field");
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "label"], "To Field");
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "label"], "From Class");
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "label"], "To Class");
+        // ignore prefixes in the generated labels
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "ignorePrefixInLabel"], true);
+        // add custom widgets
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "formTemplate"], classNameWidget("class_a"));
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "formTemplate"], classNameWidget("class_b"));
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.a.value" ' + 'typeahead="title for title in fromFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.b.value" ' + 'typeahead="title for title in toFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
+        function classNameWidget(propertyName) {
+            return '<input type="text" ng-model="dozerEntity.' + propertyName + '.value" ' + 'typeahead="title for title in classNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>';
+        }
+    }
+    Dozer.schemaConfigure = schemaConfigure;
+})(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * A bunch of API stubs for now until we remove references to Fabric or refactor the code
+ * to work nicely in Kubernetes
+ */
+var Fabric;
+(function (Fabric) {
+    Fabric.fabricTopLevel = "fabric/profiles/";
+    Fabric.profileSuffix = ".profile";
+    function initScope($scope, $location, jolokia, workspace) {
+    }
+    Fabric.initScope = initScope;
+    function brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName) {
+    }
+    Fabric.brokerConfigLink = brokerConfigLink;
+    function containerJolokia(jolokia, id, fn) {
+    }
+    Fabric.containerJolokia = containerJolokia;
+    function pagePathToProfileId(pageId) {
+    }
+    Fabric.pagePathToProfileId = pagePathToProfileId;
+    function profileJolokia(jolokia, profileId, versionId, callback) {
+    }
+    Fabric.profileJolokia = profileJolokia;
+    function getDefaultVersionId(jolokia) {
+    }
+    Fabric.getDefaultVersionId = getDefaultVersionId;
+    function getContainersFields(jolokia, fields, onFabricContainerData) {
+    }
+    Fabric.getContainersFields = getContainersFields;
+    function loadBrokerStatus(onBrokerData) {
+        /** TODO
+         Core.register(jolokia, $scope, {type: 'exec', mbean: Fabric.mqManagerMBean, operation: "loadBrokerStatus()"}, Core.onSuccess(onBrokerData));
+         */
+    }
+    Fabric.loadBrokerStatus = loadBrokerStatus;
+    function connectToBroker($scope, container, postfix) {
+    }
+    Fabric.connectToBroker = connectToBroker;
+    function createJolokia(url) {
+    }
+    Fabric.createJolokia = createJolokia;
+    function hasFabric(workspace) {
+    }
+    Fabric.hasFabric = hasFabric;
+    function profilePath(profileId) {
+    }
+    Fabric.profilePath = profilePath;
+    function getOverlayProfileProperties(versionId, profileId, pid, onProfilePropertiesLoaded) {
+        /**
+         * TODO
+         jolokia.execute(Fabric.managerMBean, "getOverlayProfileProperties", $scope.versionId, $scope.profileId, $scope.pid, Core.onSuccess(onProfilePropertiesLoaded));
+         */
+    }
+    Fabric.getOverlayProfileProperties = getOverlayProfileProperties;
+    function getProfileProperties(versionId, profileId, zkPid, onProfileProperties) {
+        /** TODO
+         jolokia.execute(Fabric.managerMBean, "getProfileProperties", $scope.versionId, $scope.profileId, $scope.zkPid, Core.onSuccess(onProfileProperties));
+         */
+    }
+    Fabric.getProfileProperties = getProfileProperties;
+    function setProfileProperties(versionId, profileId, pid, data, callback) {
+        /*
+         TODO
+         jolokia.execute(Fabric.managerMBean, "setProfileProperties", $scope.versionId, $scope.profileId, pid, data, callback);
+         */
+    }
+    Fabric.setProfileProperties = setProfileProperties;
+    function deleteConfigurationFile(versionId, profileId, configFile, successFn, errorFn) {
+        /** TODO
+        jolokia.execute(Fabric.managerMBean, "deleteConfigurationFile",
+          versionId, profileId, configFile,
+          Core.onSuccess(successFn, {error: errorFn}));
+         */
+    }
+    Fabric.deleteConfigurationFile = deleteConfigurationFile;
+    function getProfile(jolokia, branch, profileName, someFlag) {
+    }
+    Fabric.getProfile = getProfile;
+    function createProfile(jolokia, branch, profileName, baseProfiles, successFn, errorFn) {
+    }
+    Fabric.createProfile = createProfile;
+    function newConfigFile(jolokia, branch, profileName, fileName, successFn, errorFn) {
+    }
+    Fabric.newConfigFile = newConfigFile;
+    function saveConfigFile(jolokia, branch, profileName, fileName, contents, successFn, errorFn) {
+    }
+    Fabric.saveConfigFile = saveConfigFile;
+    function getVersionIds(jolokia) {
+    }
+    Fabric.getVersionIds = getVersionIds;
+})(Fabric || (Fabric = {}));
+
+/// <reference path="../../includes.ts"/>
 /// <reference path="gitHelpers.ts"/>
 /**
  * @module Git
@@ -10754,18 +10754,25 @@ var Maven;
     Maven._module = angular.module(pluginName, ['ngResource', 'datatable', 'tree', 'hawtio-core', 'hawtio-ui']);
     //export var _module = angular.module(pluginName, ['bootstrap', 'ngResource', 'datatable', 'tree', 'hawtio-core', 'hawtio-ui']);
     Maven._module.config(["$routeProvider", function ($routeProvider) {
-        $routeProvider.when('/maven/search', { templateUrl: 'plugins/maven/html/search.html' }).when('/maven/advancedSearch', { templateUrl: 'plugins/maven/html/advancedSearch.html' }).when('/maven/artifact/:group/:artifact/:version/:classifier/:packaging', { templateUrl: 'plugins/maven/html/artifact.html' }).when('/maven/artifact/:group/:artifact/:version/:classifier', { templateUrl: 'plugins/maven/html/artifact.html' }).when('/maven/artifact/:group/:artifact/:version', { templateUrl: 'plugins/maven/html/artifact.html' }).when('/maven/dependencies/:group/:artifact/:version/:classifier/:packaging', { templateUrl: 'plugins/maven/html/dependencies.html' }).when('/maven/dependencies/:group/:artifact/:version/:classifier', { templateUrl: 'plugins/maven/html/dependencies.html' }).when('/maven/dependencies/:group/:artifact/:version', { templateUrl: 'plugins/maven/html/dependencies.html' }).when('/maven/versions/:group/:artifact/:classifier/:packaging', { templateUrl: 'plugins/maven/html/versions.html' }).when('/maven/view/:group/:artifact/:version/:classifier/:packaging', { templateUrl: 'plugins/maven/html/view.html' }).when('/maven/test', { templateUrl: 'plugins/maven/html/test.html' });
+        $routeProvider.when('/maven', { redirectTo: '/maven/search' }).when('/maven/search', { templateUrl: 'plugins/maven/html/search.html' }).when('/maven/advancedSearch', { templateUrl: 'plugins/maven/html/advancedSearch.html' }).when('/maven/artifact/:group/:artifact/:version/:classifier/:packaging', { templateUrl: 'plugins/maven/html/artifact.html' }).when('/maven/artifact/:group/:artifact/:version/:classifier', { templateUrl: 'plugins/maven/html/artifact.html' }).when('/maven/artifact/:group/:artifact/:version', { templateUrl: 'plugins/maven/html/artifact.html' }).when('/maven/dependencies/:group/:artifact/:version/:classifier/:packaging', { templateUrl: 'plugins/maven/html/dependencies.html' }).when('/maven/dependencies/:group/:artifact/:version/:classifier', { templateUrl: 'plugins/maven/html/dependencies.html' }).when('/maven/dependencies/:group/:artifact/:version', { templateUrl: 'plugins/maven/html/dependencies.html' }).when('/maven/versions/:group/:artifact/:classifier/:packaging', { templateUrl: 'plugins/maven/html/versions.html' }).when('/maven/view/:group/:artifact/:version/:classifier/:packaging', { templateUrl: 'plugins/maven/html/view.html' }).when('/maven/test', { templateUrl: 'plugins/maven/html/test.html' });
     }]);
-    Maven._module.run(["$location", "workspace", "viewRegistry", "helpRegistry", function ($location, workspace, viewRegistry, helpRegistry) {
-        viewRegistry['maven'] = "plugins/maven/html/layoutMaven.html";
+    Maven._module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", function (nav, $location, workspace, viewRegistry, helpRegistry) {
+        //viewRegistry['maven'] = "plugins/maven/html/layoutMaven.html";
+        var builder = nav.builder();
+        var search = builder.id('maven-search').title(function () { return 'Search'; }).href(function () { return '/maven/search' + workspace.hash(); }).isSelected(function () { return workspace.isLinkPrefixActive('/maven/search'); }).build();
+        var advanced = builder.id('maven-advanced-search').title(function () { return 'Advanced Search'; }).href(function () { return '/maven/advancedSearch' + workspace.hash(); }).isSelected(function () { return workspace.isLinkPrefixActive('/maven/advancedSearch'); }).build();
+        var tab = builder.id('maven').title(function () { return 'Maven'; }).isValid(function () { return Maven.getMavenIndexerMBean(workspace); }).href(function () { return '/maven'; }).isSelected(function () { return workspace.isLinkActive('/maven'); }).tabs(search, advanced).build();
+        nav.add(tab);
+        /*
         workspace.topLevelTabs.push({
-            id: "maven",
-            content: "Maven",
-            title: "Search maven repositories for artifacts",
-            isValid: function (workspace) { return Maven.getMavenIndexerMBean(workspace); },
-            href: function () { return "#/maven/search"; },
-            isActive: function (workspace) { return workspace.isLinkActive("/maven"); }
+          id: "maven",
+          content: "Maven",
+          title: "Search maven repositories for artifacts",
+          isValid: (workspace: Workspace) => Maven.getMavenIndexerMBean(workspace),
+          href: () => "#/maven/search",
+          isActive: (workspace: Workspace) => workspace.isLinkActive("/maven")
         });
+        */
         helpRegistry.addUserDoc('maven', 'plugins/maven/doc/help.md', function () {
             return Maven.getMavenIndexerMBean(workspace) !== null;
         });
