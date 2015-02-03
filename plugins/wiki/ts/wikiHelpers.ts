@@ -607,7 +607,7 @@ module Wiki {
     var url = gitRelativeURL(branch, path);
     url = Core.url('/' + url);
 
-    var connectionName = Core.getConnectionNameParameter(location.search);
+    var connectionName = Core.getConnectionNameParameter();
     if (connectionName) {
       var connectionOptions = Core.getConnectOptions(connectionName);
       if (connectionOptions) {
@@ -676,7 +676,7 @@ module Wiki {
     if (iconUrl) {
       css = null;
       icon = UrlHelpers.join("git", iconUrl);
-      var connectionName = Core.getConnectionNameParameter(location.search);
+      var connectionName = Core.getConnectionNameParameter();
       if (connectionName) {
         var connectionOptions = Core.getConnectOptions(connectionName);
         if (connectionOptions) {
@@ -703,7 +703,7 @@ module Wiki {
           case 'gif':
             css = null;
             icon = Wiki.gitRelativeURL(branch, path);
-            var connectionName = Core.getConnectionNameParameter(location.search);
+            var connectionName = Core.getConnectionNameParameter();
             if (connectionName) {
               var connectionOptions = Core.getConnectOptions(connectionName);
               if (connectionOptions) {
