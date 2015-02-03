@@ -60,6 +60,7 @@
 /// <reference path="d.ts/maven/ts/versions.d.ts"/>
 /// <reference path="d.ts/maven/ts/view.d.ts"/>
 /// <reference path="d.ts/osgi/ts/osgiHelpers.d.ts"/>
+/// <reference path="d.ts/osgi/ts/osgiData.d.ts"/>
 /// <reference path="d.ts/osgi/ts/osgiPlugin.d.ts"/>
 /// <reference path="d.ts/osgi/ts/bundle-list.d.ts"/>
 /// <reference path="d.ts/osgi/ts/bundle.d.ts"/>
@@ -67,7 +68,6 @@
 /// <reference path="d.ts/osgi/ts/configurations.d.ts"/>
 /// <reference path="d.ts/osgi/ts/framework.d.ts"/>
 /// <reference path="d.ts/osgi/ts/metadata.d.ts"/>
-/// <reference path="d.ts/osgi/ts/osgiData.d.ts"/>
 /// <reference path="d.ts/osgi/ts/osgiGraphBuilder.d.ts"/>
 /// <reference path="d.ts/osgi/ts/osgiTopLevel.d.ts"/>
 /// <reference path="d.ts/osgi/ts/package.d.ts"/>

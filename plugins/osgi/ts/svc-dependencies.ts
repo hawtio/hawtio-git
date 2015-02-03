@@ -39,7 +39,7 @@ module Osgi {
 
         $scope.updateLink = () => {
 
-            var search = $location.search;
+            var search = $location.search();
 
             if ($scope.bundleFilter && $scope.bundleFilter != "") {
                 search["bundleFilter"] = $scope.bundleFilter;
