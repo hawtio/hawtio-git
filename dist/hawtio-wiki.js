@@ -4,6 +4,3014 @@
 /// <reference path="../libs/hawtio-utilities/defs.d.ts"/>
 
 /// <reference path="../../includes.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ.pluginName = 'activemq';
+    ActiveMQ.log = Logger.get("activemq");
+    ActiveMQ.jmxDomain = 'org.apache.activemq';
+    function getSelectionQueuesFolder(workspace) {
+        function findQueuesFolder(node) {
+            if (node) {
+                if (node.title === "Queues" || node.title === "Queue") {
+                    return node;
+                }
+                var parent = node.parent;
+                if (parent) {
+                    return findQueuesFolder(parent);
+                }
+            }
+            return null;
+        }
+        var selection = workspace.selection;
+        if (selection) {
+            return findQueuesFolder(selection);
+        }
+        return null;
+    }
+    ActiveMQ.getSelectionQueuesFolder = getSelectionQueuesFolder;
+    function getSelectionTopicsFolder(workspace) {
+        function findTopicsFolder(node) {
+            var answer = null;
+            if (node) {
+                if (node.title === "Topics" || node.title === "Topic") {
+                    answer = node;
+                }
+                if (answer === null) {
+                    angular.forEach(node.children, function (child) {
+                        if (child.title === "Topics" || child.title === "Topic") {
+                            answer = child;
+                        }
+                    });
+                }
+            }
+            return answer;
+        }
+        var selection = workspace.selection;
+        if (selection) {
+            return findTopicsFolder(selection);
+        }
+        return null;
+    }
+    ActiveMQ.getSelectionTopicsFolder = getSelectionTopicsFolder;
+    /**
+     * Sets $scope.row to currently selected JMS message.
+     * Used in:
+     *  - activemq/js/browse.ts
+     *  - camel/js/browseEndpoint.ts
+     *
+     * TODO: remove $scope argument and operate directly on other variables. but it's too much side effects here...
+     *
+     * @param message
+     * @param key unique key inside message that distinguishes between values
+     * @param $scope
+     */
+    function selectCurrentMessage(message, key, $scope) {
+        // clicking on message's link would interfere with messages selected with checkboxes
+        $scope.gridOptions.selectAll(false);
+        var idx = Core.pathGet(message, ["rowIndex"]);
+        var jmsMessageID = Core.pathGet(message, ["entity", key]);
+        $scope.rowIndex = idx;
+        var selected = $scope.gridOptions.selectedItems;
+        selected.splice(0, selected.length);
+        if (idx >= 0 && idx < $scope.messages.length) {
+            $scope.row = $scope.messages.find(function (msg) { return msg[key] === jmsMessageID; });
+            if ($scope.row) {
+                selected.push($scope.row);
+            }
+        }
+        else {
+            $scope.row = null;
+        }
+    }
+    ActiveMQ.selectCurrentMessage = selectCurrentMessage;
+    /**
+     * - Adds functions needed for message browsing with details
+     * - Adds a watch to deselect all rows after closing the slideout with message details
+     * TODO: export these functions too?
+     *
+     * @param $scope
+     */
+    function decorate($scope) {
+        $scope.selectRowIndex = function (idx) {
+            $scope.rowIndex = idx;
+            var selected = $scope.gridOptions.selectedItems;
+            selected.splice(0, selected.length);
+            if (idx >= 0 && idx < $scope.messages.length) {
+                $scope.row = $scope.messages[idx];
+                if ($scope.row) {
+                    selected.push($scope.row);
+                }
+            }
+            else {
+                $scope.row = null;
+            }
+        };
+        $scope.$watch("showMessageDetails", function () {
+            if (!$scope.showMessageDetails) {
+                $scope.row = null;
+                $scope.gridOptions.selectedItems.splice(0, $scope.gridOptions.selectedItems.length);
+            }
+        });
+    }
+    ActiveMQ.decorate = decorate;
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/**
+ * @module ActiveMQ
+ * @main ActiveMQ
+ */
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module = angular.module(ActiveMQ.pluginName, []);
+    ActiveMQ._module.config(["$routeProvider", function ($routeProvider) {
+        $routeProvider.when('/activemq/browseQueue', { templateUrl: 'plugins/activemq/html/browseQueue.html' }).when('/activemq/diagram', { templateUrl: 'plugins/activemq/html/brokerDiagram.html', reloadOnSearch: false }).when('/activemq/createDestination', { templateUrl: 'plugins/activemq/html/createDestination.html' }).when('/activemq/createQueue', { templateUrl: 'plugins/activemq/html/createQueue.html' }).when('/activemq/createTopic', { templateUrl: 'plugins/activemq/html/createTopic.html' }).when('/activemq/deleteQueue', { templateUrl: 'plugins/activemq/html/deleteQueue.html' }).when('/activemq/deleteTopic', { templateUrl: 'plugins/activemq/html/deleteTopic.html' }).when('/activemq/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html' }).when('/activemq/durableSubscribers', { templateUrl: 'plugins/activemq/html/durableSubscribers.html' }).when('/activemq/jobs', { templateUrl: 'plugins/activemq/html/jobs.html' });
+    }]);
+    ActiveMQ._module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", function (nav, $location, workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache) {
+        viewRegistry['activemq'] = 'plugins/activemq/html/layoutActiveMQTree.html';
+        helpRegistry.addUserDoc('activemq', 'plugins/activemq/doc/help.md', function () {
+            return workspace.treeContainsDomainAndProperties("org.apache.activemq");
+        });
+        preferencesRegistry.addTab("ActiveMQ", "plugins/activemq/html/preferences.html", function () {
+            return workspace.treeContainsDomainAndProperties("org.apache.activemq");
+        });
+        workspace.addTreePostProcessor(postProcessTree);
+        // register default attribute views
+        var attributes = workspace.attributeColumnDefs;
+        attributes[ActiveMQ.jmxDomain + "/Broker/folder"] = [
+            { field: 'BrokerName', displayName: 'Name', width: "**" },
+            { field: 'TotalProducerCount', displayName: 'Producer #' },
+            { field: 'TotalConsumerCount', displayName: 'Consumer #' },
+            { field: 'StorePercentUsage', displayName: 'Store %' },
+            { field: 'TempPercentUsage', displayName: 'Temp %' },
+            { field: 'MemoryPercentUsage', displayName: 'Memory %' },
+            { field: 'TotalEnqueueCount', displayName: 'Enqueue #' },
+            { field: 'TotalDequeueCount', displayName: 'Dequeue #' }
+        ];
+        attributes[ActiveMQ.jmxDomain + "/Queue/folder"] = [
+            { field: 'Name', displayName: 'Name', width: "***" },
+            { field: 'QueueSize', displayName: 'Queue Size' },
+            { field: 'ProducerCount', displayName: 'Producer #' },
+            { field: 'ConsumerCount', displayName: 'Consumer #' },
+            { field: 'EnqueueCount', displayName: 'Enqueue #' },
+            { field: 'DequeueCount', displayName: 'Dequeue #' },
+            { field: 'MemoryPercentUsage', displayName: 'Memory %' },
+            { field: 'DispatchCount', displayName: 'Dispatch #', visible: false }
+        ];
+        attributes[ActiveMQ.jmxDomain + "/Topic/folder"] = [
+            { field: 'Name', displayName: 'Name', width: "****" },
+            { field: 'ProducerCount', displayName: 'Producer #' },
+            { field: 'ConsumerCount', displayName: 'Consumer #' },
+            { field: 'EnqueueCount', displayName: 'Enqueue #' },
+            { field: 'DequeueCount', displayName: 'Dequeue #' },
+            { field: 'MemoryPercentUsage', displayName: 'Memory %' },
+            { field: 'DispatchCount', displayName: 'Dispatch #', visible: false }
+        ];
+        attributes[ActiveMQ.jmxDomain + "/Consumer/folder"] = [
+            { field: 'ConnectionId', displayName: 'Name', width: "**" },
+            { field: 'PrefetchSize', displayName: 'Prefetch Size' },
+            { field: 'Priority', displayName: 'Priority' },
+            { field: 'DispatchedQueueSize', displayName: 'Dispatched Queue #' },
+            { field: 'SlowConsumer', displayName: 'Slow ?' },
+            { field: 'Retroactive', displayName: 'Retroactive' },
+            { field: 'Selector', displayName: 'Selector' }
+        ];
+        attributes[ActiveMQ.jmxDomain + "/networkConnectors/folder"] = [
+            { field: 'Name', displayName: 'Name', width: "**" },
+            { field: 'UserName', displayName: 'User Name' },
+            { field: 'PrefetchSize', displayName: 'Prefetch Size' },
+            { field: 'ConduitSubscriptions', displayName: 'Conduit Subscriptions?' },
+            { field: 'Duplex', displayName: 'Duplex' },
+            { field: 'DynamicOnly', displayName: 'Dynamic Only' }
+        ];
+        attributes[ActiveMQ.jmxDomain + "/PersistenceAdapter/folder"] = [
+            { field: 'IndexDirectory', displayName: 'Index Directory', width: "**" },
+            { field: 'LogDirectory', displayName: 'Log Directory', width: "**" }
+        ];
+        var builder = nav.builder();
+        var tab = builder.id('activemq').title(function () { return 'ActiveMQ'; }).href(function () { return '/jmx/attributes?tab=activemq'; }).isSelected(function () { return workspace.isTopTabActive('activemq'); }).isValid(function () { return workspace.treeContainsDomainAndProperties(ActiveMQ.jmxDomain); }).build();
+        tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
+        // add sub level tabs
+        tab.tabs.push({
+            id: 'activemq-diagram',
+            title: function () { return '<i class="fa fa-picture"></i> Diagram'; },
+            //title: "View a diagram of the producers, destinations and consumers",
+            show: function () { return workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(ActiveMQ.jmxDomain); },
+            isSelected: function () { return workspace.isLinkActive('activemq/diagram'); },
+            href: function () { return "/activemq/diagram"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-browse',
+            title: function () { return '<i class="fa fa-envelope"></i> Browse'; },
+            //title: "Browse the messages on the queue",
+            show: function () { return isQueue(workspace) && workspace.hasInvokeRights(workspace.selection, "browse()"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/browseQueue'); },
+            href: function () { return "/activemq/browseQueue"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-send',
+            title: function () { return '<i class="fa fa-pencil"></i> Send'; },
+            //title: "Send a message to this destination",
+            show: function () { return (isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(workspace.selection, "sendTextMessage(java.util.Map,java.lang.String,java.lang.String,java.lang.String)"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/sendMessage'); },
+            href: function () { return "/activemq/sendMessage"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-durable-subscribers',
+            title: function () { return '<i class="fa fa-list"></i> Durable Subscribers'; },
+            //title: "Manage durable subscribers",
+            show: function () { return isBroker(workspace); },
+            isSelected: function () { return workspace.isLinkActive('activemq/durableSubscribers'); },
+            href: function () { return "/activemq/durableSubscribers"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-jobs',
+            title: function () { return '<i class="fa fa-list"></i> Jobs'; },
+            //title: "Manage jobs",
+            show: function () { return isJobScheduler(workspace); },
+            isSelected: function () { return workspace.isLinkActive('activemq/jobs'); },
+            href: function () { return "/activemq/jobs"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-create-destination',
+            title: function () { return '<i class="fa fa-plus"></i> Create'; },
+            //title: "Create a new destination",
+            show: function () { return isBroker(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/createDestination'); },
+            href: function () { return "/activemq/createDestination"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-create-queue',
+            title: function () { return '<i class="fa fa-plus"></i> Create'; },
+            //title: "Create a new queue",
+            show: function () { return isQueuesFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/createQueue'); },
+            href: function () { return "/activemq/createQueue"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-create-topic',
+            title: function () { return '<i class="fa fa-plus"></i> Create'; },
+            //title: "Create a new topic",
+            show: function () { return isTopicsFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/createTopic'); },
+            href: function () { return "/activemq/createTopic"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-delete-topic',
+            title: function () { return '<i class="fa fa-remove"></i> Delete Topic'; },
+            //title: "Delete this topic",
+            show: function () { return isTopic(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeTopic"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/deleteTopic'); },
+            href: function () { return "/activemq/deleteTopic"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-delete-queue',
+            title: function () { return '<i class="fa fa-remove"></i> Delete'; },
+            //title: "Delete or purge this queue",
+            show: function () { return isQueue(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeQueue"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/deleteQueue'); },
+            href: function () { return "/activemq/deleteQueue"; }
+        });
+        nav.add(tab);
+        function postProcessTree(tree) {
+            var activemq = tree.get("org.apache.activemq");
+            setConsumerType(activemq);
+            // lets move queue and topic as first children within brokers
+            if (activemq) {
+                angular.forEach(activemq.children, function (broker) {
+                    angular.forEach(broker.children, function (child) {
+                        // lets move Topic/Queue to the front.
+                        var grandChildren = child.children;
+                        if (grandChildren) {
+                            var names = ["Topic", "Queue"];
+                            angular.forEach(names, function (name) {
+                                var idx = grandChildren.findIndex(function (n) { return n.title === name; });
+                                if (idx > 0) {
+                                    var old = grandChildren[idx];
+                                    grandChildren.splice(idx, 1);
+                                    grandChildren.splice(0, 0, old);
+                                }
+                            });
+                        }
+                    });
+                });
+            }
+        }
+        function setConsumerType(node) {
+            if (node) {
+                var parent = node.parent;
+                var entries = node.entries;
+                if (parent && !parent.typeName && entries) {
+                    var endpoint = entries["endpoint"];
+                    if (endpoint === "Consumer" || endpoint === "Producer") {
+                        //console.log("Setting the typeName on " + parent.title + " to " + endpoint);
+                        parent.typeName = endpoint;
+                    }
+                    var connectorName = entries["connectorName"];
+                    if (connectorName && !node.icon) {
+                        // lets default a connector icon
+                        node.icon = Core.url("/img/icons/activemq/connector.png");
+                    }
+                }
+                angular.forEach(node.children, function (child) { return setConsumerType(child); });
+            }
+        }
+    }]);
+    hawtioPluginLoader.addModule(ActiveMQ.pluginName);
+    function getBroker(workspace) {
+        var answer = null;
+        var selection = workspace.selection;
+        if (selection) {
+            answer = selection.findAncestor(function (current) {
+                // log.debug("Checking current: ", current);
+                var entries = current.entries;
+                if (entries) {
+                    return (('type' in entries && entries.type === 'Broker') && 'brokerName' in entries && !('destinationName' in entries) && !('destinationType' in entries));
+                }
+                else {
+                    return false;
+                }
+            });
+        }
+        return answer;
+    }
+    ActiveMQ.getBroker = getBroker;
+    function isQueue(workspace) {
+        //return workspace.selectionHasDomainAndType(jmxDomain, 'Queue');
+        return workspace.hasDomainAndProperties(ActiveMQ.jmxDomain, { 'destinationType': 'Queue' }, 4) || workspace.selectionHasDomainAndType(ActiveMQ.jmxDomain, 'Queue');
+    }
+    ActiveMQ.isQueue = isQueue;
+    function isTopic(workspace) {
+        //return workspace.selectionHasDomainAndType(jmxDomain, 'Topic');
+        return workspace.hasDomainAndProperties(ActiveMQ.jmxDomain, { 'destinationType': 'Topic' }, 4) || workspace.selectionHasDomainAndType(ActiveMQ.jmxDomain, 'Topic');
+    }
+    ActiveMQ.isTopic = isTopic;
+    function isQueuesFolder(workspace) {
+        return workspace.selectionHasDomainAndLastFolderName(ActiveMQ.jmxDomain, 'Queue');
+    }
+    ActiveMQ.isQueuesFolder = isQueuesFolder;
+    function isTopicsFolder(workspace) {
+        return workspace.selectionHasDomainAndLastFolderName(ActiveMQ.jmxDomain, 'Topic');
+    }
+    ActiveMQ.isTopicsFolder = isTopicsFolder;
+    function isJobScheduler(workspace) {
+        return workspace.hasDomainAndProperties(ActiveMQ.jmxDomain, { 'service': 'JobScheduler' }, 4);
+    }
+    ActiveMQ.isJobScheduler = isJobScheduler;
+    function isBroker(workspace) {
+        if (workspace.selectionHasDomainAndType(ActiveMQ.jmxDomain, 'Broker')) {
+            var self = Core.pathGet(workspace, ["selection"]);
+            var parent = Core.pathGet(workspace, ["selection", "parent"]);
+            return !(parent && (parent.ancestorHasType('Broker') || self.ancestorHasType('Broker')));
+        }
+        return false;
+    }
+    ActiveMQ.isBroker = isBroker;
+})(ActiveMQ || (ActiveMQ = {}));
+
+/**
+ * @module Git
+ */
+var Git;
+(function (Git) {
+    function createGitRepository(workspace, jolokia, localStorage) {
+        var mbean = getGitMBean(workspace);
+        if (mbean && jolokia) {
+            return new Git.JolokiaGit(mbean, jolokia, localStorage, workspace.userDetails);
+        }
+        // TODO use local storage to make a little wiki thingy?
+        return null;
+    }
+    Git.createGitRepository = createGitRepository;
+    Git.jmxDomain = "hawtio";
+    Git.mbeanType = "GitFacade";
+    function hasGit(workspace) {
+        return getGitMBean(workspace) !== null;
+    }
+    Git.hasGit = hasGit;
+    /**
+     * Returns the JMX ObjectName of the git mbean
+     * @method getGitMBean
+     * @for Git
+     * @param {Workspace} workspace
+     * @return {String}
+     */
+    function getGitMBean(workspace) {
+        return Core.getMBeanTypeObjectName(workspace, Git.jmxDomain, Git.mbeanType);
+    }
+    Git.getGitMBean = getGitMBean;
+    /**
+     * Returns the Folder for the git mbean if it can be found
+     * @method getGitMBeanFolder
+     * @for Git
+     * @param {Workspace} workspace
+     * @return {Folder}
+     */
+    function getGitMBeanFolder(workspace) {
+        return Core.getMBeanTypeFolder(workspace, Git.jmxDomain, Git.mbeanType);
+    }
+    Git.getGitMBeanFolder = getGitMBeanFolder;
+    /**
+     * Returns true if the git mbean is a fabric configuration repository
+     * (so we can use it for the fabric plugin)
+     * @method isGitMBeanFabric
+     * @for Git
+     * @param {Workspace} workspace
+     * @return {Boolean}
+     */
+    function isGitMBeanFabric(workspace) {
+        var folder = getGitMBeanFolder(workspace);
+        return folder && folder.entries["repo"] === "fabric";
+    }
+    Git.isGitMBeanFabric = isGitMBeanFabric;
+})(Git || (Git = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+/**
+ * @module Wiki
+ */
+var Wiki;
+(function (Wiki) {
+    Wiki.log = Logger.get("Wiki");
+    Wiki.camelNamespaces = ["http://camel.apache.org/schema/spring", "http://camel.apache.org/schema/blueprint"];
+    Wiki.springNamespaces = ["http://www.springframework.org/schema/beans"];
+    Wiki.droolsNamespaces = ["http://drools.org/schema/drools-spring"];
+    Wiki.dozerNamespaces = ["http://dozer.sourceforge.net"];
+    Wiki.activemqNamespaces = ["http://activemq.apache.org/schema/core"];
+    Wiki.excludeAdjustmentPrefixes = ["http://", "https://", "#"];
+    (function (ViewMode) {
+        ViewMode[ViewMode["List"] = 0] = "List";
+        ViewMode[ViewMode["Icon"] = 1] = "Icon";
+    })(Wiki.ViewMode || (Wiki.ViewMode = {}));
+    var ViewMode = Wiki.ViewMode;
+    ;
+    /**
+     * The custom views within the wiki namespace; either "/wiki/$foo" or "/wiki/branch/$branch/$foo"
+     */
+    Wiki.customWikiViewPages = ["/formTable", "/camel/diagram", "/camel/canvas", "/camel/properties", "/dozer/mappings"];
+    /**
+     * Which extensions do we wish to hide in the wiki file listing
+     * @property hideExtensions
+     * @for Wiki
+     * @type Array
+     */
+    Wiki.hideExtensions = [".profile"];
+    var defaultFileNamePattern = /^[a-zA-Z0-9._-]*$/;
+    var defaultFileNamePatternInvalid = "Name must be: letters, numbers, and . _ or - characters";
+    var defaultFileNameExtensionPattern = "";
+    var defaultLowerCaseFileNamePattern = /^[a-z0-9._-]*$/;
+    var defaultLowerCaseFileNamePatternInvalid = "Name must be: lower-case letters, numbers, and . _ or - characters";
+    /**
+     * The wizard tree for creating new content in the wiki
+     * @property documentTemplates
+     * @for Wiki
+     * @type Array
+     */
+    Wiki.documentTemplates = [
+        {
+            label: "Folder",
+            tooltip: "Create a new folder to contain documents",
+            folder: true,
+            icon: "/img/icons/wiki/folder.gif",
+            exemplar: "myfolder",
+            regex: defaultLowerCaseFileNamePattern,
+            invalid: defaultLowerCaseFileNamePatternInvalid
+        },
+        {
+            label: "App",
+            tooltip: "Creates a new App folder used to configure and run containers",
+            addClass: "fa fa-cog green",
+            exemplar: 'myapp',
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: '',
+            generated: {
+                mbean: ['io.fabric8', { type: 'KubernetesTemplateManager' }],
+                init: function (workspace, $scope) {
+                },
+                generate: function (options) {
+                    Wiki.log.debug("Got options: ", options);
+                    options.form.name = options.name;
+                    options.form.path = options.parentId;
+                    options.form.branch = options.branch;
+                    var json = angular.toJson(options.form);
+                    var jolokia = HawtioCore.injector.get("jolokia");
+                    jolokia.request({
+                        type: 'exec',
+                        mbean: 'io.fabric8:type=KubernetesTemplateManager',
+                        operation: 'createAppByJson',
+                        arguments: [json]
+                    }, Core.onSuccess(function (response) {
+                        Wiki.log.debug("Generated app, response: ", response);
+                        options.success(undefined);
+                    }, {
+                        error: function (response) {
+                            options.error(response.error);
+                        }
+                    }));
+                },
+                form: function (workspace, $scope) {
+                    if (!$scope.doDockerRegistryCompletion) {
+                        $scope.fetchDockerRepositories = function () {
+                            return DockerRegistry.completeDockerRegistry();
+                        };
+                    }
+                    return {
+                        summaryMarkdown: 'Add app summary here',
+                        replicaCount: 1
+                    };
+                },
+                schema: {
+                    description: 'App settings',
+                    type: 'java.lang.String',
+                    properties: {
+                        'dockerImage': {
+                            'description': 'Docker Image',
+                            'type': 'java.lang.String',
+                            'input-attributes': {
+                                'required': '',
+                                'class': 'input-xlarge',
+                                'typeahead': 'repo for repo in fetchDockerRepositories() | filter:$viewValue',
+                                'typeahead-wait-ms': '200'
+                            }
+                        },
+                        'summaryMarkdown': {
+                            'description': 'Short Description',
+                            'type': 'java.lang.String',
+                            'input-attributes': { 'class': 'input-xlarge' }
+                        },
+                        'replicaCount': {
+                            'description': 'Replica Count',
+                            'type': 'java.lang.Integer',
+                            'input-attributes': {
+                                min: '0'
+                            }
+                        },
+                        'labels': {
+                            'description': 'Labels',
+                            'type': 'map',
+                            'items': {
+                                'type': 'string'
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            label: "Fabric8 Profile",
+            tooltip: "Create a new empty fabric profile. Using a hyphen ('-') will create a folder heirarchy, for example 'my-awesome-profile' will be available via the path 'my/awesome/profile'.",
+            profile: true,
+            addClass: "fa fa-book green",
+            exemplar: "user-profile",
+            regex: defaultLowerCaseFileNamePattern,
+            invalid: defaultLowerCaseFileNamePatternInvalid,
+            fabricOnly: true
+        },
+        {
+            label: "Properties File",
+            tooltip: "A properties file typically used to configure Java classes",
+            exemplar: "properties-file.properties",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".properties"
+        },
+        {
+            label: "JSON File",
+            tooltip: "A file containing JSON data",
+            exemplar: "document.json",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".json"
+        },
+        {
+            label: "Key Store File",
+            tooltip: "Creates a keystore (database) of cryptographic keys, X.509 certificate chains, and trusted certificates.",
+            exemplar: 'keystore.jks',
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".jks",
+            generated: {
+                mbean: ['hawtio', { type: 'KeystoreService' }],
+                init: function (workspace, $scope) {
+                    var mbean = 'hawtio:type=KeystoreService';
+                    var response = workspace.jolokia.request({ type: "read", mbean: mbean, attribute: "SecurityProviderInfo" }, {
+                        success: function (response) {
+                            $scope.securityProviderInfo = response.value;
+                            Core.$apply($scope);
+                        },
+                        error: function (response) {
+                            console.log('Could not find the supported security algorithms: ', response.error);
+                            Core.$apply($scope);
+                        }
+                    });
+                },
+                generate: function (options) {
+                    var encodedForm = JSON.stringify(options.form);
+                    var mbean = 'hawtio:type=KeystoreService';
+                    var response = options.workspace.jolokia.request({
+                        type: 'exec',
+                        mbean: mbean,
+                        operation: 'createKeyStoreViaJSON(java.lang.String)',
+                        arguments: [encodedForm]
+                    }, {
+                        method: 'POST',
+                        success: function (response) {
+                            options.success(response.value);
+                        },
+                        error: function (response) {
+                            options.error(response.error);
+                        }
+                    });
+                },
+                form: function (workspace, $scope) {
+                    return {
+                        storeType: $scope.securityProviderInfo.supportedKeyStoreTypes[0],
+                        createPrivateKey: false,
+                        keyLength: 4096,
+                        keyAlgorithm: $scope.securityProviderInfo.supportedKeyAlgorithms[0],
+                        keyValidity: 365
+                    };
+                },
+                schema: {
+                    "description": "Keystore Settings",
+                    "type": "java.lang.String",
+                    "properties": {
+                        "storePassword": {
+                            "description": "Keystore password.",
+                            "type": "password",
+                            'input-attributes': { "required": "", "ng-minlength": 6 }
+                        },
+                        "storeType": {
+                            "description": "The type of store to create",
+                            "type": "java.lang.String",
+                            'input-element': "select",
+                            'input-attributes': { "ng-options": "v for v in securityProviderInfo.supportedKeyStoreTypes" }
+                        },
+                        "createPrivateKey": {
+                            "description": "Should we generate a self-signed private key?",
+                            "type": "boolean"
+                        },
+                        "keyCommonName": {
+                            "description": "The common name of the key, typically set to the hostname of the server",
+                            "type": "java.lang.String",
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        },
+                        "keyLength": {
+                            "description": "The length of the cryptographic key",
+                            "type": "Long",
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        },
+                        "keyAlgorithm": {
+                            "description": "The key algorithm",
+                            "type": "java.lang.String",
+                            'input-element': "select",
+                            'input-attributes': { "ng-options": "v for v in securityProviderInfo.supportedKeyAlgorithms" },
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        },
+                        "keyValidity": {
+                            "description": "The number of days the key will be valid for",
+                            "type": "Long",
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        },
+                        "keyPassword": {
+                            "description": "Password to the private key",
+                            "type": "password",
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            label: "Markdown Document",
+            tooltip: "A basic markup document using the Markdown wiki markup, particularly useful for ReadMe files in directories",
+            exemplar: "ReadMe.md",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".md"
+        },
+        {
+            label: "Text Document",
+            tooltip: "A plain text file",
+            exemplar: "document.text",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".txt"
+        },
+        {
+            label: "HTML Document",
+            tooltip: "A HTML document you can edit directly using the HTML markup",
+            exemplar: "document.html",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".html"
+        },
+        {
+            label: "XML Document",
+            tooltip: "An empty XML document",
+            exemplar: "document.xml",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".xml"
+        },
+        {
+            label: "Integration Flows",
+            tooltip: "Camel routes for defining your integration flows",
+            children: [
+                {
+                    label: "Camel XML document",
+                    tooltip: "A vanilla Camel XML document for integration flows",
+                    icon: "/img/icons/camel.svg",
+                    exemplar: "camel.xml",
+                    regex: defaultFileNamePattern,
+                    invalid: defaultFileNamePatternInvalid,
+                    extension: ".xml"
+                },
+                {
+                    label: "Camel OSGi Blueprint XML document",
+                    tooltip: "A vanilla Camel XML document for integration flows when using OSGi Blueprint",
+                    icon: "/img/icons/camel.svg",
+                    exemplar: "camel-blueprint.xml",
+                    regex: defaultFileNamePattern,
+                    invalid: defaultFileNamePatternInvalid,
+                    extension: ".xml"
+                },
+                {
+                    label: "Camel Spring XML document",
+                    tooltip: "A vanilla Camel XML document for integration flows when using the Spring framework",
+                    icon: "/img/icons/camel.svg",
+                    exemplar: "camel-spring.xml",
+                    regex: defaultFileNamePattern,
+                    invalid: defaultFileNamePatternInvalid,
+                    extension: ".xml"
+                }
+            ]
+        },
+        {
+            label: "Data Mapping Document",
+            tooltip: "Dozer based configuration of mapping documents",
+            icon: "/img/icons/dozer/dozer.gif",
+            exemplar: "dozer-mapping.xml",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".xml"
+        }
+    ];
+    function isFMCContainer(workspace) {
+        return false;
+    }
+    Wiki.isFMCContainer = isFMCContainer;
+    function isWikiEnabled(workspace, jolokia, localStorage) {
+        return Git.createGitRepository(workspace, jolokia, localStorage) !== null;
+    }
+    Wiki.isWikiEnabled = isWikiEnabled;
+    function goToLink(link, $timeout, $location) {
+        var href = Core.trimLeading(link, "#");
+        $timeout(function () {
+            Wiki.log.debug("About to navigate to: " + href);
+            $location.url(href);
+        }, 100);
+    }
+    Wiki.goToLink = goToLink;
+    /**
+     * Returns all the links for the given branch for the custom views, starting with "/"
+     * @param $scope
+     * @returns {string[]}
+     */
+    function customViewLinks($scope) {
+        var branch = $scope.branch;
+        var prefix = Core.trimLeading(Wiki.startLink(branch), "#");
+        return Wiki.customWikiViewPages.map(function (path) { return prefix + path; });
+    }
+    Wiki.customViewLinks = customViewLinks;
+    /**
+     * Returns a new create document wizard tree
+     * @method createWizardTree
+     * @for Wiki
+     * @static
+     */
+    function createWizardTree(workspace, $scope) {
+        var root = new Folder("New Documents");
+        addCreateWizardFolders(workspace, $scope, root, Wiki.documentTemplates);
+        return root;
+    }
+    Wiki.createWizardTree = createWizardTree;
+    function addCreateWizardFolders(workspace, $scope, parent, templates) {
+        angular.forEach(templates, function (template) {
+            if (template['fabricOnly'] && !Fabric.hasFabric(workspace)) {
+                return;
+            }
+            if (template.generated) {
+                if (template.generated.mbean) {
+                    var exists = workspace.treeContainsDomainAndProperties.apply(workspace, template.generated.mbean);
+                    if (!exists) {
+                        return;
+                    }
+                }
+                if (template.generated.init) {
+                    template.generated.init(workspace, $scope);
+                }
+            }
+            var title = template.label || key;
+            var node = new Folder(title);
+            node.parent = parent;
+            node.entity = template;
+            var addClass = template.addClass;
+            if (addClass) {
+                node.addClass = addClass;
+            }
+            var key = template.exemplar;
+            var parentKey = parent.key || "";
+            node.key = parentKey ? parentKey + "_" + key : key;
+            var icon = template.icon;
+            if (icon) {
+                node.icon = Core.url(icon);
+            }
+            // compiler was complaining about 'label' had no idea where it's coming from
+            // var tooltip = value["tooltip"] || value["description"] || label;
+            var tooltip = template["tooltip"] || template["description"] || '';
+            node.tooltip = tooltip;
+            if (template["folder"]) {
+                node.isFolder = function () {
+                    return true;
+                };
+            }
+            parent.children.push(node);
+            var children = template.children;
+            if (children) {
+                addCreateWizardFolders(workspace, $scope, node, children);
+            }
+        });
+    }
+    Wiki.addCreateWizardFolders = addCreateWizardFolders;
+    function startLink(branch) {
+        var start = "/wiki";
+        if (branch) {
+            start = UrlHelpers.join(start, 'branch', branch);
+        }
+        return start;
+    }
+    Wiki.startLink = startLink;
+    /**
+     * Returns true if the given filename/path is an index page (named index.* and is a markdown/html page).
+     *
+     * @param path
+     * @returns {boolean}
+     */
+    function isIndexPage(path) {
+        return path && (path.endsWith("index.md") || path.endsWith("index.html") || path.endsWith("index")) ? true : false;
+    }
+    Wiki.isIndexPage = isIndexPage;
+    function viewLink(branch, pageId, $location, fileName) {
+        if (fileName === void 0) { fileName = null; }
+        var link = null;
+        var start = startLink(branch);
+        if (pageId) {
+            // figure out which view to use for this page
+            var view = isIndexPage(pageId) ? "/book/" : "/view/";
+            link = start + view + encodePath(Core.trimLeading(pageId, "/"));
+        }
+        else {
+            // lets use the current path
+            var path = $location.path();
+            link = "#" + path.replace(/(edit|create)/, "view");
+        }
+        if (fileName && pageId && pageId.endsWith(fileName)) {
+            return link;
+        }
+        if (fileName) {
+            if (!link.endsWith("/")) {
+                link += "/";
+            }
+            link += fileName;
+        }
+        return link;
+    }
+    Wiki.viewLink = viewLink;
+    function branchLink(branch, pageId, $location, fileName) {
+        if (fileName === void 0) { fileName = null; }
+        return viewLink(branch, pageId, $location, fileName);
+    }
+    Wiki.branchLink = branchLink;
+    function editLink(branch, pageId, $location) {
+        var link = null;
+        var format = Wiki.fileFormat(pageId);
+        switch (format) {
+            case "image":
+                break;
+            default:
+                var start = startLink(branch);
+                if (pageId) {
+                    link = start + "/edit/" + encodePath(pageId);
+                }
+                else {
+                    // lets use the current path
+                    var path = $location.path();
+                    link = "#" + path.replace(/(view|create)/, "edit");
+                }
+        }
+        return link;
+    }
+    Wiki.editLink = editLink;
+    function createLink(branch, pageId, $location, $scope) {
+        var path = $location.path();
+        var start = startLink(branch);
+        var link = '';
+        if (pageId) {
+            link = start + "/create/" + encodePath(pageId);
+        }
+        else {
+            // lets use the current path
+            link = "#" + path.replace(/(view|edit|formTable)/, "create");
+        }
+        // we have the link so lets now remove the last path
+        // or if there is no / in the path then remove the last section
+        var idx = link.lastIndexOf("/");
+        if (idx > 0 && !$scope.children && !path.startsWith("/wiki/formTable")) {
+            link = link.substring(0, idx + 1);
+        }
+        return link;
+    }
+    Wiki.createLink = createLink;
+    function encodePath(pageId) {
+        return pageId.split("/").map(encodeURIComponent).join("/");
+    }
+    Wiki.encodePath = encodePath;
+    function decodePath(pageId) {
+        return pageId.split("/").map(decodeURIComponent).join("/");
+    }
+    Wiki.decodePath = decodePath;
+    function fileFormat(name, fileExtensionTypeRegistry) {
+        var extension = fileExtension(name);
+        var answer = null;
+        if (!fileExtensionTypeRegistry) {
+            fileExtensionTypeRegistry = HawtioCore.injector.get("fileExtensionTypeRegistry");
+        }
+        angular.forEach(fileExtensionTypeRegistry, function (array, key) {
+            if (array.indexOf(extension) >= 0) {
+                answer = key;
+            }
+        });
+        return answer;
+    }
+    Wiki.fileFormat = fileFormat;
+    /**
+     * Returns the file name of the given path; stripping off any directories
+     * @method fileName
+     * @for Wiki
+     * @static
+     * @param {String} path
+     * @return {String}
+     */
+    function fileName(path) {
+        if (path) {
+            var idx = path.lastIndexOf("/");
+            if (idx > 0) {
+                return path.substring(idx + 1);
+            }
+        }
+        return path;
+    }
+    Wiki.fileName = fileName;
+    /**
+     * Returns the folder of the given path (everything but the last path name)
+     * @method fileParent
+     * @for Wiki
+     * @static
+     * @param {String} path
+     * @return {String}
+     */
+    function fileParent(path) {
+        if (path) {
+            var idx = path.lastIndexOf("/");
+            if (idx > 0) {
+                return path.substring(0, idx);
+            }
+        }
+        // lets return the root directory
+        return "";
+    }
+    Wiki.fileParent = fileParent;
+    /**
+     * Returns the file name for the given name; we hide some extensions
+     * @method hideFineNameExtensions
+     * @for Wiki
+     * @static
+     * @param {String} name
+     * @return {String}
+     */
+    function hideFileNameExtensions(name) {
+        if (name) {
+            angular.forEach(Wiki.hideExtensions, function (extension) {
+                if (name.endsWith(extension)) {
+                    name = name.substring(0, name.length - extension.length);
+                }
+            });
+        }
+        return name;
+    }
+    Wiki.hideFileNameExtensions = hideFileNameExtensions;
+    /**
+     * Returns the URL to perform a GET or POST for the given branch name and path
+     */
+    function gitRestURL(branch, path) {
+        var url = gitRelativeURL(branch, path);
+        url = Core.url('/' + url);
+        var connectionName = Core.getConnectionNameParameter();
+        if (connectionName) {
+            var connectionOptions = Core.getConnectOptions(connectionName);
+            if (connectionOptions) {
+                connectionOptions.path = url;
+                url = Core.createServerConnectionUrl(connectionOptions);
+            }
+        }
+        return url;
+    }
+    Wiki.gitRestURL = gitRestURL;
+    /**
+     * Returns a relative URL to perform a GET or POST for the given branch/path
+     */
+    function gitRelativeURL(branch, path) {
+        branch = branch || "master";
+        path = path || "/";
+        return UrlHelpers.join("git/" + branch, path);
+    }
+    Wiki.gitRelativeURL = gitRelativeURL;
+    /**
+     * Takes a row containing the entity object; or can take the entity directly.
+     *
+     * It then uses the name, directory and xmlNamespaces properties
+     *
+     * @method fileIconHtml
+     * @for Wiki
+     * @static
+     * @param {any} row
+     * @return {String}
+     *
+     */
+    function fileIconHtml(row) {
+        var name = row.name;
+        var path = row.path;
+        var branch = row.branch;
+        var directory = row.directory;
+        var xmlNamespaces = row.xmlNamespaces;
+        var iconUrl = row.iconUrl;
+        var entity = row.entity;
+        if (entity) {
+            name = name || entity.name;
+            path = path || entity.path;
+            branch = branch || entity.branch;
+            directory = directory || entity.directory;
+            xmlNamespaces = xmlNamespaces || entity.xmlNamespaces;
+            iconUrl = iconUrl || entity.iconUrl;
+        }
+        branch = branch || "master";
+        var css = null;
+        var icon = null;
+        var extension = fileExtension(name);
+        // TODO could we use different icons for markdown v xml v html
+        if (xmlNamespaces && xmlNamespaces.length) {
+            if (xmlNamespaces.any(function (ns) { return Wiki.camelNamespaces.any(ns); })) {
+                icon = "img/icons/camel.svg";
+            }
+            else if (xmlNamespaces.any(function (ns) { return Wiki.dozerNamespaces.any(ns); })) {
+                icon = "img/icons/dozer/dozer.gif";
+            }
+            else if (xmlNamespaces.any(function (ns) { return Wiki.activemqNamespaces.any(ns); })) {
+                icon = "img/icons/messagebroker.svg";
+            }
+            else {
+                Wiki.log.debug("file " + name + " has namespaces " + xmlNamespaces);
+            }
+        }
+        if (iconUrl) {
+            css = null;
+            icon = UrlHelpers.join("git", iconUrl);
+            var connectionName = Core.getConnectionNameParameter();
+            if (connectionName) {
+                var connectionOptions = Core.getConnectOptions(connectionName);
+                if (connectionOptions) {
+                    connectionOptions.path = Core.url('/' + icon);
+                    icon = Core.createServerConnectionUrl(connectionOptions);
+                }
+            }
+        }
+        if (!icon) {
+            if (directory) {
+                switch (extension) {
+                    case 'profile':
+                        css = "fa fa-book";
+                        break;
+                    default:
+                        // log.debug("No match for extension: ", extension, " using a generic folder icon");
+                        css = "fa fa-folder";
+                }
+            }
+            else {
+                switch (extension) {
+                    case 'png':
+                    case 'svg':
+                    case 'jpg':
+                    case 'gif':
+                        css = null;
+                        icon = Wiki.gitRelativeURL(branch, path);
+                        var connectionName = Core.getConnectionNameParameter();
+                        if (connectionName) {
+                            var connectionOptions = Core.getConnectOptions(connectionName);
+                            if (connectionOptions) {
+                                connectionOptions.path = Core.url('/' + icon);
+                                icon = Core.createServerConnectionUrl(connectionOptions);
+                            }
+                        }
+                        break;
+                    case 'json':
+                    case 'xml':
+                        css = "fa fa-file-text";
+                        break;
+                    case 'md':
+                        css = "fa fa-file-text-o";
+                        break;
+                    default:
+                        // log.debug("No match for extension: ", extension, " using a generic file icon");
+                        css = "fa fa-file-alt";
+                }
+            }
+        }
+        if (icon) {
+            return "<img src='" + Core.url(icon) + "'>";
+        }
+        else {
+            return "<i class='" + css + "'></i>";
+        }
+    }
+    Wiki.fileIconHtml = fileIconHtml;
+    function iconClass(row) {
+        var name = row.getProperty("name");
+        var extension = fileExtension(name);
+        var directory = row.getProperty("directory");
+        if (directory) {
+            return "fa fa-folder";
+        }
+        if ("xml" === extension) {
+            return "fa fa-cog";
+        }
+        else if ("md" === extension) {
+            return "fa fa-file-text-o";
+        }
+        // TODO could we use different icons for markdown v xml v html
+        return "fa fa-file-alt";
+    }
+    Wiki.iconClass = iconClass;
+    /**
+     * Extracts the pageId, branch, objectId from the route parameters
+     * @method initScope
+     * @for Wiki
+     * @static
+     * @param {*} $scope
+     * @param {any} $routeParams
+     * @param {ng.ILocationService} $location
+     */
+    function initScope($scope, $routeParams, $location) {
+        $scope.pageId = Wiki.pageId($routeParams, $location);
+        $scope.branch = $routeParams["branch"] || $location.search()["branch"];
+        $scope.objectId = $routeParams["objectId"];
+        $scope.startLink = Wiki.startLink($scope.branch);
+        $scope.historyLink = startLink($scope.branch) + "/history/" + ($scope.pageId || "");
+    }
+    Wiki.initScope = initScope;
+    /**
+     * Loads the branches for this wiki repository and stores them in the branches property in
+     * the $scope and ensures $scope.branch is set to a valid value
+     *
+     * @param wikiRepository
+     * @param $scope
+     * @param isFmc whether we run as fabric8 or as hawtio
+     */
+    function loadBranches(jolokia, wikiRepository, $scope, isFmc) {
+        if (isFmc === void 0) { isFmc = false; }
+        if (isFmc) {
+            // when using fabric then the branches is the fabric versions, so we should use that instead
+            $scope.branches = Fabric.getVersionIds(jolokia);
+            var defaultVersion = Fabric.getDefaultVersionId(jolokia);
+            // use current default version as default branch
+            if (!$scope.branch) {
+                $scope.branch = defaultVersion;
+            }
+            // lets sort by version number
+            $scope.branches = $scope.branches.sortBy(function (v) { return Core.versionToSortableString(v); }, true);
+            Core.$apply($scope);
+        }
+        else {
+            wikiRepository.branches(function (response) {
+                // lets sort by version number
+                $scope.branches = response.sortBy(function (v) { return Core.versionToSortableString(v); }, true);
+                // default the branch name if we have 'master'
+                if (!$scope.branch && $scope.branches.find(function (branch) {
+                    return branch === "master";
+                })) {
+                    $scope.branch = "master";
+                }
+                Core.$apply($scope);
+            });
+        }
+    }
+    Wiki.loadBranches = loadBranches;
+    /**
+     * Extracts the pageId from the route parameters
+     * @method pageId
+     * @for Wiki
+     * @static
+     * @param {any} $routeParams
+     * @param @ng.ILocationService @location
+     * @return {String}
+     */
+    function pageId($routeParams, $location) {
+        var pageId = $routeParams['page'];
+        if (!pageId) {
+            for (var i = 0; i < 100; i++) {
+                var value = $routeParams['path' + i];
+                if (angular.isDefined(value)) {
+                    if (!pageId) {
+                        pageId = value;
+                    }
+                    else {
+                        pageId += "/" + value;
+                    }
+                }
+                else
+                    break;
+            }
+            return pageId || "/";
+        }
+        // if no $routeParams variables lets figure it out from the $location
+        if (!pageId) {
+            pageId = pageIdFromURI($location.path());
+        }
+        return pageId;
+    }
+    Wiki.pageId = pageId;
+    function pageIdFromURI(url) {
+        var wikiPrefix = "/wiki/";
+        if (url && url.startsWith(wikiPrefix)) {
+            var idx = url.indexOf("/", wikiPrefix.length + 1);
+            if (idx > 0) {
+                return url.substring(idx + 1, url.length);
+            }
+        }
+        return null;
+    }
+    Wiki.pageIdFromURI = pageIdFromURI;
+    function fileExtension(name) {
+        if (name.indexOf('#') > 0)
+            name = name.substring(0, name.indexOf('#'));
+        return Core.fileExtension(name, "markdown");
+    }
+    Wiki.fileExtension = fileExtension;
+    function onComplete(status) {
+        console.log("Completed operation with status: " + JSON.stringify(status));
+    }
+    Wiki.onComplete = onComplete;
+    /**
+     * Parses the given JSON text reporting to the user if there is a parse error
+     * @method parseJson
+     * @for Wiki
+     * @static
+     * @param {String} text
+     * @return {any}
+     */
+    function parseJson(text) {
+        if (text) {
+            try {
+                return JSON.parse(text);
+            }
+            catch (e) {
+                Core.notification("error", "Failed to parse JSON: " + e);
+            }
+        }
+        return null;
+    }
+    Wiki.parseJson = parseJson;
+    /**
+     * Adjusts a relative or absolute link from a wiki or file system to one using the hash bang syntax
+     * @method adjustHref
+     * @for Wiki
+     * @static
+     * @param {*} $scope
+     * @param {ng.ILocationService} $location
+     * @param {String} href
+     * @param {String} fileExtension
+     * @return {string}
+     */
+    function adjustHref($scope, $location, href, fileExtension) {
+        var extension = fileExtension ? "." + fileExtension : "";
+        // if the last part of the path has a dot in it lets
+        // exclude it as we are relative to a markdown or html file in a folder
+        // such as when viewing readme.md or index.md
+        var path = $location.path();
+        var folderPath = path;
+        var idx = path.lastIndexOf("/");
+        if (idx > 0) {
+            var lastName = path.substring(idx + 1);
+            if (lastName.indexOf(".") >= 0) {
+                folderPath = path.substring(0, idx);
+            }
+        }
+        // Deal with relative URLs first...
+        if (href.startsWith('../')) {
+            var parts = href.split('/');
+            var pathParts = folderPath.split('/');
+            var parents = parts.filter(function (part) {
+                return part === "..";
+            });
+            parts = parts.last(parts.length - parents.length);
+            pathParts = pathParts.first(pathParts.length - parents.length);
+            return '#' + pathParts.join('/') + '/' + parts.join('/') + extension + $location.hash();
+        }
+        // Turn an absolute link into a wiki link...
+        if (href.startsWith('/')) {
+            return Wiki.branchLink($scope.branch, href + extension, $location) + extension;
+        }
+        if (!Wiki.excludeAdjustmentPrefixes.any(function (exclude) {
+            return href.startsWith(exclude);
+        })) {
+            return '#' + folderPath + "/" + href + extension + $location.hash();
+        }
+        else {
+            return null;
+        }
+    }
+    Wiki.adjustHref = adjustHref;
+})(Wiki || (Wiki = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../wiki/ts/wikiHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module.controller("ActiveMQ.BrokerDiagramController", ["$scope", "$compile", "$location", "localStorage", "jolokia", "workspace", function ($scope, $compile, $location, localStorage, jolokia, workspace) {
+        Fabric.initScope($scope, $location, jolokia, workspace);
+        var isFmc = Wiki.isFMCContainer(workspace);
+        $scope.isFmc = isFmc;
+        $scope.selectedNode = null;
+        var defaultFlags = {
+            panel: true,
+            popup: false,
+            label: true,
+            group: false,
+            profile: false,
+            slave: false,
+            broker: isFmc,
+            network: true,
+            container: false,
+            queue: true,
+            topic: true,
+            consumer: true,
+            producer: true
+        };
+        $scope.viewSettings = {};
+        $scope.shapeSize = {
+            broker: 20,
+            queue: 14,
+            topic: 14
+        };
+        var redrawGraph = Core.throttled(doRedrawGraph, 1000);
+        var graphBuilder = new ForceGraph.GraphBuilder();
+        Core.bindModelToSearchParam($scope, $location, "searchFilter", "q", "");
+        angular.forEach(defaultFlags, function (defaultValue, key) {
+            var modelName = "viewSettings." + key;
+            // bind model values to search params...
+            function currentValue() {
+                var answer = $location.search()[paramName] || defaultValue;
+                return answer === "false" ? false : answer;
+            }
+            var paramName = key;
+            var value = currentValue();
+            Core.pathSet($scope, modelName, value);
+            $scope.$watch(modelName, function () {
+                var current = Core.pathGet($scope, modelName);
+                var old = currentValue();
+                if (current !== old) {
+                    var defaultValue = defaultFlags[key];
+                    if (current !== defaultValue) {
+                        if (!current) {
+                            current = "false";
+                        }
+                        $location.search(paramName, current);
+                    }
+                    else {
+                        $location.search(paramName, null);
+                    }
+                }
+                redrawGraph();
+            });
+        });
+        $scope.connectToBroker = function () {
+            var selectedNode = $scope.selectedNode;
+            if (selectedNode) {
+                var container = selectedNode["brokerContainer"] || selectedNode;
+                connectToBroker(container, selectedNode["brokerName"]);
+            }
+        };
+        function connectToBroker(container, brokerName, postfix) {
+            if (postfix === void 0) { postfix = null; }
+            if (isFmc && container.jolokia !== jolokia) {
+                Fabric.connectToBroker($scope, container, postfix);
+            }
+            else {
+                var view = "/jmx/attributes?tab=activemq";
+                if (!postfix) {
+                    if (brokerName) {
+                        // lets default to the broker view
+                        postfix = "nid=root-org.apache.activemq-Broker-" + brokerName;
+                    }
+                }
+                if (postfix) {
+                    view += "&" + postfix;
+                }
+                ActiveMQ.log.info("Opening view " + view);
+                var path = Core.url("/#" + view);
+                window.open(path, '_destination');
+                window.focus();
+            }
+        }
+        $scope.connectToDestination = function () {
+            var selectedNode = $scope.selectedNode;
+            if (selectedNode) {
+                var container = selectedNode["brokerContainer"] || selectedNode;
+                var brokerName = selectedNode["brokerName"];
+                var destinationType = selectedNode["destinationType"] || selectedNode["typeLabel"];
+                var destinationName = selectedNode["destinationName"];
+                var postfix = null;
+                if (brokerName && destinationType && destinationName) {
+                    postfix = "nid=root-org.apache.activemq-Broker-" + brokerName + "-" + destinationType + "-" + destinationName;
+                }
+                connectToBroker(container, brokerName, postfix);
+            }
+        };
+        $scope.$on('$destroy', function (event) {
+            stopOldJolokia();
+        });
+        function stopOldJolokia() {
+            var oldJolokia = $scope.selectedNodeJolokia;
+            if (oldJolokia && oldJolokia !== jolokia) {
+                oldJolokia.stop();
+            }
+        }
+        $scope.$watch("selectedNode", function (newValue, oldValue) {
+            // lets cancel any previously registered thingy
+            if ($scope.unregisterFn) {
+                $scope.unregisterFn();
+                $scope.unregisterFn = null;
+            }
+            var node = $scope.selectedNode;
+            if (node) {
+                var mbean = node.objectName;
+                var brokerContainer = node.brokerContainer || {};
+                var nodeJolokia = node.jolokia || brokerContainer.jolokia || jolokia;
+                if (nodeJolokia !== $scope.selectedNodeJolokia) {
+                    stopOldJolokia();
+                    $scope.selectedNodeJolokia = nodeJolokia;
+                    if (nodeJolokia !== jolokia) {
+                        var rate = Core.parseIntValue(localStorage['updateRate'] || "2000", "update rate");
+                        if (rate) {
+                            nodeJolokia.start(rate);
+                        }
+                    }
+                }
+                var dummyResponse = { value: node.panelProperties || {} };
+                if (mbean && nodeJolokia) {
+                    ActiveMQ.log.debug("reading ", mbean, " on remote container");
+                    $scope.unregisterFn = Core.register(nodeJolokia, $scope, {
+                        type: 'read',
+                        mbean: mbean
+                    }, Core.onSuccess(renderNodeAttributes, {
+                        error: function (response) {
+                            // probably we've got a wrong mbean name?
+                            // so lets render at least
+                            renderNodeAttributes(dummyResponse);
+                            Core.defaultJolokiaErrorHandler(response);
+                        }
+                    }));
+                }
+                else {
+                    ActiveMQ.log.debug("no mbean or jolokia available, using dummy response");
+                    renderNodeAttributes(dummyResponse);
+                }
+            }
+        });
+        function getDestinationTypeName(attributes) {
+            var prefix = attributes["DestinationTemporary"] ? "Temporary " : "";
+            return prefix + (attributes["DestinationTopic"] ? "Topic" : "Queue");
+        }
+        var ignoreNodeAttributes = ["Broker", "BrokerId", "BrokerName", "Connection", "DestinationName", "DestinationQueue", "DestinationTemporary", "DestinationTopic",];
+        var ignoreNodeAttributesByType = {
+            producer: ["Producer", "ProducerId"],
+            queue: ["Name", "MessageGroups", "MessageGroupType", "Subscriptions"],
+            topic: ["Name", "Subscriptions"],
+            broker: ["DataDirectory", "DurableTopicSubscriptions", "DynamicDestinationProducers", "InactiveDurableToppicSubscribers"]
+        };
+        var brokerShowProperties = ["AverageMessageSize", "BrokerId", "JobSchedulerStorePercentUsage", "Slave", "MemoryPercentUsage", "StorePercentUsage", "TempPercentUsage"];
+        var onlyShowAttributesByType = {
+            broker: brokerShowProperties,
+            brokerSlave: brokerShowProperties
+        };
+        function renderNodeAttributes(response) {
+            var properties = [];
+            if (response) {
+                var value = response.value || {};
+                $scope.selectedNodeAttributes = value;
+                var selectedNode = $scope.selectedNode || {};
+                var brokerContainer = selectedNode['brokerContainer'] || {};
+                var nodeType = selectedNode["type"];
+                var brokerName = selectedNode["brokerName"];
+                var containerId = selectedNode["container"] || brokerContainer["container"];
+                var group = selectedNode["group"] || brokerContainer["group"];
+                var jolokiaUrl = selectedNode["jolokiaUrl"] || brokerContainer["jolokiaUrl"];
+                var profile = selectedNode["profile"] || brokerContainer["profile"];
+                var version = selectedNode["version"] || brokerContainer["version"];
+                var isBroker = nodeType && nodeType.startsWith("broker");
+                var ignoreKeys = ignoreNodeAttributes.concat(ignoreNodeAttributesByType[nodeType] || []);
+                var onlyShowKeys = onlyShowAttributesByType[nodeType];
+                angular.forEach(value, function (v, k) {
+                    if (onlyShowKeys ? onlyShowKeys.indexOf(k) >= 0 : ignoreKeys.indexOf(k) < 0) {
+                        var formattedValue = Core.humanizeValueHtml(v);
+                        properties.push({ key: Core.humanizeValue(k), value: formattedValue });
+                    }
+                });
+                properties = properties.sortBy("key");
+                var brokerProperty = null;
+                if (brokerName) {
+                    var brokerHtml = '<a target="broker" ng-click="connectToBroker()">' + '<img title="Apache ActiveMQ" src="img/icons/messagebroker.svg"> ' + brokerName + '</a>';
+                    if (version && profile) {
+                        var brokerLink = Fabric.brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName);
+                        if (brokerLink) {
+                            brokerHtml += ' <a title="configuration settings" target="brokerConfig" href="' + brokerLink + '"><i class="fa fa-tasks"></i></a>';
+                        }
+                    }
+                    var html = $compile(brokerHtml)($scope);
+                    brokerProperty = { key: "Broker", value: html };
+                    if (!isBroker) {
+                        properties.splice(0, 0, brokerProperty);
+                    }
+                }
+                if (containerId) {
+                    //var containerModel = "selectedNode" + (selectedNode['brokerContainer'] ? ".brokerContainer" : "");
+                    properties.splice(0, 0, { key: "Container", value: $compile('<div fabric-container-link="' + selectedNode['container'] + '"></div>')($scope) });
+                }
+                var destinationName = value["DestinationName"] || selectedNode["destinationName"];
+                if (destinationName && (nodeType !== "queue" && nodeType !== "topic")) {
+                    var destinationTypeName = getDestinationTypeName(value);
+                    var html = createDestinationLink(destinationName, destinationTypeName);
+                    properties.splice(0, 0, { key: destinationTypeName, value: html });
+                }
+                var typeLabel = selectedNode["typeLabel"];
+                var name = selectedNode["name"] || selectedNode["id"] || selectedNode['objectName'];
+                if (typeLabel) {
+                    var html = name;
+                    if (nodeType === "queue" || nodeType === "topic") {
+                        html = createDestinationLink(name, nodeType);
+                    }
+                    var typeProperty = { key: typeLabel, value: html };
+                    if (isBroker && brokerProperty) {
+                        typeProperty = brokerProperty;
+                    }
+                    properties.splice(0, 0, typeProperty);
+                }
+            }
+            $scope.selectedNodeProperties = properties;
+            Core.$apply($scope);
+        }
+        /**
+         * Generates the HTML for a link to the destination
+         */
+        function createDestinationLink(destinationName, destinationType) {
+            if (destinationType === void 0) { destinationType = "queue"; }
+            return $compile('<a target="destination" title="' + destinationName + '" ng-click="connectToDestination()">' + destinationName + '</a>')($scope);
+        }
+        $scope.$watch("searchFilter", function (newValue, oldValue) {
+            redrawGraph();
+        });
+        if (isFmc) {
+            Fabric.loadBrokerStatus(onBrokerData);
+        }
+        else {
+            // lets just use the current stuff from the workspace
+            $scope.$watch('workspace.tree', function () {
+                redrawGraph();
+            });
+            $scope.$on('jmxTreeUpdated', function () {
+                redrawGraph();
+            });
+        }
+        function onBrokerData(response) {
+            if (response) {
+                var responseJson = angular.toJson(response.value);
+                if ($scope.responseJson === responseJson) {
+                    return;
+                }
+                $scope.responseJson = responseJson;
+                $scope.brokers = response.value;
+                doRedrawGraph();
+            }
+        }
+        function redrawFabricBrokers() {
+            var containersToDelete = $scope.activeContainers || {};
+            $scope.activeContainers = {};
+            angular.forEach($scope.brokers, function (brokerStatus) {
+                // only query master brokers which are provisioned correctly
+                brokerStatus.validContainer = brokerStatus.alive && brokerStatus.master && brokerStatus.provisionStatus === "success";
+                // don't use type field so we can use it for the node types..
+                renameTypeProperty(brokerStatus);
+                //log.info("Broker status: " + angular.toJson(brokerStatus, true));
+                var groupId = brokerStatus.group;
+                var profileId = brokerStatus.profile;
+                var brokerId = brokerStatus.brokerName;
+                var containerId = brokerStatus.container;
+                var versionId = brokerStatus.version || "1.0";
+                var group = getOrAddNode("group", groupId, brokerStatus, function () {
+                    return {
+                        /*
+                         navUrl: ,
+                         image: {
+                         url: "/hawtio/img/icons/osgi/bundle.png",
+                         width: 32,
+                         height:32
+                         },
+                         */
+                        typeLabel: "Broker Group",
+                        popup: {
+                            title: "Broker Group: " + groupId,
+                            content: "<p>" + groupId + "</p>"
+                        }
+                    };
+                });
+                var profile = getOrAddNode("profile", profileId, brokerStatus, function () {
+                    return {
+                        typeLabel: "Profile",
+                        popup: {
+                            title: "Profile: " + profileId,
+                            content: "<p>" + profileId + "</p>"
+                        }
+                    };
+                });
+                // TODO do we need to create a physical broker node per container and logical broker maybe?
+                var container = null;
+                if (containerId) {
+                    container = getOrAddNode("container", containerId, brokerStatus, function () {
+                        return {
+                            containerId: containerId,
+                            typeLabel: "Container",
+                            popup: {
+                                title: "Container: " + containerId,
+                                content: "<p>" + containerId + " version: " + versionId + "</p>"
+                            }
+                        };
+                    });
+                }
+                var master = brokerStatus.master;
+                var broker = getOrAddBroker(master, brokerId, groupId, containerId, container, brokerStatus);
+                if (container && container.validContainer) {
+                    var key = container.containerId;
+                    $scope.activeContainers[key] = container;
+                    delete containersToDelete[key];
+                }
+                // add the links...
+                if ($scope.viewSettings.group) {
+                    if ($scope.viewSettings.profile) {
+                        addLink(group, profile, "group");
+                        addLink(profile, broker, "broker");
+                    }
+                    else {
+                        addLink(group, broker, "group");
+                    }
+                }
+                else {
+                    if ($scope.viewSettings.profile) {
+                        addLink(profile, broker, "broker");
+                    }
+                }
+                if (container) {
+                    if ((master || $scope.viewSettings.slave) && $scope.viewSettings.container) {
+                        addLink(broker, container, "container");
+                        container.destinationLinkNode = container;
+                    }
+                    else {
+                        container.destinationLinkNode = broker;
+                    }
+                }
+            });
+            redrawActiveContainers();
+        }
+        function redrawLocalBroker() {
+            var container = {
+                jolokia: jolokia
+            };
+            var containerId = "local";
+            $scope.activeContainers = {
+                containerId: container
+            };
+            if ($scope.viewSettings.broker) {
+                jolokia.search("org.apache.activemq:type=Broker,brokerName=*", Core.onSuccess(function (response) {
+                    angular.forEach(response, function (objectName) {
+                        var details = Core.parseMBean(objectName);
+                        if (details) {
+                            var properties = details['attributes'];
+                            ActiveMQ.log.info("Got broker: " + objectName + " on container: " + containerId + " properties: " + angular.toJson(properties, true));
+                            if (properties) {
+                                var master = true;
+                                var brokerId = properties["brokerName"] || "unknown";
+                                var groupId = "";
+                                var broker = getOrAddBroker(master, brokerId, groupId, containerId, container, properties);
+                            }
+                        }
+                    });
+                    redrawActiveContainers();
+                }));
+            }
+            else {
+                redrawActiveContainers();
+            }
+        }
+        function redrawActiveContainers() {
+            // TODO delete any nodes from dead containers in containersToDelete
+            angular.forEach($scope.activeContainers, function (container, id) {
+                var containerJolokia = container.jolokia;
+                if (containerJolokia) {
+                    onContainerJolokia(containerJolokia, container, id);
+                }
+                else {
+                    Fabric.containerJolokia(jolokia, id, function (containerJolokia) { return onContainerJolokia(containerJolokia, container, id); });
+                }
+            });
+            $scope.graph = graphBuilder.buildGraph();
+            Core.$apply($scope);
+        }
+        function doRedrawGraph() {
+            graphBuilder = new ForceGraph.GraphBuilder();
+            if (isFmc) {
+                redrawFabricBrokers();
+            }
+            else {
+                redrawLocalBroker();
+            }
+        }
+        function brokerNameMarkup(brokerName) {
+            return brokerName ? "<p></p>broker: " + brokerName + "</p>" : "";
+        }
+        function matchesDestinationName(destinationName, typeName) {
+            if (destinationName) {
+                var selection = workspace.selection;
+                if (selection && selection.domain === ActiveMQ.jmxDomain) {
+                    var type = selection.entries["destinationType"];
+                    if (type) {
+                        if ((type === "Queue" && typeName === "topic") || (type === "Topic" && typeName === "queue")) {
+                            return false;
+                        }
+                    }
+                    var destName = selection.entries["destinationName"];
+                    if (destName) {
+                        if (destName !== destinationName)
+                            return false;
+                    }
+                }
+                ActiveMQ.log.info("selection: " + selection);
+                // TODO if the current selection is a destination...
+                return !$scope.searchFilter || destinationName.indexOf($scope.searchFilter) >= 0;
+            }
+            return false;
+        }
+        function onContainerJolokia(containerJolokia, container, id) {
+            if (containerJolokia) {
+                container.jolokia = containerJolokia;
+                function getOrAddDestination(properties) {
+                    var typeName = properties.destType;
+                    var brokerName = properties.brokerName;
+                    var destinationName = properties.destinationName;
+                    if (!matchesDestinationName(destinationName, typeName)) {
+                        return null;
+                    }
+                    // should we be filtering this destination out
+                    var hideFlag = "topic" === typeName ? $scope.viewSettings.topic : $scope.viewSettings.queue;
+                    if (!hideFlag) {
+                        return null;
+                    }
+                    var destination = getOrAddNode(typeName, destinationName, properties, function () {
+                        var destinationTypeName = properties.destinationType || "Queue";
+                        var objectName = "";
+                        if (brokerName) {
+                            // lets ignore temp topic stuff as there's no mbean for these
+                            if (!destinationName.startsWith("ActiveMQ.Advisory.TempQueue_ActiveMQ.Advisory.TempTopic")) {
+                                objectName = "org.apache.activemq:type=Broker,brokerName=" + brokerName + ",destinationType=" + destinationTypeName + ",destinationName=" + destinationName;
+                            }
+                        }
+                        var answer = {
+                            typeLabel: destinationTypeName,
+                            brokerContainer: container,
+                            objectName: objectName,
+                            jolokia: containerJolokia,
+                            popup: {
+                                title: destinationTypeName + ": " + destinationName,
+                                content: brokerNameMarkup(properties.brokerName)
+                            }
+                        };
+                        if (!brokerName) {
+                            containerJolokia.search("org.apache.activemq:destinationType=" + destinationTypeName + ",destinationName=" + destinationName + ",*", Core.onSuccess(function (response) {
+                                ActiveMQ.log.info("Found destination mbean: " + response);
+                                if (response && response.length) {
+                                    answer.objectName = response[0];
+                                }
+                            }));
+                        }
+                        return answer;
+                    });
+                    if (destination && $scope.viewSettings.broker && brokerName) {
+                        addLinkIds(brokerNodeId(brokerName), destination["id"], "destination");
+                    }
+                    return destination;
+                }
+                // find networks
+                var brokerId = container.brokerName;
+                if (brokerId && $scope.viewSettings.network && $scope.viewSettings.broker) {
+                    containerJolokia.request({ type: "read", mbean: "org.apache.activemq:connector=networkConnectors,*" }, Core.onSuccess(function (response) {
+                        angular.forEach(response.value, function (properties, objectName) {
+                            var details = Core.parseMBean(objectName);
+                            var attributes = details['attributes'];
+                            if (properties) {
+                                configureDestinationProperties(properties);
+                                var remoteBrokerId = properties.RemoteBrokerName;
+                                if (remoteBrokerId) {
+                                    addLinkIds(brokerNodeId(brokerId), brokerNodeId(remoteBrokerId), "network");
+                                }
+                            }
+                        });
+                        graphModelUpdated();
+                    }));
+                }
+                // find consumers
+                if ($scope.viewSettings.consumer) {
+                    containerJolokia.search("org.apache.activemq:endpoint=Consumer,*", Core.onSuccess(function (response) {
+                        angular.forEach(response, function (objectName) {
+                            //log.info("Got consumer: " + objectName + " on container: " + id);
+                            var details = Core.parseMBean(objectName);
+                            if (details) {
+                                var properties = details['attributes'];
+                                if (properties) {
+                                    configureDestinationProperties(properties);
+                                    var consumerId = properties.consumerId;
+                                    if (consumerId) {
+                                        var destination = getOrAddDestination(properties);
+                                        if (destination) {
+                                            addLink(container.destinationLinkNode, destination, "destination");
+                                            var consumer = getOrAddNode("consumer", consumerId, properties, function () {
+                                                return {
+                                                    typeLabel: "Consumer",
+                                                    brokerContainer: container,
+                                                    objectName: objectName,
+                                                    jolokia: containerJolokia,
+                                                    popup: {
+                                                        title: "Consumer: " + consumerId,
+                                                        content: "<p>client: " + (properties.clientId || "") + "</p> " + brokerNameMarkup(properties.brokerName)
+                                                    }
+                                                };
+                                            });
+                                            addLink(destination, consumer, "consumer");
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        graphModelUpdated();
+                    }));
+                }
+                // find producers
+                if ($scope.viewSettings.producer) {
+                    containerJolokia.search("org.apache.activemq:endpoint=Producer,*", Core.onSuccess(function (response) {
+                        angular.forEach(response, function (objectName) {
+                            var details = Core.parseMBean(objectName);
+                            if (details) {
+                                var properties = details['attributes'];
+                                if (properties) {
+                                    configureDestinationProperties(properties);
+                                    var producerId = properties.producerId;
+                                    if (producerId) {
+                                        var destination = getOrAddDestination(properties);
+                                        if (destination) {
+                                            addLink(container.destinationLinkNode, destination, "destination");
+                                            var producer = getOrAddNode("producer", producerId, properties, function () {
+                                                return {
+                                                    typeLabel: "Producer",
+                                                    brokerContainer: container,
+                                                    objectName: objectName,
+                                                    jolokia: containerJolokia,
+                                                    popup: {
+                                                        title: "Producer: " + producerId,
+                                                        content: "<p>client: " + (properties.clientId || "") + "</p> " + brokerNameMarkup(properties.brokerName)
+                                                    }
+                                                };
+                                            });
+                                            addLink(producer, destination, "producer");
+                                        }
+                                        graphModelUpdated();
+                                    }
+                                }
+                            }
+                        });
+                        graphModelUpdated();
+                    }));
+                }
+                // find dynamic producers
+                if ($scope.viewSettings.producer) {
+                    containerJolokia.request({ type: "read", mbean: "org.apache.activemq:endpoint=dynamicProducer,*" }, Core.onSuccess(function (response) {
+                        angular.forEach(response.value, function (mbeanValues, objectName) {
+                            var details = Core.parseMBean(objectName);
+                            var attributes = details['attributes'];
+                            var properties = {};
+                            angular.forEach(attributes, function (value, key) {
+                                properties[key] = value;
+                            });
+                            angular.forEach(mbeanValues, function (value, key) {
+                                properties[key] = value;
+                            });
+                            configureDestinationProperties(properties);
+                            properties['destinationName'] = properties['DestinationName'];
+                            var producerId = properties["producerId"] || properties["ProducerId"];
+                            if (properties["DestinationTemporary"] || properties["DestinationTopc"]) {
+                                properties["destType"] = "topic";
+                            }
+                            var destination = getOrAddDestination(properties);
+                            if (producerId && destination) {
+                                addLink(container.destinationLinkNode, destination, "destination");
+                                var producer = getOrAddNode("producer", producerId, properties, function () {
+                                    return {
+                                        typeLabel: "Producer (Dynamic)",
+                                        brokerContainer: container,
+                                        objectName: objectName,
+                                        jolokia: containerJolokia,
+                                        popup: {
+                                            title: "Producer (Dynamic): " + producerId,
+                                            content: "<p>client: " + (properties['ClientId'] || "") + "</p> " + brokerNameMarkup(properties['brokerName'])
+                                        }
+                                    };
+                                });
+                                addLink(producer, destination, "producer");
+                            }
+                        });
+                        graphModelUpdated();
+                    }));
+                }
+            }
+        }
+        function graphModelUpdated() {
+            $scope.graph = graphBuilder.buildGraph();
+            Core.$apply($scope);
+        }
+        function getOrAddBroker(master, brokerId, groupId, containerId, container, brokerStatus) {
+            var broker = null;
+            var brokerFlag = master ? $scope.viewSettings.broker : $scope.viewSettings.slave;
+            if (brokerFlag) {
+                broker = getOrAddNode("broker", brokerId + (master ? "" : ":slave"), brokerStatus, function () {
+                    return {
+                        type: master ? "broker" : "brokerSlave",
+                        typeLabel: master ? "Broker" : "Slave Broker",
+                        popup: {
+                            title: (master ? "Master" : "Slave") + " Broker: " + brokerId,
+                            content: "<p>Container: " + containerId + "</p> <p>Group: " + groupId + "</p>"
+                        }
+                    };
+                });
+                if (master) {
+                    if (!broker['objectName']) {
+                        // lets try guess the mbean name
+                        broker['objectName'] = "org.apache.activemq:type=Broker,brokerName=" + brokerId;
+                        ActiveMQ.log.info("Guessed broker mbean: " + broker['objectName']);
+                    }
+                    if (!broker['brokerContainer'] && container) {
+                        broker['brokerContainer'] = container;
+                    }
+                }
+            }
+            return broker;
+        }
+        function getOrAddNode(typeName, id, properties, createFn) {
+            var node = null;
+            if (id) {
+                var nodeId = typeName + ":" + id;
+                node = graphBuilder.getNode(nodeId);
+                if (!node) {
+                    var nodeValues = createFn();
+                    node = angular.copy(properties);
+                    angular.forEach(nodeValues, function (value, key) { return node[key] = value; });
+                    node['id'] = nodeId;
+                    if (!node['type']) {
+                        node['type'] = typeName;
+                    }
+                    if (!node['name']) {
+                        node['name'] = id;
+                    }
+                    if (node) {
+                        var size = $scope.shapeSize[typeName];
+                        if (size && !node['size']) {
+                            node['size'] = size;
+                        }
+                        if (!node['summary']) {
+                            node['summary'] = node['popup'] || "";
+                        }
+                        if (!$scope.viewSettings.popup) {
+                            delete node['popup'];
+                        }
+                        if (!$scope.viewSettings.label) {
+                            delete node['name'];
+                        }
+                        // lets not add nodes which are defined as being disabled
+                        var enabled = $scope.viewSettings[typeName];
+                        if (enabled || !angular.isDefined(enabled)) {
+                            //log.info("Adding node " + nodeId + " of type + " + typeName);
+                            graphBuilder.addNode(node);
+                        }
+                        else {
+                        }
+                    }
+                }
+            }
+            return node;
+        }
+        function addLink(object1, object2, linkType) {
+            if (object1 && object2) {
+                addLinkIds(object1.id, object2.id, linkType);
+            }
+        }
+        function addLinkIds(id1, id2, linkType) {
+            if (id1 && id2) {
+                graphBuilder.addLink(id1, id2, linkType);
+            }
+        }
+        function brokerNodeId(brokerId) {
+            return brokerId ? "broker:" + brokerId : null;
+        }
+        /**
+           * Avoid the JMX type property clashing with the ForceGraph type property; used for associating css classes with nodes on the graph
+           *
+           * @param properties
+           */
+        function renameTypeProperty(properties) {
+            properties.mbeanType = properties['type'];
+            delete properties['type'];
+        }
+        function configureDestinationProperties(properties) {
+            renameTypeProperty(properties);
+            var destinationType = properties.destinationType || "Queue";
+            var typeName = destinationType.toLowerCase();
+            properties.isQueue = !typeName.startsWith("t");
+            properties['destType'] = typeName;
+        }
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ.BrowseQueueController = ActiveMQ._module.controller("ActiveMQ.BrowseQueueController", ["$scope", "workspace", "jolokia", "localStorage", '$location', "activeMQMessage", "$timeout", function ($scope, workspace, jolokia, localStorage, location, activeMQMessage, $timeout) {
+        $scope.searchText = '';
+        $scope.allMessages = [];
+        $scope.messages = [];
+        $scope.headers = {};
+        $scope.mode = 'text';
+        $scope.deleteDialog = false;
+        $scope.moveDialog = false;
+        $scope.gridOptions = {
+            selectedItems: [],
+            data: 'messages',
+            displayFooter: false,
+            showFilter: false,
+            showColumnMenu: true,
+            enableColumnResize: true,
+            enableColumnReordering: true,
+            enableHighlighting: true,
+            filterOptions: {
+                filterText: '',
+                useExternalFilter: true
+            },
+            selectWithCheckboxOnly: true,
+            showSelectionCheckbox: true,
+            maintainColumnRatios: false,
+            columnDefs: [
+                {
+                    field: 'JMSMessageID',
+                    displayName: 'Message ID',
+                    cellTemplate: '<div class="ngCellText"><a ng-click="openMessageDialog(row)">{{row.entity.JMSMessageID}}</a></div>',
+                    // for ng-grid
+                    width: '34%'
+                },
+                {
+                    field: 'JMSType',
+                    displayName: 'Type',
+                    width: '10%'
+                },
+                {
+                    field: 'JMSPriority',
+                    displayName: 'Priority',
+                    width: '7%'
+                },
+                {
+                    field: 'JMSTimestamp',
+                    displayName: 'Timestamp',
+                    width: '19%'
+                },
+                {
+                    field: 'JMSExpiration',
+                    displayName: 'Expires',
+                    width: '10%'
+                },
+                {
+                    field: 'JMSReplyTo',
+                    displayName: 'Reply To',
+                    width: '10%'
+                },
+                {
+                    field: 'JMSCorrelationID',
+                    displayName: 'Correlation ID',
+                    width: '10%'
+                }
+            ]
+        };
+        $scope.showMessageDetails = false;
+        var ignoreColumns = ["PropertiesText", "BodyPreview", "Text"];
+        var flattenColumns = ["BooleanProperties", "ByteProperties", "ShortProperties", "IntProperties", "LongProperties", "FloatProperties", "DoubleProperties", "StringProperties"];
+        $scope.$watch('workspace.selection', function () {
+            if (workspace.moveIfViewInvalid()) {
+                return;
+            }
+            // lets defer execution as we may not have the selection just yet
+            setTimeout(loadTable, 50);
+        });
+        $scope.$watch('gridOptions.filterOptions.filterText', function (filterText) {
+            filterMessages(filterText);
+        });
+        $scope.openMessageDialog = function (message) {
+            ActiveMQ.selectCurrentMessage(message, "JMSMessageID", $scope);
+            if ($scope.row) {
+                $scope.mode = CodeEditor.detectTextFormat($scope.row.Text);
+                $scope.showMessageDetails = true;
+            }
+        };
+        $scope.refresh = loadTable;
+        ActiveMQ.decorate($scope);
+        $scope.moveMessages = function () {
+            var selection = workspace.selection;
+            var mbean = selection.objectName;
+            if (mbean && selection) {
+                var selectedItems = $scope.gridOptions.selectedItems;
+                $scope.message = "Moved " + Core.maybePlural(selectedItems.length, "message" + " to " + $scope.queueName);
+                var operation = "moveMessageTo(java.lang.String, java.lang.String)";
+                angular.forEach(selectedItems, function (item, idx) {
+                    var id = item.JMSMessageID;
+                    if (id) {
+                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : moveSuccess;
+                        jolokia.execute(mbean, operation, id, $scope.queueName, Core.onSuccess(callback));
+                    }
+                });
+            }
+        };
+        $scope.resendMessage = function () {
+            var selection = workspace.selection;
+            var mbean = selection.objectName;
+            if (mbean && selection) {
+                var selectedItems = $scope.gridOptions.selectedItems;
+                //always assume a single message
+                activeMQMessage.message = selectedItems[0];
+                location.path('activemq/sendMessage');
+            }
+        };
+        $scope.deleteMessages = function () {
+            var selection = workspace.selection;
+            var mbean = selection.objectName;
+            if (mbean && selection) {
+                var selectedItems = $scope.gridOptions.selectedItems;
+                $scope.message = "Deleted " + Core.maybePlural(selectedItems.length, "message");
+                var operation = "removeMessage(java.lang.String)";
+                angular.forEach(selectedItems, function (item, idx) {
+                    var id = item.JMSMessageID;
+                    if (id) {
+                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
+                        jolokia.execute(mbean, operation, id, Core.onSuccess(callback));
+                    }
+                });
+            }
+        };
+        $scope.retryMessages = function () {
+            var selection = workspace.selection;
+            var mbean = selection.objectName;
+            if (mbean && selection) {
+                var selectedItems = $scope.gridOptions.selectedItems;
+                $scope.message = "Retry " + Core.maybePlural(selectedItems.length, "message");
+                var operation = "retryMessage(java.lang.String)";
+                angular.forEach(selectedItems, function (item, idx) {
+                    var id = item.JMSMessageID;
+                    if (id) {
+                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
+                        jolokia.execute(mbean, operation, id, Core.onSuccess(callback));
+                    }
+                });
+            }
+        };
+        $scope.queueNames = function (completionText) {
+            var queuesFolder = ActiveMQ.getSelectionQueuesFolder(workspace);
+            return (queuesFolder) ? queuesFolder.children.map(function (n) { return n.title; }) : [];
+        };
+        function populateTable(response) {
+            var data = response.value;
+            if (!angular.isArray(data)) {
+                $scope.allMessages = [];
+                angular.forEach(data, function (value, idx) {
+                    $scope.allMessages.push(value);
+                });
+            }
+            else {
+                $scope.allMessages = data;
+            }
+            angular.forEach($scope.allMessages, function (message) {
+                message.headerHtml = createHeaderHtml(message);
+                message.bodyText = createBodyText(message);
+            });
+            Core.$apply($scope);
+            filterMessages($scope.gridOptions.filterOptions.filterText);
+        }
+        /*
+         * For some reason using ng-repeat in the modal dialog doesn't work so lets
+         * just create the HTML in code :)
+         */
+        function createBodyText(message) {
+            if (message.Text) {
+                var body = message.Text;
+                var lenTxt = "" + body.length;
+                message.textMode = "text (" + lenTxt + " chars)";
+                return body;
+            }
+            else if (message.BodyPreview) {
+                var code = Core.parseIntValue(localStorage["activemqBrowseBytesMessages"] || "1", "browse bytes messages");
+                var body;
+                message.textMode = "bytes (turned off)";
+                if (code != 99) {
+                    var bytesArr = [];
+                    var textArr = [];
+                    message.BodyPreview.forEach(function (b) {
+                        if (code === 1 || code === 2) {
+                            // text
+                            textArr.push(String.fromCharCode(b));
+                        }
+                        if (code === 1 || code === 4) {
+                            // hex and must be 2 digit so they space out evenly
+                            var s = b.toString(16);
+                            if (s.length === 1) {
+                                s = "0" + s;
+                            }
+                            bytesArr.push(s);
+                        }
+                        else {
+                            // just show as is without spacing out, as that is usually more used for hex than decimal
+                            var s = b.toString(10);
+                            bytesArr.push(s);
+                        }
+                    });
+                    var bytesData = bytesArr.join(" ");
+                    var textData = textArr.join("");
+                    if (code === 1 || code === 2) {
+                        // bytes and text
+                        var len = message.BodyPreview.length;
+                        var lenTxt = "" + textArr.length;
+                        body = "bytes:\n" + bytesData + "\n\ntext:\n" + textData;
+                        message.textMode = "bytes (" + len + " bytes) and text (" + lenTxt + " chars)";
+                    }
+                    else {
+                        // bytes only
+                        var len = message.BodyPreview.length;
+                        body = bytesData;
+                        message.textMode = "bytes (" + len + " bytes)";
+                    }
+                }
+                return body;
+            }
+            else {
+                message.textMode = "unsupported";
+                return "Unsupported message body type which cannot be displayed by hawtio";
+            }
+        }
+        /*
+         * For some reason using ng-repeat in the modal dialog doesn't work so lets
+         * just create the HTML in code :)
+         */
+        function createHeaderHtml(message) {
+            var headers = createHeaders(message);
+            var properties = createProperties(message);
+            var headerKeys = _.keys(headers);
+            function sort(a, b) {
+                if (a > b)
+                    return 1;
+                if (a < b)
+                    return -1;
+                return 0;
+            }
+            var propertiesKeys = _.keys(properties).sort(sort);
+            var jmsHeaders = headerKeys.filter(function (key) {
+                return key.startsWith("JMS");
+            }).sort(sort);
+            var remaining = headerKeys.subtract(jmsHeaders.concat(propertiesKeys)).sort(sort);
+            var buffer = [];
+            function appendHeader(key) {
+                var value = headers[key];
+                if (value === null) {
+                    value = '';
+                }
+                buffer.push('<tr><td class="propertyName"><span class="green">Header</span> - ' + key + '</td><td class="property-value">' + value + '</td></tr>');
+            }
+            function appendProperty(key) {
+                var value = properties[key];
+                if (value === null) {
+                    value = '';
+                }
+                buffer.push('<tr><td class="propertyName">' + key + '</td><td class="property-value">' + value + '</td></tr>');
+            }
+            jmsHeaders.forEach(appendHeader);
+            remaining.forEach(appendHeader);
+            propertiesKeys.forEach(appendProperty);
+            return buffer.join("\n");
+        }
+        function createHeaders(row) {
+            ActiveMQ.log.debug("headers: ", row);
+            var answer = {};
+            angular.forEach(row, function (value, key) {
+                if (!ignoreColumns.any(key) && !flattenColumns.any(key)) {
+                    answer[Core.escapeHtml(key)] = Core.escapeHtml(value);
+                }
+            });
+            return answer;
+        }
+        function createProperties(row) {
+            ActiveMQ.log.debug("properties: ", row);
+            var answer = {};
+            angular.forEach(row, function (value, key) {
+                if (!ignoreColumns.any(key) && flattenColumns.any(key)) {
+                    angular.forEach(value, function (v2, k2) {
+                        answer['<span class="green">' + key.replace('Properties', ' Property') + '</span> - ' + Core.escapeHtml(k2)] = Core.escapeHtml(v2);
+                    });
+                }
+            });
+            return answer;
+        }
+        function loadTable() {
+            var objName;
+            if (workspace.selection) {
+                objName = workspace.selection.objectName;
+            }
+            else {
+                // in case of refresh
+                var key = location.search()['nid'];
+                var node = workspace.keyToNodeMap[key];
+                objName = node.objectName;
+            }
+            if (objName) {
+                $scope.dlq = false;
+                jolokia.getAttribute(objName, "DLQ", Core.onSuccess(onDlq, { silent: true }));
+                jolokia.request({ type: 'exec', mbean: objName, operation: 'browse()' }, Core.onSuccess(populateTable));
+            }
+        }
+        function onDlq(response) {
+            $scope.dlq = response;
+            Core.$apply($scope);
+        }
+        function intermediateResult() {
+        }
+        function operationSuccess() {
+            $scope.messageDialog = false;
+            $scope.gridOptions.selectedItems.splice(0);
+            Core.notification("success", $scope.message);
+            setTimeout(loadTable, 50);
+        }
+        function moveSuccess() {
+            operationSuccess();
+            workspace.loadTree();
+        }
+        function filterMessages(filter) {
+            var searchConditions = buildSearchConditions(filter);
+            evalFilter(searchConditions);
+        }
+        function evalFilter(searchConditions) {
+            if (!searchConditions || searchConditions.length === 0) {
+                $scope.messages = $scope.allMessages;
+            }
+            else {
+                ActiveMQ.log.debug("Filtering conditions:", searchConditions);
+                $scope.messages = $scope.allMessages.filter(function (message) {
+                    ActiveMQ.log.debug("Message:", message);
+                    var matched = true;
+                    $.each(searchConditions, function (index, condition) {
+                        if (!condition.column) {
+                            matched = matched && evalMessage(message, condition.regex);
+                        }
+                        else {
+                            matched = matched && (message[condition.column] && condition.regex.test(message[condition.column])) || (message.StringProperties && message.StringProperties[condition.column] && condition.regex.test(message.StringProperties[condition.column]));
+                        }
+                    });
+                    return matched;
+                });
+            }
+        }
+        function evalMessage(message, regex) {
+            var jmsHeaders = ['JMSDestination', 'JMSDeliveryMode', 'JMSExpiration', 'JMSPriority', 'JMSMessageID', 'JMSTimestamp', 'JMSCorrelationID', 'JMSReplyTo', 'JMSType', 'JMSRedelivered'];
+            for (var i = 0; i < jmsHeaders.length; i++) {
+                var header = jmsHeaders[i];
+                if (message[header] && regex.test(message[header])) {
+                    return true;
+                }
+            }
+            if (message.StringProperties) {
+                for (var property in message.StringProperties) {
+                    if (regex.test(message.StringProperties[property])) {
+                        return true;
+                    }
+                }
+            }
+            if (message.bodyText && regex.test(message.bodyText)) {
+                return true;
+            }
+            return false;
+        }
+        function getRegExp(str, modifiers) {
+            try {
+                return new RegExp(str, modifiers);
+            }
+            catch (err) {
+                return new RegExp(str.replace(/(\^|\$|\(|\)|<|>|\[|\]|\{|\}|\\|\||\.|\*|\+|\?)/g, '\\$1'));
+            }
+        }
+        function buildSearchConditions(filterText) {
+            var searchConditions = [];
+            var qStr;
+            if (!(qStr = $.trim(filterText))) {
+                return;
+            }
+            var columnFilters = qStr.split(";");
+            for (var i = 0; i < columnFilters.length; i++) {
+                var args = columnFilters[i].split(':');
+                if (args.length > 1) {
+                    var columnName = $.trim(args[0]);
+                    var columnValue = $.trim(args[1]);
+                    if (columnName && columnValue) {
+                        searchConditions.push({
+                            column: columnName,
+                            columnDisplay: columnName.replace(/\s+/g, '').toLowerCase(),
+                            regex: getRegExp(columnValue, 'i')
+                        });
+                    }
+                }
+                else {
+                    var val = $.trim(args[0]);
+                    if (val) {
+                        searchConditions.push({
+                            column: '',
+                            regex: getRegExp(val, 'i')
+                        });
+                    }
+                }
+            }
+            return searchConditions;
+        }
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module.controller("ActiveMQ.DestinationController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
+        $scope.workspace = workspace;
+        $scope.message = "";
+        $scope.queueType = 'true';
+        $scope.deleteDialog = false;
+        $scope.purgeDialog = false;
+        updateQueueType();
+        function updateQueueType() {
+            $scope.destinationTypeName = $scope.queueType ? "Queue" : "Topic";
+        }
+        $scope.$watch('queueType', function () {
+            updateQueueType();
+        });
+        $scope.$watch('workspace.selection', function () {
+            workspace.moveIfViewInvalid();
+        });
+        function operationSuccess() {
+            $scope.destinationName = "";
+            $scope.workspace.operationCounter += 1;
+            Core.$apply($scope);
+            Core.notification("success", $scope.message);
+            $scope.workspace.loadTree();
+        }
+        function deleteSuccess() {
+            // lets set the selection to the parent
+            workspace.removeAndSelectParentNode();
+            $scope.workspace.operationCounter += 1;
+            Core.$apply($scope);
+            Core.notification("success", $scope.message);
+            $scope.workspace.loadTree();
+        }
+        function getBrokerMBean(jolokia) {
+            var mbean = null;
+            var selection = workspace.selection;
+            if (selection && ActiveMQ.isBroker(workspace) && selection.objectName) {
+                return selection.objectName;
+            }
+            var folderNames = selection.folderNames;
+            //if (selection && jolokia && folderNames && folderNames.length > 1) {
+            var parent = selection ? selection.parent : null;
+            if (selection && parent && jolokia && folderNames && folderNames.length > 1) {
+                mbean = parent.objectName;
+                // we might be a destination, so lets try one more parent
+                if (!mbean && parent) {
+                    mbean = parent.parent.objectName;
+                }
+                if (!mbean) {
+                    mbean = "" + folderNames[0] + ":BrokerName=" + folderNames[1] + ",Type=Broker";
+                }
+            }
+            return mbean;
+        }
+        $scope.createDestination = function (name, isQueue) {
+            var mbean = getBrokerMBean(jolokia);
+            if (mbean) {
+                var operation;
+                if (isQueue) {
+                    operation = "addQueue(java.lang.String)";
+                    $scope.message = "Created queue " + name;
+                }
+                else {
+                    operation = "addTopic(java.lang.String)";
+                    $scope.message = "Created topic " + name;
+                }
+                if (mbean) {
+                    jolokia.execute(mbean, operation, name, Core.onSuccess(operationSuccess));
+                }
+                else {
+                    Core.notification("error", "Could not find the Broker MBean!");
+                }
+            }
+        };
+        $scope.deleteDestination = function () {
+            var mbean = getBrokerMBean(jolokia);
+            var selection = workspace.selection;
+            var entries = selection.entries;
+            if (mbean && selection && jolokia && entries) {
+                var domain = selection.domain;
+                var name = entries["Destination"] || entries["destinationName"] || selection.title;
+                name = name.unescapeHTML();
+                var isQueue = "Topic" !== (entries["Type"] || entries["destinationType"]);
+                var operation;
+                if (isQueue) {
+                    operation = "removeQueue(java.lang.String)";
+                    $scope.message = "Deleted queue " + name;
+                }
+                else {
+                    operation = "removeTopic(java.lang.String)";
+                    $scope.message = "Deleted topic " + name;
+                }
+                jolokia.execute(mbean, operation, name, Core.onSuccess(deleteSuccess));
+            }
+        };
+        $scope.purgeDestination = function () {
+            var mbean = workspace.getSelectedMBeanName();
+            var selection = workspace.selection;
+            var entries = selection.entries;
+            if (mbean && selection && jolokia && entries) {
+                var name = entries["Destination"] || entries["destinationName"] || selection.title;
+                name = name.unescapeHTML();
+                var operation = "purge()";
+                $scope.message = "Purged queue " + name;
+                jolokia.execute(mbean, operation, Core.onSuccess(operationSuccess));
+            }
+        };
+        $scope.name = function () {
+            var selection = workspace.selection;
+            if (selection) {
+                return selection.title;
+            }
+            return null;
+        };
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module.controller("ActiveMQ.DurableSubscriberController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
+        $scope.refresh = loadTable;
+        $scope.durableSubscribers = [];
+        $scope.tempData = [];
+        $scope.createSubscriberDialog = new UI.Dialog();
+        $scope.deleteSubscriberDialog = new UI.Dialog();
+        $scope.showSubscriberDialog = new UI.Dialog();
+        $scope.topicName = '';
+        $scope.clientId = '';
+        $scope.subscriberName = '';
+        $scope.subSelector = '';
+        $scope.gridOptions = {
+            selectedItems: [],
+            data: 'durableSubscribers',
+            displayFooter: false,
+            showFilter: false,
+            showColumnMenu: true,
+            enableCellSelection: false,
+            enableColumnResize: true,
+            enableColumnReordering: true,
+            selectWithCheckboxOnly: false,
+            showSelectionCheckbox: false,
+            multiSelect: false,
+            displaySelectionCheckbox: false,
+            filterOptions: {
+                filterText: ''
+            },
+            maintainColumnRatios: false,
+            columnDefs: [
+                {
+                    field: 'destinationName',
+                    displayName: 'Topic',
+                    width: '30%'
+                },
+                {
+                    field: 'clientId',
+                    displayName: 'Client ID',
+                    width: '30%'
+                },
+                {
+                    field: 'consumerId',
+                    displayName: 'Consumer ID',
+                    cellTemplate: '<div class="ngCellText"><span ng-hide="row.entity.status != \'Offline\'">{{row.entity.consumerId}}</span><a ng-show="row.entity.status != \'Offline\'" ng-click="openSubscriberDialog(row)">{{row.entity.consumerId}}</a></div>',
+                    width: '30%'
+                },
+                {
+                    field: 'status',
+                    displayName: 'Status',
+                    width: '10%'
+                }
+            ]
+        };
+        $scope.doCreateSubscriber = function (clientId, subscriberName, topicName, subSelector) {
+            $scope.createSubscriberDialog.close();
+            $scope.clientId = clientId;
+            $scope.subscriberName = subscriberName;
+            $scope.topicName = topicName;
+            $scope.subSelector = subSelector;
+            if (Core.isBlank($scope.subSelector)) {
+                $scope.subSelector = null;
+            }
+            var mbean = getBrokerMBean(jolokia);
+            if (mbean) {
+                jolokia.execute(mbean, "createDurableSubscriber(java.lang.String, java.lang.String, java.lang.String, java.lang.String)", $scope.clientId, $scope.subscriberName, $scope.topicName, $scope.subSelector, Core.onSuccess(function () {
+                    Core.notification('success', "Created durable subscriber " + clientId);
+                    $scope.clientId = '';
+                    $scope.subscriberName = '';
+                    $scope.topicName = '';
+                    $scope.subSelector = '';
+                    loadTable();
+                }));
+            }
+            else {
+                Core.notification("error", "Could not find the Broker MBean!");
+            }
+        };
+        $scope.deleteSubscribers = function () {
+            var mbean = $scope.gridOptions.selectedItems[0]._id;
+            jolokia.execute(mbean, "destroy()", Core.onSuccess(function () {
+                $scope.showSubscriberDialog.close();
+                Core.notification('success', "Deleted durable subscriber");
+                loadTable();
+                $scope.gridOptions.selectedItems = [];
+            }));
+        };
+        $scope.openSubscriberDialog = function (subscriber) {
+            jolokia.request({ type: "read", mbean: subscriber.entity._id }, Core.onSuccess(function (response) {
+                $scope.showSubscriberDialog.subscriber = response.value;
+                $scope.showSubscriberDialog.subscriber.Status = subscriber.entity.status;
+                console.log("Subscriber is now " + $scope.showSubscriberDialog.subscriber);
+                Core.$apply($scope);
+                // now lets start opening the dialog
+                setTimeout(function () {
+                    $scope.showSubscriberDialog.open();
+                    Core.$apply($scope);
+                }, 100);
+            }));
+        };
+        $scope.topicNames = function (completionText) {
+            var topicsFolder = ActiveMQ.getSelectionTopicsFolder(workspace);
+            return (topicsFolder) ? topicsFolder.children.map(function (n) { return n.title; }) : [];
+        };
+        $scope.$watch('workspace.selection', function () {
+            if (workspace.moveIfViewInvalid())
+                return;
+            // lets defer execution as we may not have the selection just yet
+            setTimeout(loadTable, 50);
+        });
+        function loadTable() {
+            var mbean = getBrokerMBean(jolokia);
+            if (mbean) {
+                $scope.durableSubscribers = [];
+                jolokia.request({ type: "read", mbean: mbean, attribute: ["DurableTopicSubscribers"] }, Core.onSuccess(function (response) { return populateTable(response, "DurableTopicSubscribers", "Active"); }));
+                jolokia.request({ type: "read", mbean: mbean, attribute: ["InactiveDurableTopicSubscribers"] }, Core.onSuccess(function (response) { return populateTable(response, "InactiveDurableTopicSubscribers", "Offline"); }));
+            }
+        }
+        function populateTable(response, attr, status) {
+            var data = response.value;
+            ActiveMQ.log.debug("Got data: ", data);
+            $scope.durableSubscribers.push.apply($scope.durableSubscribers, data[attr].map(function (o) {
+                var objectName = o["objectName"];
+                var entries = Core.objectNameProperties(objectName);
+                if (!('objectName' in o)) {
+                    if ('canonicalName' in o) {
+                        objectName = o['canonicalName'];
+                    }
+                    entries = _.cloneDeep(o['keyPropertyList']);
+                }
+                entries["_id"] = objectName;
+                entries["status"] = status;
+                return entries;
+            }));
+            Core.$apply($scope);
+        }
+        function getBrokerMBean(jolokia) {
+            var mbean = null;
+            var selection = workspace.selection;
+            if (selection && ActiveMQ.isBroker(workspace) && selection.objectName) {
+                return selection.objectName;
+            }
+            var folderNames = selection.folderNames;
+            //if (selection && jolokia && folderNames && folderNames.length > 1) {
+            var parent = selection ? selection.parent : null;
+            if (selection && parent && jolokia && folderNames && folderNames.length > 1) {
+                mbean = parent.objectName;
+                // we might be a destination, so lets try one more parent
+                if (!mbean && parent) {
+                    mbean = parent.parent.objectName;
+                }
+                if (!mbean) {
+                    mbean = "" + folderNames[0] + ":BrokerName=" + folderNames[1] + ",Type=Broker";
+                }
+            }
+            return mbean;
+        }
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module.controller("ActiveMQ.JobSchedulerController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
+        $scope.refresh = loadTable;
+        $scope.jobs = [];
+        $scope.deleteJobsDialog = new UI.Dialog();
+        $scope.gridOptions = {
+            selectedItems: [],
+            data: 'jobs',
+            displayFooter: false,
+            showFilter: false,
+            showColumnMenu: true,
+            enableColumnResize: true,
+            enableColumnReordering: true,
+            filterOptions: {
+                filterText: ''
+            },
+            selectWithCheckboxOnly: true,
+            showSelectionCheckbox: true,
+            maintainColumnRatios: false,
+            columnDefs: [
+                {
+                    field: 'jobId',
+                    displayName: 'Job ID',
+                    width: '25%'
+                },
+                {
+                    field: 'cronEntry',
+                    displayName: 'Cron Entry',
+                    width: '10%'
+                },
+                {
+                    field: 'delay',
+                    displayName: 'Delay',
+                    width: '5%'
+                },
+                {
+                    field: 'repeat',
+                    displayName: 'repeat',
+                    width: '5%'
+                },
+                {
+                    field: 'period',
+                    displayName: 'period',
+                    width: '5%'
+                },
+                {
+                    field: 'start',
+                    displayName: 'Start',
+                    width: '25%'
+                },
+                {
+                    field: 'next',
+                    displayName: 'Next',
+                    width: '25%'
+                }
+            ]
+        };
+        $scope.$watch('workspace.selection', function () {
+            if (workspace.moveIfViewInvalid())
+                return;
+            // lets defer execution as we may not have the selection just yet
+            setTimeout(loadTable, 50);
+        });
+        function loadTable() {
+            var selection = workspace.selection;
+            if (selection) {
+                var mbean = selection.objectName;
+                if (mbean) {
+                    jolokia.request({ type: 'read', mbean: mbean, attribute: "AllJobs" }, Core.onSuccess(populateTable));
+                }
+            }
+            Core.$apply($scope);
+        }
+        function populateTable(response) {
+            var data = response.value;
+            if (!angular.isArray(data)) {
+                $scope.jobs = [];
+                angular.forEach(data, function (value, idx) {
+                    $scope.jobs.push(value);
+                });
+            }
+            else {
+                $scope.jobs = data;
+            }
+            Core.$apply($scope);
+        }
+        $scope.deleteJobs = function () {
+            var selection = workspace.selection;
+            var mbean = selection.objectName;
+            if (mbean && selection) {
+                var selectedItems = $scope.gridOptions.selectedItems;
+                $scope.message = "Deleted " + Core.maybePlural(selectedItems.length, "job");
+                var operation = "removeJob(java.lang.String)";
+                angular.forEach(selectedItems, function (item, idx) {
+                    var id = item.jobId;
+                    if (id) {
+                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
+                        jolokia.execute(mbean, operation, id, Core.onSuccess(callback));
+                    }
+                });
+            }
+        };
+        function intermediateResult() {
+        }
+        function operationSuccess() {
+            $scope.gridOptions.selectedItems.splice(0);
+            Core.notification("success", $scope.message);
+            setTimeout(loadTable, 50);
+        }
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+/**
+ * @module ActiveMQ
+ */
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module.controller("ActiveMQ.PreferencesController", ["$scope", "localStorage", "userDetails", "$rootScope", function ($scope, localStorage, userDetails, $rootScope) {
+        Core.initPreferenceScope($scope, localStorage, {
+            'activemqUserName': {
+                'value': userDetails.username,
+            },
+            'activemqPassword': {
+                'value': userDetails.password
+            },
+            'activemqBrowseBytesMessages': {
+                'value': 1,
+                'converter': parseInt,
+                'formatter': function (value) {
+                    return "" + value;
+                }
+            },
+            'activemqFilterAdvisoryTopics': {
+                'value': false,
+                'converter': Core.parseBooleanValue,
+                'post': function (newValue) {
+                    $rootScope.$broadcast('jmxTreeUpdated');
+                }
+            }
+        });
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module.controller("ActiveMQ.TreeHeaderController", ["$scope", function ($scope) {
+        $scope.expandAll = function () {
+            Tree.expandAll("#activemqtree");
+        };
+        $scope.contractAll = function () {
+            Tree.contractAll("#activemqtree");
+        };
+    }]);
+    ActiveMQ._module.controller("ActiveMQ.TreeController", ["$scope", "$location", "workspace", "localStorage", function ($scope, $location, workspace, localStorage) {
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            // lets do this asynchronously to avoid Error: $digest already in progress
+            setTimeout(updateSelectionFromURL, 50);
+        });
+        $scope.$watch('workspace.tree', function () {
+            reloadTree();
+        });
+        $scope.$on('jmxTreeUpdated', function () {
+            reloadTree();
+        });
+        function reloadTree() {
+            ActiveMQ.log.debug("workspace tree has changed, lets reload the activemq tree");
+            var children = [];
+            var tree = workspace.tree;
+            if (tree) {
+                var domainName = "org.apache.activemq";
+                var folder = tree.get(domainName);
+                if (folder) {
+                    children = folder.children;
+                }
+                if (children.length) {
+                    var firstChild = children[0];
+                    // the children could be AMQ 5.7 style broker name folder with the actual MBean in the children
+                    // along with folders for the Queues etc...
+                    if (!firstChild.typeName && firstChild.children.length < 4) {
+                        // lets avoid the top level folder
+                        var answer = [];
+                        angular.forEach(children, function (child) {
+                            answer = answer.concat(child.children);
+                        });
+                        children = answer;
+                    }
+                }
+                // filter out advisory topics
+                children.forEach(function (broker) {
+                    var grandChildren = broker.children;
+                    if (grandChildren) {
+                        Tree.sanitize(grandChildren);
+                        var idx = grandChildren.findIndex(function (n) { return n.title === "Topic"; });
+                        if (idx > 0) {
+                            var old = grandChildren[idx];
+                            // we need to store all topics the first time on the workspace
+                            // so we have access to them later if the user changes the filter in the preferences
+                            var key = "ActiveMQ-allTopics-" + broker.title;
+                            var allTopics = old.children.clone();
+                            workspace.mapData[key] = allTopics;
+                            var filter = Core.parseBooleanValue(localStorage["activemqFilterAdvisoryTopics"]);
+                            if (filter) {
+                                if (old && old.children) {
+                                    var filteredTopics = old.children.filter(function (c) { return !c.title.startsWith("ActiveMQ.Advisory"); });
+                                    old.children = filteredTopics;
+                                }
+                            }
+                            else if (allTopics) {
+                                old.children = allTopics;
+                            }
+                        }
+                    }
+                });
+                var treeElement = $("#activemqtree");
+                Jmx.enableTree($scope, $location, workspace, treeElement, children, true);
+                // lets do this asynchronously to avoid Error: $digest already in progress
+                setTimeout(updateSelectionFromURL, 50);
+            }
+        }
+        function updateSelectionFromURL() {
+            Jmx.updateTreeSelectionFromURLAndAutoSelect($location, $("#activemqtree"), function (first) {
+                // use function to auto select the queue folder on the 1st broker
+                var queues = first.getChildren()[0];
+                if (queues && queues.data.title === 'Queue') {
+                    first = queues;
+                    first.expand(true);
+                    return first;
+                }
+                return null;
+            }, true);
+        }
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
 /**
  * @module Camel
  */
@@ -5517,3014 +8525,6 @@ var Camel;
         loadConverters();
     }]);
 })(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ.pluginName = 'activemq';
-    ActiveMQ.log = Logger.get("activemq");
-    ActiveMQ.jmxDomain = 'org.apache.activemq';
-    function getSelectionQueuesFolder(workspace) {
-        function findQueuesFolder(node) {
-            if (node) {
-                if (node.title === "Queues" || node.title === "Queue") {
-                    return node;
-                }
-                var parent = node.parent;
-                if (parent) {
-                    return findQueuesFolder(parent);
-                }
-            }
-            return null;
-        }
-        var selection = workspace.selection;
-        if (selection) {
-            return findQueuesFolder(selection);
-        }
-        return null;
-    }
-    ActiveMQ.getSelectionQueuesFolder = getSelectionQueuesFolder;
-    function getSelectionTopicsFolder(workspace) {
-        function findTopicsFolder(node) {
-            var answer = null;
-            if (node) {
-                if (node.title === "Topics" || node.title === "Topic") {
-                    answer = node;
-                }
-                if (answer === null) {
-                    angular.forEach(node.children, function (child) {
-                        if (child.title === "Topics" || child.title === "Topic") {
-                            answer = child;
-                        }
-                    });
-                }
-            }
-            return answer;
-        }
-        var selection = workspace.selection;
-        if (selection) {
-            return findTopicsFolder(selection);
-        }
-        return null;
-    }
-    ActiveMQ.getSelectionTopicsFolder = getSelectionTopicsFolder;
-    /**
-     * Sets $scope.row to currently selected JMS message.
-     * Used in:
-     *  - activemq/js/browse.ts
-     *  - camel/js/browseEndpoint.ts
-     *
-     * TODO: remove $scope argument and operate directly on other variables. but it's too much side effects here...
-     *
-     * @param message
-     * @param key unique key inside message that distinguishes between values
-     * @param $scope
-     */
-    function selectCurrentMessage(message, key, $scope) {
-        // clicking on message's link would interfere with messages selected with checkboxes
-        $scope.gridOptions.selectAll(false);
-        var idx = Core.pathGet(message, ["rowIndex"]);
-        var jmsMessageID = Core.pathGet(message, ["entity", key]);
-        $scope.rowIndex = idx;
-        var selected = $scope.gridOptions.selectedItems;
-        selected.splice(0, selected.length);
-        if (idx >= 0 && idx < $scope.messages.length) {
-            $scope.row = $scope.messages.find(function (msg) { return msg[key] === jmsMessageID; });
-            if ($scope.row) {
-                selected.push($scope.row);
-            }
-        }
-        else {
-            $scope.row = null;
-        }
-    }
-    ActiveMQ.selectCurrentMessage = selectCurrentMessage;
-    /**
-     * - Adds functions needed for message browsing with details
-     * - Adds a watch to deselect all rows after closing the slideout with message details
-     * TODO: export these functions too?
-     *
-     * @param $scope
-     */
-    function decorate($scope) {
-        $scope.selectRowIndex = function (idx) {
-            $scope.rowIndex = idx;
-            var selected = $scope.gridOptions.selectedItems;
-            selected.splice(0, selected.length);
-            if (idx >= 0 && idx < $scope.messages.length) {
-                $scope.row = $scope.messages[idx];
-                if ($scope.row) {
-                    selected.push($scope.row);
-                }
-            }
-            else {
-                $scope.row = null;
-            }
-        };
-        $scope.$watch("showMessageDetails", function () {
-            if (!$scope.showMessageDetails) {
-                $scope.row = null;
-                $scope.gridOptions.selectedItems.splice(0, $scope.gridOptions.selectedItems.length);
-            }
-        });
-    }
-    ActiveMQ.decorate = decorate;
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/**
- * @module ActiveMQ
- * @main ActiveMQ
- */
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module = angular.module(ActiveMQ.pluginName, []);
-    ActiveMQ._module.config(["$routeProvider", function ($routeProvider) {
-        $routeProvider.when('/activemq/browseQueue', { templateUrl: 'plugins/activemq/html/browseQueue.html' }).when('/activemq/diagram', { templateUrl: 'plugins/activemq/html/brokerDiagram.html', reloadOnSearch: false }).when('/activemq/createDestination', { templateUrl: 'plugins/activemq/html/createDestination.html' }).when('/activemq/createQueue', { templateUrl: 'plugins/activemq/html/createQueue.html' }).when('/activemq/createTopic', { templateUrl: 'plugins/activemq/html/createTopic.html' }).when('/activemq/deleteQueue', { templateUrl: 'plugins/activemq/html/deleteQueue.html' }).when('/activemq/deleteTopic', { templateUrl: 'plugins/activemq/html/deleteTopic.html' }).when('/activemq/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html' }).when('/activemq/durableSubscribers', { templateUrl: 'plugins/activemq/html/durableSubscribers.html' }).when('/activemq/jobs', { templateUrl: 'plugins/activemq/html/jobs.html' });
-    }]);
-    ActiveMQ._module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", function (nav, $location, workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache) {
-        viewRegistry['activemq'] = 'plugins/activemq/html/layoutActiveMQTree.html';
-        helpRegistry.addUserDoc('activemq', 'plugins/activemq/doc/help.md', function () {
-            return workspace.treeContainsDomainAndProperties("org.apache.activemq");
-        });
-        preferencesRegistry.addTab("ActiveMQ", "plugins/activemq/html/preferences.html", function () {
-            return workspace.treeContainsDomainAndProperties("org.apache.activemq");
-        });
-        workspace.addTreePostProcessor(postProcessTree);
-        // register default attribute views
-        var attributes = workspace.attributeColumnDefs;
-        attributes[ActiveMQ.jmxDomain + "/Broker/folder"] = [
-            { field: 'BrokerName', displayName: 'Name', width: "**" },
-            { field: 'TotalProducerCount', displayName: 'Producer #' },
-            { field: 'TotalConsumerCount', displayName: 'Consumer #' },
-            { field: 'StorePercentUsage', displayName: 'Store %' },
-            { field: 'TempPercentUsage', displayName: 'Temp %' },
-            { field: 'MemoryPercentUsage', displayName: 'Memory %' },
-            { field: 'TotalEnqueueCount', displayName: 'Enqueue #' },
-            { field: 'TotalDequeueCount', displayName: 'Dequeue #' }
-        ];
-        attributes[ActiveMQ.jmxDomain + "/Queue/folder"] = [
-            { field: 'Name', displayName: 'Name', width: "***" },
-            { field: 'QueueSize', displayName: 'Queue Size' },
-            { field: 'ProducerCount', displayName: 'Producer #' },
-            { field: 'ConsumerCount', displayName: 'Consumer #' },
-            { field: 'EnqueueCount', displayName: 'Enqueue #' },
-            { field: 'DequeueCount', displayName: 'Dequeue #' },
-            { field: 'MemoryPercentUsage', displayName: 'Memory %' },
-            { field: 'DispatchCount', displayName: 'Dispatch #', visible: false }
-        ];
-        attributes[ActiveMQ.jmxDomain + "/Topic/folder"] = [
-            { field: 'Name', displayName: 'Name', width: "****" },
-            { field: 'ProducerCount', displayName: 'Producer #' },
-            { field: 'ConsumerCount', displayName: 'Consumer #' },
-            { field: 'EnqueueCount', displayName: 'Enqueue #' },
-            { field: 'DequeueCount', displayName: 'Dequeue #' },
-            { field: 'MemoryPercentUsage', displayName: 'Memory %' },
-            { field: 'DispatchCount', displayName: 'Dispatch #', visible: false }
-        ];
-        attributes[ActiveMQ.jmxDomain + "/Consumer/folder"] = [
-            { field: 'ConnectionId', displayName: 'Name', width: "**" },
-            { field: 'PrefetchSize', displayName: 'Prefetch Size' },
-            { field: 'Priority', displayName: 'Priority' },
-            { field: 'DispatchedQueueSize', displayName: 'Dispatched Queue #' },
-            { field: 'SlowConsumer', displayName: 'Slow ?' },
-            { field: 'Retroactive', displayName: 'Retroactive' },
-            { field: 'Selector', displayName: 'Selector' }
-        ];
-        attributes[ActiveMQ.jmxDomain + "/networkConnectors/folder"] = [
-            { field: 'Name', displayName: 'Name', width: "**" },
-            { field: 'UserName', displayName: 'User Name' },
-            { field: 'PrefetchSize', displayName: 'Prefetch Size' },
-            { field: 'ConduitSubscriptions', displayName: 'Conduit Subscriptions?' },
-            { field: 'Duplex', displayName: 'Duplex' },
-            { field: 'DynamicOnly', displayName: 'Dynamic Only' }
-        ];
-        attributes[ActiveMQ.jmxDomain + "/PersistenceAdapter/folder"] = [
-            { field: 'IndexDirectory', displayName: 'Index Directory', width: "**" },
-            { field: 'LogDirectory', displayName: 'Log Directory', width: "**" }
-        ];
-        var builder = nav.builder();
-        var tab = builder.id('activemq').title(function () { return 'ActiveMQ'; }).href(function () { return '/jmx/attributes?tab=activemq'; }).isSelected(function () { return workspace.isTopTabActive('activemq'); }).isValid(function () { return workspace.treeContainsDomainAndProperties(ActiveMQ.jmxDomain); }).build();
-        tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
-        // add sub level tabs
-        tab.tabs.push({
-            id: 'activemq-diagram',
-            title: function () { return '<i class="fa fa-picture"></i> Diagram'; },
-            //title: "View a diagram of the producers, destinations and consumers",
-            show: function () { return workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(ActiveMQ.jmxDomain); },
-            isSelected: function () { return workspace.isLinkActive('activemq/diagram'); },
-            href: function () { return "/activemq/diagram"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-browse',
-            title: function () { return '<i class="fa fa-envelope"></i> Browse'; },
-            //title: "Browse the messages on the queue",
-            show: function () { return isQueue(workspace) && workspace.hasInvokeRights(workspace.selection, "browse()"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/browseQueue'); },
-            href: function () { return "/activemq/browseQueue"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-send',
-            title: function () { return '<i class="fa fa-pencil"></i> Send'; },
-            //title: "Send a message to this destination",
-            show: function () { return (isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(workspace.selection, "sendTextMessage(java.util.Map,java.lang.String,java.lang.String,java.lang.String)"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/sendMessage'); },
-            href: function () { return "/activemq/sendMessage"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-durable-subscribers',
-            title: function () { return '<i class="fa fa-list"></i> Durable Subscribers'; },
-            //title: "Manage durable subscribers",
-            show: function () { return isBroker(workspace); },
-            isSelected: function () { return workspace.isLinkActive('activemq/durableSubscribers'); },
-            href: function () { return "/activemq/durableSubscribers"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-jobs',
-            title: function () { return '<i class="fa fa-list"></i> Jobs'; },
-            //title: "Manage jobs",
-            show: function () { return isJobScheduler(workspace); },
-            isSelected: function () { return workspace.isLinkActive('activemq/jobs'); },
-            href: function () { return "/activemq/jobs"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-create-destination',
-            title: function () { return '<i class="fa fa-plus"></i> Create'; },
-            //title: "Create a new destination",
-            show: function () { return isBroker(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/createDestination'); },
-            href: function () { return "/activemq/createDestination"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-create-queue',
-            title: function () { return '<i class="fa fa-plus"></i> Create'; },
-            //title: "Create a new queue",
-            show: function () { return isQueuesFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/createQueue'); },
-            href: function () { return "/activemq/createQueue"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-create-topic',
-            title: function () { return '<i class="fa fa-plus"></i> Create'; },
-            //title: "Create a new topic",
-            show: function () { return isTopicsFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/createTopic'); },
-            href: function () { return "/activemq/createTopic"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-delete-topic',
-            title: function () { return '<i class="fa fa-remove"></i> Delete Topic'; },
-            //title: "Delete this topic",
-            show: function () { return isTopic(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeTopic"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/deleteTopic'); },
-            href: function () { return "/activemq/deleteTopic"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-delete-queue',
-            title: function () { return '<i class="fa fa-remove"></i> Delete'; },
-            //title: "Delete or purge this queue",
-            show: function () { return isQueue(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeQueue"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/deleteQueue'); },
-            href: function () { return "/activemq/deleteQueue"; }
-        });
-        nav.add(tab);
-        function postProcessTree(tree) {
-            var activemq = tree.get("org.apache.activemq");
-            setConsumerType(activemq);
-            // lets move queue and topic as first children within brokers
-            if (activemq) {
-                angular.forEach(activemq.children, function (broker) {
-                    angular.forEach(broker.children, function (child) {
-                        // lets move Topic/Queue to the front.
-                        var grandChildren = child.children;
-                        if (grandChildren) {
-                            var names = ["Topic", "Queue"];
-                            angular.forEach(names, function (name) {
-                                var idx = grandChildren.findIndex(function (n) { return n.title === name; });
-                                if (idx > 0) {
-                                    var old = grandChildren[idx];
-                                    grandChildren.splice(idx, 1);
-                                    grandChildren.splice(0, 0, old);
-                                }
-                            });
-                        }
-                    });
-                });
-            }
-        }
-        function setConsumerType(node) {
-            if (node) {
-                var parent = node.parent;
-                var entries = node.entries;
-                if (parent && !parent.typeName && entries) {
-                    var endpoint = entries["endpoint"];
-                    if (endpoint === "Consumer" || endpoint === "Producer") {
-                        //console.log("Setting the typeName on " + parent.title + " to " + endpoint);
-                        parent.typeName = endpoint;
-                    }
-                    var connectorName = entries["connectorName"];
-                    if (connectorName && !node.icon) {
-                        // lets default a connector icon
-                        node.icon = Core.url("/img/icons/activemq/connector.png");
-                    }
-                }
-                angular.forEach(node.children, function (child) { return setConsumerType(child); });
-            }
-        }
-    }]);
-    hawtioPluginLoader.addModule(ActiveMQ.pluginName);
-    function getBroker(workspace) {
-        var answer = null;
-        var selection = workspace.selection;
-        if (selection) {
-            answer = selection.findAncestor(function (current) {
-                // log.debug("Checking current: ", current);
-                var entries = current.entries;
-                if (entries) {
-                    return (('type' in entries && entries.type === 'Broker') && 'brokerName' in entries && !('destinationName' in entries) && !('destinationType' in entries));
-                }
-                else {
-                    return false;
-                }
-            });
-        }
-        return answer;
-    }
-    ActiveMQ.getBroker = getBroker;
-    function isQueue(workspace) {
-        //return workspace.selectionHasDomainAndType(jmxDomain, 'Queue');
-        return workspace.hasDomainAndProperties(ActiveMQ.jmxDomain, { 'destinationType': 'Queue' }, 4) || workspace.selectionHasDomainAndType(ActiveMQ.jmxDomain, 'Queue');
-    }
-    ActiveMQ.isQueue = isQueue;
-    function isTopic(workspace) {
-        //return workspace.selectionHasDomainAndType(jmxDomain, 'Topic');
-        return workspace.hasDomainAndProperties(ActiveMQ.jmxDomain, { 'destinationType': 'Topic' }, 4) || workspace.selectionHasDomainAndType(ActiveMQ.jmxDomain, 'Topic');
-    }
-    ActiveMQ.isTopic = isTopic;
-    function isQueuesFolder(workspace) {
-        return workspace.selectionHasDomainAndLastFolderName(ActiveMQ.jmxDomain, 'Queue');
-    }
-    ActiveMQ.isQueuesFolder = isQueuesFolder;
-    function isTopicsFolder(workspace) {
-        return workspace.selectionHasDomainAndLastFolderName(ActiveMQ.jmxDomain, 'Topic');
-    }
-    ActiveMQ.isTopicsFolder = isTopicsFolder;
-    function isJobScheduler(workspace) {
-        return workspace.hasDomainAndProperties(ActiveMQ.jmxDomain, { 'service': 'JobScheduler' }, 4);
-    }
-    ActiveMQ.isJobScheduler = isJobScheduler;
-    function isBroker(workspace) {
-        if (workspace.selectionHasDomainAndType(ActiveMQ.jmxDomain, 'Broker')) {
-            var self = Core.pathGet(workspace, ["selection"]);
-            var parent = Core.pathGet(workspace, ["selection", "parent"]);
-            return !(parent && (parent.ancestorHasType('Broker') || self.ancestorHasType('Broker')));
-        }
-        return false;
-    }
-    ActiveMQ.isBroker = isBroker;
-})(ActiveMQ || (ActiveMQ = {}));
-
-/**
- * @module Git
- */
-var Git;
-(function (Git) {
-    function createGitRepository(workspace, jolokia, localStorage) {
-        var mbean = getGitMBean(workspace);
-        if (mbean && jolokia) {
-            return new Git.JolokiaGit(mbean, jolokia, localStorage, workspace.userDetails);
-        }
-        // TODO use local storage to make a little wiki thingy?
-        return null;
-    }
-    Git.createGitRepository = createGitRepository;
-    Git.jmxDomain = "hawtio";
-    Git.mbeanType = "GitFacade";
-    function hasGit(workspace) {
-        return getGitMBean(workspace) !== null;
-    }
-    Git.hasGit = hasGit;
-    /**
-     * Returns the JMX ObjectName of the git mbean
-     * @method getGitMBean
-     * @for Git
-     * @param {Workspace} workspace
-     * @return {String}
-     */
-    function getGitMBean(workspace) {
-        return Core.getMBeanTypeObjectName(workspace, Git.jmxDomain, Git.mbeanType);
-    }
-    Git.getGitMBean = getGitMBean;
-    /**
-     * Returns the Folder for the git mbean if it can be found
-     * @method getGitMBeanFolder
-     * @for Git
-     * @param {Workspace} workspace
-     * @return {Folder}
-     */
-    function getGitMBeanFolder(workspace) {
-        return Core.getMBeanTypeFolder(workspace, Git.jmxDomain, Git.mbeanType);
-    }
-    Git.getGitMBeanFolder = getGitMBeanFolder;
-    /**
-     * Returns true if the git mbean is a fabric configuration repository
-     * (so we can use it for the fabric plugin)
-     * @method isGitMBeanFabric
-     * @for Git
-     * @param {Workspace} workspace
-     * @return {Boolean}
-     */
-    function isGitMBeanFabric(workspace) {
-        var folder = getGitMBeanFolder(workspace);
-        return folder && folder.entries["repo"] === "fabric";
-    }
-    Git.isGitMBeanFabric = isGitMBeanFabric;
-})(Git || (Git = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="../../git/ts/gitHelpers.ts"/>
-/**
- * @module Wiki
- */
-var Wiki;
-(function (Wiki) {
-    Wiki.log = Logger.get("Wiki");
-    Wiki.camelNamespaces = ["http://camel.apache.org/schema/spring", "http://camel.apache.org/schema/blueprint"];
-    Wiki.springNamespaces = ["http://www.springframework.org/schema/beans"];
-    Wiki.droolsNamespaces = ["http://drools.org/schema/drools-spring"];
-    Wiki.dozerNamespaces = ["http://dozer.sourceforge.net"];
-    Wiki.activemqNamespaces = ["http://activemq.apache.org/schema/core"];
-    Wiki.excludeAdjustmentPrefixes = ["http://", "https://", "#"];
-    (function (ViewMode) {
-        ViewMode[ViewMode["List"] = 0] = "List";
-        ViewMode[ViewMode["Icon"] = 1] = "Icon";
-    })(Wiki.ViewMode || (Wiki.ViewMode = {}));
-    var ViewMode = Wiki.ViewMode;
-    ;
-    /**
-     * The custom views within the wiki namespace; either "/wiki/$foo" or "/wiki/branch/$branch/$foo"
-     */
-    Wiki.customWikiViewPages = ["/formTable", "/camel/diagram", "/camel/canvas", "/camel/properties", "/dozer/mappings"];
-    /**
-     * Which extensions do we wish to hide in the wiki file listing
-     * @property hideExtensions
-     * @for Wiki
-     * @type Array
-     */
-    Wiki.hideExtensions = [".profile"];
-    var defaultFileNamePattern = /^[a-zA-Z0-9._-]*$/;
-    var defaultFileNamePatternInvalid = "Name must be: letters, numbers, and . _ or - characters";
-    var defaultFileNameExtensionPattern = "";
-    var defaultLowerCaseFileNamePattern = /^[a-z0-9._-]*$/;
-    var defaultLowerCaseFileNamePatternInvalid = "Name must be: lower-case letters, numbers, and . _ or - characters";
-    /**
-     * The wizard tree for creating new content in the wiki
-     * @property documentTemplates
-     * @for Wiki
-     * @type Array
-     */
-    Wiki.documentTemplates = [
-        {
-            label: "Folder",
-            tooltip: "Create a new folder to contain documents",
-            folder: true,
-            icon: "/img/icons/wiki/folder.gif",
-            exemplar: "myfolder",
-            regex: defaultLowerCaseFileNamePattern,
-            invalid: defaultLowerCaseFileNamePatternInvalid
-        },
-        {
-            label: "App",
-            tooltip: "Creates a new App folder used to configure and run containers",
-            addClass: "fa fa-cog green",
-            exemplar: 'myapp',
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: '',
-            generated: {
-                mbean: ['io.fabric8', { type: 'KubernetesTemplateManager' }],
-                init: function (workspace, $scope) {
-                },
-                generate: function (options) {
-                    Wiki.log.debug("Got options: ", options);
-                    options.form.name = options.name;
-                    options.form.path = options.parentId;
-                    options.form.branch = options.branch;
-                    var json = angular.toJson(options.form);
-                    var jolokia = HawtioCore.injector.get("jolokia");
-                    jolokia.request({
-                        type: 'exec',
-                        mbean: 'io.fabric8:type=KubernetesTemplateManager',
-                        operation: 'createAppByJson',
-                        arguments: [json]
-                    }, Core.onSuccess(function (response) {
-                        Wiki.log.debug("Generated app, response: ", response);
-                        options.success(undefined);
-                    }, {
-                        error: function (response) {
-                            options.error(response.error);
-                        }
-                    }));
-                },
-                form: function (workspace, $scope) {
-                    if (!$scope.doDockerRegistryCompletion) {
-                        $scope.fetchDockerRepositories = function () {
-                            return DockerRegistry.completeDockerRegistry();
-                        };
-                    }
-                    return {
-                        summaryMarkdown: 'Add app summary here',
-                        replicaCount: 1
-                    };
-                },
-                schema: {
-                    description: 'App settings',
-                    type: 'java.lang.String',
-                    properties: {
-                        'dockerImage': {
-                            'description': 'Docker Image',
-                            'type': 'java.lang.String',
-                            'input-attributes': {
-                                'required': '',
-                                'class': 'input-xlarge',
-                                'typeahead': 'repo for repo in fetchDockerRepositories() | filter:$viewValue',
-                                'typeahead-wait-ms': '200'
-                            }
-                        },
-                        'summaryMarkdown': {
-                            'description': 'Short Description',
-                            'type': 'java.lang.String',
-                            'input-attributes': { 'class': 'input-xlarge' }
-                        },
-                        'replicaCount': {
-                            'description': 'Replica Count',
-                            'type': 'java.lang.Integer',
-                            'input-attributes': {
-                                min: '0'
-                            }
-                        },
-                        'labels': {
-                            'description': 'Labels',
-                            'type': 'map',
-                            'items': {
-                                'type': 'string'
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        {
-            label: "Fabric8 Profile",
-            tooltip: "Create a new empty fabric profile. Using a hyphen ('-') will create a folder heirarchy, for example 'my-awesome-profile' will be available via the path 'my/awesome/profile'.",
-            profile: true,
-            addClass: "fa fa-book green",
-            exemplar: "user-profile",
-            regex: defaultLowerCaseFileNamePattern,
-            invalid: defaultLowerCaseFileNamePatternInvalid,
-            fabricOnly: true
-        },
-        {
-            label: "Properties File",
-            tooltip: "A properties file typically used to configure Java classes",
-            exemplar: "properties-file.properties",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".properties"
-        },
-        {
-            label: "JSON File",
-            tooltip: "A file containing JSON data",
-            exemplar: "document.json",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".json"
-        },
-        {
-            label: "Key Store File",
-            tooltip: "Creates a keystore (database) of cryptographic keys, X.509 certificate chains, and trusted certificates.",
-            exemplar: 'keystore.jks',
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".jks",
-            generated: {
-                mbean: ['hawtio', { type: 'KeystoreService' }],
-                init: function (workspace, $scope) {
-                    var mbean = 'hawtio:type=KeystoreService';
-                    var response = workspace.jolokia.request({ type: "read", mbean: mbean, attribute: "SecurityProviderInfo" }, {
-                        success: function (response) {
-                            $scope.securityProviderInfo = response.value;
-                            Core.$apply($scope);
-                        },
-                        error: function (response) {
-                            console.log('Could not find the supported security algorithms: ', response.error);
-                            Core.$apply($scope);
-                        }
-                    });
-                },
-                generate: function (options) {
-                    var encodedForm = JSON.stringify(options.form);
-                    var mbean = 'hawtio:type=KeystoreService';
-                    var response = options.workspace.jolokia.request({
-                        type: 'exec',
-                        mbean: mbean,
-                        operation: 'createKeyStoreViaJSON(java.lang.String)',
-                        arguments: [encodedForm]
-                    }, {
-                        method: 'POST',
-                        success: function (response) {
-                            options.success(response.value);
-                        },
-                        error: function (response) {
-                            options.error(response.error);
-                        }
-                    });
-                },
-                form: function (workspace, $scope) {
-                    return {
-                        storeType: $scope.securityProviderInfo.supportedKeyStoreTypes[0],
-                        createPrivateKey: false,
-                        keyLength: 4096,
-                        keyAlgorithm: $scope.securityProviderInfo.supportedKeyAlgorithms[0],
-                        keyValidity: 365
-                    };
-                },
-                schema: {
-                    "description": "Keystore Settings",
-                    "type": "java.lang.String",
-                    "properties": {
-                        "storePassword": {
-                            "description": "Keystore password.",
-                            "type": "password",
-                            'input-attributes': { "required": "", "ng-minlength": 6 }
-                        },
-                        "storeType": {
-                            "description": "The type of store to create",
-                            "type": "java.lang.String",
-                            'input-element': "select",
-                            'input-attributes': { "ng-options": "v for v in securityProviderInfo.supportedKeyStoreTypes" }
-                        },
-                        "createPrivateKey": {
-                            "description": "Should we generate a self-signed private key?",
-                            "type": "boolean"
-                        },
-                        "keyCommonName": {
-                            "description": "The common name of the key, typically set to the hostname of the server",
-                            "type": "java.lang.String",
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        },
-                        "keyLength": {
-                            "description": "The length of the cryptographic key",
-                            "type": "Long",
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        },
-                        "keyAlgorithm": {
-                            "description": "The key algorithm",
-                            "type": "java.lang.String",
-                            'input-element': "select",
-                            'input-attributes': { "ng-options": "v for v in securityProviderInfo.supportedKeyAlgorithms" },
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        },
-                        "keyValidity": {
-                            "description": "The number of days the key will be valid for",
-                            "type": "Long",
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        },
-                        "keyPassword": {
-                            "description": "Password to the private key",
-                            "type": "password",
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        }
-                    }
-                }
-            }
-        },
-        {
-            label: "Markdown Document",
-            tooltip: "A basic markup document using the Markdown wiki markup, particularly useful for ReadMe files in directories",
-            exemplar: "ReadMe.md",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".md"
-        },
-        {
-            label: "Text Document",
-            tooltip: "A plain text file",
-            exemplar: "document.text",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".txt"
-        },
-        {
-            label: "HTML Document",
-            tooltip: "A HTML document you can edit directly using the HTML markup",
-            exemplar: "document.html",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".html"
-        },
-        {
-            label: "XML Document",
-            tooltip: "An empty XML document",
-            exemplar: "document.xml",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".xml"
-        },
-        {
-            label: "Integration Flows",
-            tooltip: "Camel routes for defining your integration flows",
-            children: [
-                {
-                    label: "Camel XML document",
-                    tooltip: "A vanilla Camel XML document for integration flows",
-                    icon: "/img/icons/camel.svg",
-                    exemplar: "camel.xml",
-                    regex: defaultFileNamePattern,
-                    invalid: defaultFileNamePatternInvalid,
-                    extension: ".xml"
-                },
-                {
-                    label: "Camel OSGi Blueprint XML document",
-                    tooltip: "A vanilla Camel XML document for integration flows when using OSGi Blueprint",
-                    icon: "/img/icons/camel.svg",
-                    exemplar: "camel-blueprint.xml",
-                    regex: defaultFileNamePattern,
-                    invalid: defaultFileNamePatternInvalid,
-                    extension: ".xml"
-                },
-                {
-                    label: "Camel Spring XML document",
-                    tooltip: "A vanilla Camel XML document for integration flows when using the Spring framework",
-                    icon: "/img/icons/camel.svg",
-                    exemplar: "camel-spring.xml",
-                    regex: defaultFileNamePattern,
-                    invalid: defaultFileNamePatternInvalid,
-                    extension: ".xml"
-                }
-            ]
-        },
-        {
-            label: "Data Mapping Document",
-            tooltip: "Dozer based configuration of mapping documents",
-            icon: "/img/icons/dozer/dozer.gif",
-            exemplar: "dozer-mapping.xml",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".xml"
-        }
-    ];
-    function isFMCContainer(workspace) {
-        return false;
-    }
-    Wiki.isFMCContainer = isFMCContainer;
-    function isWikiEnabled(workspace, jolokia, localStorage) {
-        return Git.createGitRepository(workspace, jolokia, localStorage) !== null;
-    }
-    Wiki.isWikiEnabled = isWikiEnabled;
-    function goToLink(link, $timeout, $location) {
-        var href = Core.trimLeading(link, "#");
-        $timeout(function () {
-            Wiki.log.debug("About to navigate to: " + href);
-            $location.url(href);
-        }, 100);
-    }
-    Wiki.goToLink = goToLink;
-    /**
-     * Returns all the links for the given branch for the custom views, starting with "/"
-     * @param $scope
-     * @returns {string[]}
-     */
-    function customViewLinks($scope) {
-        var branch = $scope.branch;
-        var prefix = Core.trimLeading(Wiki.startLink(branch), "#");
-        return Wiki.customWikiViewPages.map(function (path) { return prefix + path; });
-    }
-    Wiki.customViewLinks = customViewLinks;
-    /**
-     * Returns a new create document wizard tree
-     * @method createWizardTree
-     * @for Wiki
-     * @static
-     */
-    function createWizardTree(workspace, $scope) {
-        var root = new Folder("New Documents");
-        addCreateWizardFolders(workspace, $scope, root, Wiki.documentTemplates);
-        return root;
-    }
-    Wiki.createWizardTree = createWizardTree;
-    function addCreateWizardFolders(workspace, $scope, parent, templates) {
-        angular.forEach(templates, function (template) {
-            if (template['fabricOnly'] && !Fabric.hasFabric(workspace)) {
-                return;
-            }
-            if (template.generated) {
-                if (template.generated.mbean) {
-                    var exists = workspace.treeContainsDomainAndProperties.apply(workspace, template.generated.mbean);
-                    if (!exists) {
-                        return;
-                    }
-                }
-                if (template.generated.init) {
-                    template.generated.init(workspace, $scope);
-                }
-            }
-            var title = template.label || key;
-            var node = new Folder(title);
-            node.parent = parent;
-            node.entity = template;
-            var addClass = template.addClass;
-            if (addClass) {
-                node.addClass = addClass;
-            }
-            var key = template.exemplar;
-            var parentKey = parent.key || "";
-            node.key = parentKey ? parentKey + "_" + key : key;
-            var icon = template.icon;
-            if (icon) {
-                node.icon = Core.url(icon);
-            }
-            // compiler was complaining about 'label' had no idea where it's coming from
-            // var tooltip = value["tooltip"] || value["description"] || label;
-            var tooltip = template["tooltip"] || template["description"] || '';
-            node.tooltip = tooltip;
-            if (template["folder"]) {
-                node.isFolder = function () {
-                    return true;
-                };
-            }
-            parent.children.push(node);
-            var children = template.children;
-            if (children) {
-                addCreateWizardFolders(workspace, $scope, node, children);
-            }
-        });
-    }
-    Wiki.addCreateWizardFolders = addCreateWizardFolders;
-    function startLink(branch) {
-        var start = "/wiki";
-        if (branch) {
-            start = UrlHelpers.join(start, 'branch', branch);
-        }
-        return start;
-    }
-    Wiki.startLink = startLink;
-    /**
-     * Returns true if the given filename/path is an index page (named index.* and is a markdown/html page).
-     *
-     * @param path
-     * @returns {boolean}
-     */
-    function isIndexPage(path) {
-        return path && (path.endsWith("index.md") || path.endsWith("index.html") || path.endsWith("index")) ? true : false;
-    }
-    Wiki.isIndexPage = isIndexPage;
-    function viewLink(branch, pageId, $location, fileName) {
-        if (fileName === void 0) { fileName = null; }
-        var link = null;
-        var start = startLink(branch);
-        if (pageId) {
-            // figure out which view to use for this page
-            var view = isIndexPage(pageId) ? "/book/" : "/view/";
-            link = start + view + encodePath(Core.trimLeading(pageId, "/"));
-        }
-        else {
-            // lets use the current path
-            var path = $location.path();
-            link = "#" + path.replace(/(edit|create)/, "view");
-        }
-        if (fileName && pageId && pageId.endsWith(fileName)) {
-            return link;
-        }
-        if (fileName) {
-            if (!link.endsWith("/")) {
-                link += "/";
-            }
-            link += fileName;
-        }
-        return link;
-    }
-    Wiki.viewLink = viewLink;
-    function branchLink(branch, pageId, $location, fileName) {
-        if (fileName === void 0) { fileName = null; }
-        return viewLink(branch, pageId, $location, fileName);
-    }
-    Wiki.branchLink = branchLink;
-    function editLink(branch, pageId, $location) {
-        var link = null;
-        var format = Wiki.fileFormat(pageId);
-        switch (format) {
-            case "image":
-                break;
-            default:
-                var start = startLink(branch);
-                if (pageId) {
-                    link = start + "/edit/" + encodePath(pageId);
-                }
-                else {
-                    // lets use the current path
-                    var path = $location.path();
-                    link = "#" + path.replace(/(view|create)/, "edit");
-                }
-        }
-        return link;
-    }
-    Wiki.editLink = editLink;
-    function createLink(branch, pageId, $location, $scope) {
-        var path = $location.path();
-        var start = startLink(branch);
-        var link = '';
-        if (pageId) {
-            link = start + "/create/" + encodePath(pageId);
-        }
-        else {
-            // lets use the current path
-            link = "#" + path.replace(/(view|edit|formTable)/, "create");
-        }
-        // we have the link so lets now remove the last path
-        // or if there is no / in the path then remove the last section
-        var idx = link.lastIndexOf("/");
-        if (idx > 0 && !$scope.children && !path.startsWith("/wiki/formTable")) {
-            link = link.substring(0, idx + 1);
-        }
-        return link;
-    }
-    Wiki.createLink = createLink;
-    function encodePath(pageId) {
-        return pageId.split("/").map(encodeURIComponent).join("/");
-    }
-    Wiki.encodePath = encodePath;
-    function decodePath(pageId) {
-        return pageId.split("/").map(decodeURIComponent).join("/");
-    }
-    Wiki.decodePath = decodePath;
-    function fileFormat(name, fileExtensionTypeRegistry) {
-        var extension = fileExtension(name);
-        var answer = null;
-        if (!fileExtensionTypeRegistry) {
-            fileExtensionTypeRegistry = HawtioCore.injector.get("fileExtensionTypeRegistry");
-        }
-        angular.forEach(fileExtensionTypeRegistry, function (array, key) {
-            if (array.indexOf(extension) >= 0) {
-                answer = key;
-            }
-        });
-        return answer;
-    }
-    Wiki.fileFormat = fileFormat;
-    /**
-     * Returns the file name of the given path; stripping off any directories
-     * @method fileName
-     * @for Wiki
-     * @static
-     * @param {String} path
-     * @return {String}
-     */
-    function fileName(path) {
-        if (path) {
-            var idx = path.lastIndexOf("/");
-            if (idx > 0) {
-                return path.substring(idx + 1);
-            }
-        }
-        return path;
-    }
-    Wiki.fileName = fileName;
-    /**
-     * Returns the folder of the given path (everything but the last path name)
-     * @method fileParent
-     * @for Wiki
-     * @static
-     * @param {String} path
-     * @return {String}
-     */
-    function fileParent(path) {
-        if (path) {
-            var idx = path.lastIndexOf("/");
-            if (idx > 0) {
-                return path.substring(0, idx);
-            }
-        }
-        // lets return the root directory
-        return "";
-    }
-    Wiki.fileParent = fileParent;
-    /**
-     * Returns the file name for the given name; we hide some extensions
-     * @method hideFineNameExtensions
-     * @for Wiki
-     * @static
-     * @param {String} name
-     * @return {String}
-     */
-    function hideFileNameExtensions(name) {
-        if (name) {
-            angular.forEach(Wiki.hideExtensions, function (extension) {
-                if (name.endsWith(extension)) {
-                    name = name.substring(0, name.length - extension.length);
-                }
-            });
-        }
-        return name;
-    }
-    Wiki.hideFileNameExtensions = hideFileNameExtensions;
-    /**
-     * Returns the URL to perform a GET or POST for the given branch name and path
-     */
-    function gitRestURL(branch, path) {
-        var url = gitRelativeURL(branch, path);
-        url = Core.url('/' + url);
-        var connectionName = Core.getConnectionNameParameter();
-        if (connectionName) {
-            var connectionOptions = Core.getConnectOptions(connectionName);
-            if (connectionOptions) {
-                connectionOptions.path = url;
-                url = Core.createServerConnectionUrl(connectionOptions);
-            }
-        }
-        return url;
-    }
-    Wiki.gitRestURL = gitRestURL;
-    /**
-     * Returns a relative URL to perform a GET or POST for the given branch/path
-     */
-    function gitRelativeURL(branch, path) {
-        branch = branch || "master";
-        path = path || "/";
-        return UrlHelpers.join("git/" + branch, path);
-    }
-    Wiki.gitRelativeURL = gitRelativeURL;
-    /**
-     * Takes a row containing the entity object; or can take the entity directly.
-     *
-     * It then uses the name, directory and xmlNamespaces properties
-     *
-     * @method fileIconHtml
-     * @for Wiki
-     * @static
-     * @param {any} row
-     * @return {String}
-     *
-     */
-    function fileIconHtml(row) {
-        var name = row.name;
-        var path = row.path;
-        var branch = row.branch;
-        var directory = row.directory;
-        var xmlNamespaces = row.xmlNamespaces;
-        var iconUrl = row.iconUrl;
-        var entity = row.entity;
-        if (entity) {
-            name = name || entity.name;
-            path = path || entity.path;
-            branch = branch || entity.branch;
-            directory = directory || entity.directory;
-            xmlNamespaces = xmlNamespaces || entity.xmlNamespaces;
-            iconUrl = iconUrl || entity.iconUrl;
-        }
-        branch = branch || "master";
-        var css = null;
-        var icon = null;
-        var extension = fileExtension(name);
-        // TODO could we use different icons for markdown v xml v html
-        if (xmlNamespaces && xmlNamespaces.length) {
-            if (xmlNamespaces.any(function (ns) { return Wiki.camelNamespaces.any(ns); })) {
-                icon = "img/icons/camel.svg";
-            }
-            else if (xmlNamespaces.any(function (ns) { return Wiki.dozerNamespaces.any(ns); })) {
-                icon = "img/icons/dozer/dozer.gif";
-            }
-            else if (xmlNamespaces.any(function (ns) { return Wiki.activemqNamespaces.any(ns); })) {
-                icon = "img/icons/messagebroker.svg";
-            }
-            else {
-                Wiki.log.debug("file " + name + " has namespaces " + xmlNamespaces);
-            }
-        }
-        if (iconUrl) {
-            css = null;
-            icon = UrlHelpers.join("git", iconUrl);
-            var connectionName = Core.getConnectionNameParameter();
-            if (connectionName) {
-                var connectionOptions = Core.getConnectOptions(connectionName);
-                if (connectionOptions) {
-                    connectionOptions.path = Core.url('/' + icon);
-                    icon = Core.createServerConnectionUrl(connectionOptions);
-                }
-            }
-        }
-        if (!icon) {
-            if (directory) {
-                switch (extension) {
-                    case 'profile':
-                        css = "fa fa-book";
-                        break;
-                    default:
-                        // log.debug("No match for extension: ", extension, " using a generic folder icon");
-                        css = "fa fa-folder";
-                }
-            }
-            else {
-                switch (extension) {
-                    case 'png':
-                    case 'svg':
-                    case 'jpg':
-                    case 'gif':
-                        css = null;
-                        icon = Wiki.gitRelativeURL(branch, path);
-                        var connectionName = Core.getConnectionNameParameter();
-                        if (connectionName) {
-                            var connectionOptions = Core.getConnectOptions(connectionName);
-                            if (connectionOptions) {
-                                connectionOptions.path = Core.url('/' + icon);
-                                icon = Core.createServerConnectionUrl(connectionOptions);
-                            }
-                        }
-                        break;
-                    case 'json':
-                    case 'xml':
-                        css = "fa fa-file-text";
-                        break;
-                    case 'md':
-                        css = "fa fa-file-text-o";
-                        break;
-                    default:
-                        // log.debug("No match for extension: ", extension, " using a generic file icon");
-                        css = "fa fa-file-alt";
-                }
-            }
-        }
-        if (icon) {
-            return "<img src='" + Core.url(icon) + "'>";
-        }
-        else {
-            return "<i class='" + css + "'></i>";
-        }
-    }
-    Wiki.fileIconHtml = fileIconHtml;
-    function iconClass(row) {
-        var name = row.getProperty("name");
-        var extension = fileExtension(name);
-        var directory = row.getProperty("directory");
-        if (directory) {
-            return "fa fa-folder";
-        }
-        if ("xml" === extension) {
-            return "fa fa-cog";
-        }
-        else if ("md" === extension) {
-            return "fa fa-file-text-o";
-        }
-        // TODO could we use different icons for markdown v xml v html
-        return "fa fa-file-alt";
-    }
-    Wiki.iconClass = iconClass;
-    /**
-     * Extracts the pageId, branch, objectId from the route parameters
-     * @method initScope
-     * @for Wiki
-     * @static
-     * @param {*} $scope
-     * @param {any} $routeParams
-     * @param {ng.ILocationService} $location
-     */
-    function initScope($scope, $routeParams, $location) {
-        $scope.pageId = Wiki.pageId($routeParams, $location);
-        $scope.branch = $routeParams["branch"] || $location.search()["branch"];
-        $scope.objectId = $routeParams["objectId"];
-        $scope.startLink = Wiki.startLink($scope.branch);
-        $scope.historyLink = startLink($scope.branch) + "/history/" + ($scope.pageId || "");
-    }
-    Wiki.initScope = initScope;
-    /**
-     * Loads the branches for this wiki repository and stores them in the branches property in
-     * the $scope and ensures $scope.branch is set to a valid value
-     *
-     * @param wikiRepository
-     * @param $scope
-     * @param isFmc whether we run as fabric8 or as hawtio
-     */
-    function loadBranches(jolokia, wikiRepository, $scope, isFmc) {
-        if (isFmc === void 0) { isFmc = false; }
-        if (isFmc) {
-            // when using fabric then the branches is the fabric versions, so we should use that instead
-            $scope.branches = Fabric.getVersionIds(jolokia);
-            var defaultVersion = Fabric.getDefaultVersionId(jolokia);
-            // use current default version as default branch
-            if (!$scope.branch) {
-                $scope.branch = defaultVersion;
-            }
-            // lets sort by version number
-            $scope.branches = $scope.branches.sortBy(function (v) { return Core.versionToSortableString(v); }, true);
-            Core.$apply($scope);
-        }
-        else {
-            wikiRepository.branches(function (response) {
-                // lets sort by version number
-                $scope.branches = response.sortBy(function (v) { return Core.versionToSortableString(v); }, true);
-                // default the branch name if we have 'master'
-                if (!$scope.branch && $scope.branches.find(function (branch) {
-                    return branch === "master";
-                })) {
-                    $scope.branch = "master";
-                }
-                Core.$apply($scope);
-            });
-        }
-    }
-    Wiki.loadBranches = loadBranches;
-    /**
-     * Extracts the pageId from the route parameters
-     * @method pageId
-     * @for Wiki
-     * @static
-     * @param {any} $routeParams
-     * @param @ng.ILocationService @location
-     * @return {String}
-     */
-    function pageId($routeParams, $location) {
-        var pageId = $routeParams['page'];
-        if (!pageId) {
-            for (var i = 0; i < 100; i++) {
-                var value = $routeParams['path' + i];
-                if (angular.isDefined(value)) {
-                    if (!pageId) {
-                        pageId = value;
-                    }
-                    else {
-                        pageId += "/" + value;
-                    }
-                }
-                else
-                    break;
-            }
-            return pageId || "/";
-        }
-        // if no $routeParams variables lets figure it out from the $location
-        if (!pageId) {
-            pageId = pageIdFromURI($location.path());
-        }
-        return pageId;
-    }
-    Wiki.pageId = pageId;
-    function pageIdFromURI(url) {
-        var wikiPrefix = "/wiki/";
-        if (url && url.startsWith(wikiPrefix)) {
-            var idx = url.indexOf("/", wikiPrefix.length + 1);
-            if (idx > 0) {
-                return url.substring(idx + 1, url.length);
-            }
-        }
-        return null;
-    }
-    Wiki.pageIdFromURI = pageIdFromURI;
-    function fileExtension(name) {
-        if (name.indexOf('#') > 0)
-            name = name.substring(0, name.indexOf('#'));
-        return Core.fileExtension(name, "markdown");
-    }
-    Wiki.fileExtension = fileExtension;
-    function onComplete(status) {
-        console.log("Completed operation with status: " + JSON.stringify(status));
-    }
-    Wiki.onComplete = onComplete;
-    /**
-     * Parses the given JSON text reporting to the user if there is a parse error
-     * @method parseJson
-     * @for Wiki
-     * @static
-     * @param {String} text
-     * @return {any}
-     */
-    function parseJson(text) {
-        if (text) {
-            try {
-                return JSON.parse(text);
-            }
-            catch (e) {
-                Core.notification("error", "Failed to parse JSON: " + e);
-            }
-        }
-        return null;
-    }
-    Wiki.parseJson = parseJson;
-    /**
-     * Adjusts a relative or absolute link from a wiki or file system to one using the hash bang syntax
-     * @method adjustHref
-     * @for Wiki
-     * @static
-     * @param {*} $scope
-     * @param {ng.ILocationService} $location
-     * @param {String} href
-     * @param {String} fileExtension
-     * @return {string}
-     */
-    function adjustHref($scope, $location, href, fileExtension) {
-        var extension = fileExtension ? "." + fileExtension : "";
-        // if the last part of the path has a dot in it lets
-        // exclude it as we are relative to a markdown or html file in a folder
-        // such as when viewing readme.md or index.md
-        var path = $location.path();
-        var folderPath = path;
-        var idx = path.lastIndexOf("/");
-        if (idx > 0) {
-            var lastName = path.substring(idx + 1);
-            if (lastName.indexOf(".") >= 0) {
-                folderPath = path.substring(0, idx);
-            }
-        }
-        // Deal with relative URLs first...
-        if (href.startsWith('../')) {
-            var parts = href.split('/');
-            var pathParts = folderPath.split('/');
-            var parents = parts.filter(function (part) {
-                return part === "..";
-            });
-            parts = parts.last(parts.length - parents.length);
-            pathParts = pathParts.first(pathParts.length - parents.length);
-            return '#' + pathParts.join('/') + '/' + parts.join('/') + extension + $location.hash();
-        }
-        // Turn an absolute link into a wiki link...
-        if (href.startsWith('/')) {
-            return Wiki.branchLink($scope.branch, href + extension, $location) + extension;
-        }
-        if (!Wiki.excludeAdjustmentPrefixes.any(function (exclude) {
-            return href.startsWith(exclude);
-        })) {
-            return '#' + folderPath + "/" + href + extension + $location.hash();
-        }
-        else {
-            return null;
-        }
-    }
-    Wiki.adjustHref = adjustHref;
-})(Wiki || (Wiki = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="../../wiki/ts/wikiHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.BrokerDiagramController", ["$scope", "$compile", "$location", "localStorage", "jolokia", "workspace", function ($scope, $compile, $location, localStorage, jolokia, workspace) {
-        Fabric.initScope($scope, $location, jolokia, workspace);
-        var isFmc = Wiki.isFMCContainer(workspace);
-        $scope.isFmc = isFmc;
-        $scope.selectedNode = null;
-        var defaultFlags = {
-            panel: true,
-            popup: false,
-            label: true,
-            group: false,
-            profile: false,
-            slave: false,
-            broker: isFmc,
-            network: true,
-            container: false,
-            queue: true,
-            topic: true,
-            consumer: true,
-            producer: true
-        };
-        $scope.viewSettings = {};
-        $scope.shapeSize = {
-            broker: 20,
-            queue: 14,
-            topic: 14
-        };
-        var redrawGraph = Core.throttled(doRedrawGraph, 1000);
-        var graphBuilder = new ForceGraph.GraphBuilder();
-        Core.bindModelToSearchParam($scope, $location, "searchFilter", "q", "");
-        angular.forEach(defaultFlags, function (defaultValue, key) {
-            var modelName = "viewSettings." + key;
-            // bind model values to search params...
-            function currentValue() {
-                var answer = $location.search()[paramName] || defaultValue;
-                return answer === "false" ? false : answer;
-            }
-            var paramName = key;
-            var value = currentValue();
-            Core.pathSet($scope, modelName, value);
-            $scope.$watch(modelName, function () {
-                var current = Core.pathGet($scope, modelName);
-                var old = currentValue();
-                if (current !== old) {
-                    var defaultValue = defaultFlags[key];
-                    if (current !== defaultValue) {
-                        if (!current) {
-                            current = "false";
-                        }
-                        $location.search(paramName, current);
-                    }
-                    else {
-                        $location.search(paramName, null);
-                    }
-                }
-                redrawGraph();
-            });
-        });
-        $scope.connectToBroker = function () {
-            var selectedNode = $scope.selectedNode;
-            if (selectedNode) {
-                var container = selectedNode["brokerContainer"] || selectedNode;
-                connectToBroker(container, selectedNode["brokerName"]);
-            }
-        };
-        function connectToBroker(container, brokerName, postfix) {
-            if (postfix === void 0) { postfix = null; }
-            if (isFmc && container.jolokia !== jolokia) {
-                Fabric.connectToBroker($scope, container, postfix);
-            }
-            else {
-                var view = "/jmx/attributes?tab=activemq";
-                if (!postfix) {
-                    if (brokerName) {
-                        // lets default to the broker view
-                        postfix = "nid=root-org.apache.activemq-Broker-" + brokerName;
-                    }
-                }
-                if (postfix) {
-                    view += "&" + postfix;
-                }
-                ActiveMQ.log.info("Opening view " + view);
-                var path = Core.url("/#" + view);
-                window.open(path, '_destination');
-                window.focus();
-            }
-        }
-        $scope.connectToDestination = function () {
-            var selectedNode = $scope.selectedNode;
-            if (selectedNode) {
-                var container = selectedNode["brokerContainer"] || selectedNode;
-                var brokerName = selectedNode["brokerName"];
-                var destinationType = selectedNode["destinationType"] || selectedNode["typeLabel"];
-                var destinationName = selectedNode["destinationName"];
-                var postfix = null;
-                if (brokerName && destinationType && destinationName) {
-                    postfix = "nid=root-org.apache.activemq-Broker-" + brokerName + "-" + destinationType + "-" + destinationName;
-                }
-                connectToBroker(container, brokerName, postfix);
-            }
-        };
-        $scope.$on('$destroy', function (event) {
-            stopOldJolokia();
-        });
-        function stopOldJolokia() {
-            var oldJolokia = $scope.selectedNodeJolokia;
-            if (oldJolokia && oldJolokia !== jolokia) {
-                oldJolokia.stop();
-            }
-        }
-        $scope.$watch("selectedNode", function (newValue, oldValue) {
-            // lets cancel any previously registered thingy
-            if ($scope.unregisterFn) {
-                $scope.unregisterFn();
-                $scope.unregisterFn = null;
-            }
-            var node = $scope.selectedNode;
-            if (node) {
-                var mbean = node.objectName;
-                var brokerContainer = node.brokerContainer || {};
-                var nodeJolokia = node.jolokia || brokerContainer.jolokia || jolokia;
-                if (nodeJolokia !== $scope.selectedNodeJolokia) {
-                    stopOldJolokia();
-                    $scope.selectedNodeJolokia = nodeJolokia;
-                    if (nodeJolokia !== jolokia) {
-                        var rate = Core.parseIntValue(localStorage['updateRate'] || "2000", "update rate");
-                        if (rate) {
-                            nodeJolokia.start(rate);
-                        }
-                    }
-                }
-                var dummyResponse = { value: node.panelProperties || {} };
-                if (mbean && nodeJolokia) {
-                    ActiveMQ.log.debug("reading ", mbean, " on remote container");
-                    $scope.unregisterFn = Core.register(nodeJolokia, $scope, {
-                        type: 'read',
-                        mbean: mbean
-                    }, Core.onSuccess(renderNodeAttributes, {
-                        error: function (response) {
-                            // probably we've got a wrong mbean name?
-                            // so lets render at least
-                            renderNodeAttributes(dummyResponse);
-                            Core.defaultJolokiaErrorHandler(response);
-                        }
-                    }));
-                }
-                else {
-                    ActiveMQ.log.debug("no mbean or jolokia available, using dummy response");
-                    renderNodeAttributes(dummyResponse);
-                }
-            }
-        });
-        function getDestinationTypeName(attributes) {
-            var prefix = attributes["DestinationTemporary"] ? "Temporary " : "";
-            return prefix + (attributes["DestinationTopic"] ? "Topic" : "Queue");
-        }
-        var ignoreNodeAttributes = ["Broker", "BrokerId", "BrokerName", "Connection", "DestinationName", "DestinationQueue", "DestinationTemporary", "DestinationTopic",];
-        var ignoreNodeAttributesByType = {
-            producer: ["Producer", "ProducerId"],
-            queue: ["Name", "MessageGroups", "MessageGroupType", "Subscriptions"],
-            topic: ["Name", "Subscriptions"],
-            broker: ["DataDirectory", "DurableTopicSubscriptions", "DynamicDestinationProducers", "InactiveDurableToppicSubscribers"]
-        };
-        var brokerShowProperties = ["AverageMessageSize", "BrokerId", "JobSchedulerStorePercentUsage", "Slave", "MemoryPercentUsage", "StorePercentUsage", "TempPercentUsage"];
-        var onlyShowAttributesByType = {
-            broker: brokerShowProperties,
-            brokerSlave: brokerShowProperties
-        };
-        function renderNodeAttributes(response) {
-            var properties = [];
-            if (response) {
-                var value = response.value || {};
-                $scope.selectedNodeAttributes = value;
-                var selectedNode = $scope.selectedNode || {};
-                var brokerContainer = selectedNode['brokerContainer'] || {};
-                var nodeType = selectedNode["type"];
-                var brokerName = selectedNode["brokerName"];
-                var containerId = selectedNode["container"] || brokerContainer["container"];
-                var group = selectedNode["group"] || brokerContainer["group"];
-                var jolokiaUrl = selectedNode["jolokiaUrl"] || brokerContainer["jolokiaUrl"];
-                var profile = selectedNode["profile"] || brokerContainer["profile"];
-                var version = selectedNode["version"] || brokerContainer["version"];
-                var isBroker = nodeType && nodeType.startsWith("broker");
-                var ignoreKeys = ignoreNodeAttributes.concat(ignoreNodeAttributesByType[nodeType] || []);
-                var onlyShowKeys = onlyShowAttributesByType[nodeType];
-                angular.forEach(value, function (v, k) {
-                    if (onlyShowKeys ? onlyShowKeys.indexOf(k) >= 0 : ignoreKeys.indexOf(k) < 0) {
-                        var formattedValue = Core.humanizeValueHtml(v);
-                        properties.push({ key: Core.humanizeValue(k), value: formattedValue });
-                    }
-                });
-                properties = properties.sortBy("key");
-                var brokerProperty = null;
-                if (brokerName) {
-                    var brokerHtml = '<a target="broker" ng-click="connectToBroker()">' + '<img title="Apache ActiveMQ" src="img/icons/messagebroker.svg"> ' + brokerName + '</a>';
-                    if (version && profile) {
-                        var brokerLink = Fabric.brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName);
-                        if (brokerLink) {
-                            brokerHtml += ' <a title="configuration settings" target="brokerConfig" href="' + brokerLink + '"><i class="fa fa-tasks"></i></a>';
-                        }
-                    }
-                    var html = $compile(brokerHtml)($scope);
-                    brokerProperty = { key: "Broker", value: html };
-                    if (!isBroker) {
-                        properties.splice(0, 0, brokerProperty);
-                    }
-                }
-                if (containerId) {
-                    //var containerModel = "selectedNode" + (selectedNode['brokerContainer'] ? ".brokerContainer" : "");
-                    properties.splice(0, 0, { key: "Container", value: $compile('<div fabric-container-link="' + selectedNode['container'] + '"></div>')($scope) });
-                }
-                var destinationName = value["DestinationName"] || selectedNode["destinationName"];
-                if (destinationName && (nodeType !== "queue" && nodeType !== "topic")) {
-                    var destinationTypeName = getDestinationTypeName(value);
-                    var html = createDestinationLink(destinationName, destinationTypeName);
-                    properties.splice(0, 0, { key: destinationTypeName, value: html });
-                }
-                var typeLabel = selectedNode["typeLabel"];
-                var name = selectedNode["name"] || selectedNode["id"] || selectedNode['objectName'];
-                if (typeLabel) {
-                    var html = name;
-                    if (nodeType === "queue" || nodeType === "topic") {
-                        html = createDestinationLink(name, nodeType);
-                    }
-                    var typeProperty = { key: typeLabel, value: html };
-                    if (isBroker && brokerProperty) {
-                        typeProperty = brokerProperty;
-                    }
-                    properties.splice(0, 0, typeProperty);
-                }
-            }
-            $scope.selectedNodeProperties = properties;
-            Core.$apply($scope);
-        }
-        /**
-         * Generates the HTML for a link to the destination
-         */
-        function createDestinationLink(destinationName, destinationType) {
-            if (destinationType === void 0) { destinationType = "queue"; }
-            return $compile('<a target="destination" title="' + destinationName + '" ng-click="connectToDestination()">' + destinationName + '</a>')($scope);
-        }
-        $scope.$watch("searchFilter", function (newValue, oldValue) {
-            redrawGraph();
-        });
-        if (isFmc) {
-            Fabric.loadBrokerStatus(onBrokerData);
-        }
-        else {
-            // lets just use the current stuff from the workspace
-            $scope.$watch('workspace.tree', function () {
-                redrawGraph();
-            });
-            $scope.$on('jmxTreeUpdated', function () {
-                redrawGraph();
-            });
-        }
-        function onBrokerData(response) {
-            if (response) {
-                var responseJson = angular.toJson(response.value);
-                if ($scope.responseJson === responseJson) {
-                    return;
-                }
-                $scope.responseJson = responseJson;
-                $scope.brokers = response.value;
-                doRedrawGraph();
-            }
-        }
-        function redrawFabricBrokers() {
-            var containersToDelete = $scope.activeContainers || {};
-            $scope.activeContainers = {};
-            angular.forEach($scope.brokers, function (brokerStatus) {
-                // only query master brokers which are provisioned correctly
-                brokerStatus.validContainer = brokerStatus.alive && brokerStatus.master && brokerStatus.provisionStatus === "success";
-                // don't use type field so we can use it for the node types..
-                renameTypeProperty(brokerStatus);
-                //log.info("Broker status: " + angular.toJson(brokerStatus, true));
-                var groupId = brokerStatus.group;
-                var profileId = brokerStatus.profile;
-                var brokerId = brokerStatus.brokerName;
-                var containerId = brokerStatus.container;
-                var versionId = brokerStatus.version || "1.0";
-                var group = getOrAddNode("group", groupId, brokerStatus, function () {
-                    return {
-                        /*
-                         navUrl: ,
-                         image: {
-                         url: "/hawtio/img/icons/osgi/bundle.png",
-                         width: 32,
-                         height:32
-                         },
-                         */
-                        typeLabel: "Broker Group",
-                        popup: {
-                            title: "Broker Group: " + groupId,
-                            content: "<p>" + groupId + "</p>"
-                        }
-                    };
-                });
-                var profile = getOrAddNode("profile", profileId, brokerStatus, function () {
-                    return {
-                        typeLabel: "Profile",
-                        popup: {
-                            title: "Profile: " + profileId,
-                            content: "<p>" + profileId + "</p>"
-                        }
-                    };
-                });
-                // TODO do we need to create a physical broker node per container and logical broker maybe?
-                var container = null;
-                if (containerId) {
-                    container = getOrAddNode("container", containerId, brokerStatus, function () {
-                        return {
-                            containerId: containerId,
-                            typeLabel: "Container",
-                            popup: {
-                                title: "Container: " + containerId,
-                                content: "<p>" + containerId + " version: " + versionId + "</p>"
-                            }
-                        };
-                    });
-                }
-                var master = brokerStatus.master;
-                var broker = getOrAddBroker(master, brokerId, groupId, containerId, container, brokerStatus);
-                if (container && container.validContainer) {
-                    var key = container.containerId;
-                    $scope.activeContainers[key] = container;
-                    delete containersToDelete[key];
-                }
-                // add the links...
-                if ($scope.viewSettings.group) {
-                    if ($scope.viewSettings.profile) {
-                        addLink(group, profile, "group");
-                        addLink(profile, broker, "broker");
-                    }
-                    else {
-                        addLink(group, broker, "group");
-                    }
-                }
-                else {
-                    if ($scope.viewSettings.profile) {
-                        addLink(profile, broker, "broker");
-                    }
-                }
-                if (container) {
-                    if ((master || $scope.viewSettings.slave) && $scope.viewSettings.container) {
-                        addLink(broker, container, "container");
-                        container.destinationLinkNode = container;
-                    }
-                    else {
-                        container.destinationLinkNode = broker;
-                    }
-                }
-            });
-            redrawActiveContainers();
-        }
-        function redrawLocalBroker() {
-            var container = {
-                jolokia: jolokia
-            };
-            var containerId = "local";
-            $scope.activeContainers = {
-                containerId: container
-            };
-            if ($scope.viewSettings.broker) {
-                jolokia.search("org.apache.activemq:type=Broker,brokerName=*", Core.onSuccess(function (response) {
-                    angular.forEach(response, function (objectName) {
-                        var details = Core.parseMBean(objectName);
-                        if (details) {
-                            var properties = details['attributes'];
-                            ActiveMQ.log.info("Got broker: " + objectName + " on container: " + containerId + " properties: " + angular.toJson(properties, true));
-                            if (properties) {
-                                var master = true;
-                                var brokerId = properties["brokerName"] || "unknown";
-                                var groupId = "";
-                                var broker = getOrAddBroker(master, brokerId, groupId, containerId, container, properties);
-                            }
-                        }
-                    });
-                    redrawActiveContainers();
-                }));
-            }
-            else {
-                redrawActiveContainers();
-            }
-        }
-        function redrawActiveContainers() {
-            // TODO delete any nodes from dead containers in containersToDelete
-            angular.forEach($scope.activeContainers, function (container, id) {
-                var containerJolokia = container.jolokia;
-                if (containerJolokia) {
-                    onContainerJolokia(containerJolokia, container, id);
-                }
-                else {
-                    Fabric.containerJolokia(jolokia, id, function (containerJolokia) { return onContainerJolokia(containerJolokia, container, id); });
-                }
-            });
-            $scope.graph = graphBuilder.buildGraph();
-            Core.$apply($scope);
-        }
-        function doRedrawGraph() {
-            graphBuilder = new ForceGraph.GraphBuilder();
-            if (isFmc) {
-                redrawFabricBrokers();
-            }
-            else {
-                redrawLocalBroker();
-            }
-        }
-        function brokerNameMarkup(brokerName) {
-            return brokerName ? "<p></p>broker: " + brokerName + "</p>" : "";
-        }
-        function matchesDestinationName(destinationName, typeName) {
-            if (destinationName) {
-                var selection = workspace.selection;
-                if (selection && selection.domain === ActiveMQ.jmxDomain) {
-                    var type = selection.entries["destinationType"];
-                    if (type) {
-                        if ((type === "Queue" && typeName === "topic") || (type === "Topic" && typeName === "queue")) {
-                            return false;
-                        }
-                    }
-                    var destName = selection.entries["destinationName"];
-                    if (destName) {
-                        if (destName !== destinationName)
-                            return false;
-                    }
-                }
-                ActiveMQ.log.info("selection: " + selection);
-                // TODO if the current selection is a destination...
-                return !$scope.searchFilter || destinationName.indexOf($scope.searchFilter) >= 0;
-            }
-            return false;
-        }
-        function onContainerJolokia(containerJolokia, container, id) {
-            if (containerJolokia) {
-                container.jolokia = containerJolokia;
-                function getOrAddDestination(properties) {
-                    var typeName = properties.destType;
-                    var brokerName = properties.brokerName;
-                    var destinationName = properties.destinationName;
-                    if (!matchesDestinationName(destinationName, typeName)) {
-                        return null;
-                    }
-                    // should we be filtering this destination out
-                    var hideFlag = "topic" === typeName ? $scope.viewSettings.topic : $scope.viewSettings.queue;
-                    if (!hideFlag) {
-                        return null;
-                    }
-                    var destination = getOrAddNode(typeName, destinationName, properties, function () {
-                        var destinationTypeName = properties.destinationType || "Queue";
-                        var objectName = "";
-                        if (brokerName) {
-                            // lets ignore temp topic stuff as there's no mbean for these
-                            if (!destinationName.startsWith("ActiveMQ.Advisory.TempQueue_ActiveMQ.Advisory.TempTopic")) {
-                                objectName = "org.apache.activemq:type=Broker,brokerName=" + brokerName + ",destinationType=" + destinationTypeName + ",destinationName=" + destinationName;
-                            }
-                        }
-                        var answer = {
-                            typeLabel: destinationTypeName,
-                            brokerContainer: container,
-                            objectName: objectName,
-                            jolokia: containerJolokia,
-                            popup: {
-                                title: destinationTypeName + ": " + destinationName,
-                                content: brokerNameMarkup(properties.brokerName)
-                            }
-                        };
-                        if (!brokerName) {
-                            containerJolokia.search("org.apache.activemq:destinationType=" + destinationTypeName + ",destinationName=" + destinationName + ",*", Core.onSuccess(function (response) {
-                                ActiveMQ.log.info("Found destination mbean: " + response);
-                                if (response && response.length) {
-                                    answer.objectName = response[0];
-                                }
-                            }));
-                        }
-                        return answer;
-                    });
-                    if (destination && $scope.viewSettings.broker && brokerName) {
-                        addLinkIds(brokerNodeId(brokerName), destination["id"], "destination");
-                    }
-                    return destination;
-                }
-                // find networks
-                var brokerId = container.brokerName;
-                if (brokerId && $scope.viewSettings.network && $scope.viewSettings.broker) {
-                    containerJolokia.request({ type: "read", mbean: "org.apache.activemq:connector=networkConnectors,*" }, Core.onSuccess(function (response) {
-                        angular.forEach(response.value, function (properties, objectName) {
-                            var details = Core.parseMBean(objectName);
-                            var attributes = details['attributes'];
-                            if (properties) {
-                                configureDestinationProperties(properties);
-                                var remoteBrokerId = properties.RemoteBrokerName;
-                                if (remoteBrokerId) {
-                                    addLinkIds(brokerNodeId(brokerId), brokerNodeId(remoteBrokerId), "network");
-                                }
-                            }
-                        });
-                        graphModelUpdated();
-                    }));
-                }
-                // find consumers
-                if ($scope.viewSettings.consumer) {
-                    containerJolokia.search("org.apache.activemq:endpoint=Consumer,*", Core.onSuccess(function (response) {
-                        angular.forEach(response, function (objectName) {
-                            //log.info("Got consumer: " + objectName + " on container: " + id);
-                            var details = Core.parseMBean(objectName);
-                            if (details) {
-                                var properties = details['attributes'];
-                                if (properties) {
-                                    configureDestinationProperties(properties);
-                                    var consumerId = properties.consumerId;
-                                    if (consumerId) {
-                                        var destination = getOrAddDestination(properties);
-                                        if (destination) {
-                                            addLink(container.destinationLinkNode, destination, "destination");
-                                            var consumer = getOrAddNode("consumer", consumerId, properties, function () {
-                                                return {
-                                                    typeLabel: "Consumer",
-                                                    brokerContainer: container,
-                                                    objectName: objectName,
-                                                    jolokia: containerJolokia,
-                                                    popup: {
-                                                        title: "Consumer: " + consumerId,
-                                                        content: "<p>client: " + (properties.clientId || "") + "</p> " + brokerNameMarkup(properties.brokerName)
-                                                    }
-                                                };
-                                            });
-                                            addLink(destination, consumer, "consumer");
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                        graphModelUpdated();
-                    }));
-                }
-                // find producers
-                if ($scope.viewSettings.producer) {
-                    containerJolokia.search("org.apache.activemq:endpoint=Producer,*", Core.onSuccess(function (response) {
-                        angular.forEach(response, function (objectName) {
-                            var details = Core.parseMBean(objectName);
-                            if (details) {
-                                var properties = details['attributes'];
-                                if (properties) {
-                                    configureDestinationProperties(properties);
-                                    var producerId = properties.producerId;
-                                    if (producerId) {
-                                        var destination = getOrAddDestination(properties);
-                                        if (destination) {
-                                            addLink(container.destinationLinkNode, destination, "destination");
-                                            var producer = getOrAddNode("producer", producerId, properties, function () {
-                                                return {
-                                                    typeLabel: "Producer",
-                                                    brokerContainer: container,
-                                                    objectName: objectName,
-                                                    jolokia: containerJolokia,
-                                                    popup: {
-                                                        title: "Producer: " + producerId,
-                                                        content: "<p>client: " + (properties.clientId || "") + "</p> " + brokerNameMarkup(properties.brokerName)
-                                                    }
-                                                };
-                                            });
-                                            addLink(producer, destination, "producer");
-                                        }
-                                        graphModelUpdated();
-                                    }
-                                }
-                            }
-                        });
-                        graphModelUpdated();
-                    }));
-                }
-                // find dynamic producers
-                if ($scope.viewSettings.producer) {
-                    containerJolokia.request({ type: "read", mbean: "org.apache.activemq:endpoint=dynamicProducer,*" }, Core.onSuccess(function (response) {
-                        angular.forEach(response.value, function (mbeanValues, objectName) {
-                            var details = Core.parseMBean(objectName);
-                            var attributes = details['attributes'];
-                            var properties = {};
-                            angular.forEach(attributes, function (value, key) {
-                                properties[key] = value;
-                            });
-                            angular.forEach(mbeanValues, function (value, key) {
-                                properties[key] = value;
-                            });
-                            configureDestinationProperties(properties);
-                            properties['destinationName'] = properties['DestinationName'];
-                            var producerId = properties["producerId"] || properties["ProducerId"];
-                            if (properties["DestinationTemporary"] || properties["DestinationTopc"]) {
-                                properties["destType"] = "topic";
-                            }
-                            var destination = getOrAddDestination(properties);
-                            if (producerId && destination) {
-                                addLink(container.destinationLinkNode, destination, "destination");
-                                var producer = getOrAddNode("producer", producerId, properties, function () {
-                                    return {
-                                        typeLabel: "Producer (Dynamic)",
-                                        brokerContainer: container,
-                                        objectName: objectName,
-                                        jolokia: containerJolokia,
-                                        popup: {
-                                            title: "Producer (Dynamic): " + producerId,
-                                            content: "<p>client: " + (properties['ClientId'] || "") + "</p> " + brokerNameMarkup(properties['brokerName'])
-                                        }
-                                    };
-                                });
-                                addLink(producer, destination, "producer");
-                            }
-                        });
-                        graphModelUpdated();
-                    }));
-                }
-            }
-        }
-        function graphModelUpdated() {
-            $scope.graph = graphBuilder.buildGraph();
-            Core.$apply($scope);
-        }
-        function getOrAddBroker(master, brokerId, groupId, containerId, container, brokerStatus) {
-            var broker = null;
-            var brokerFlag = master ? $scope.viewSettings.broker : $scope.viewSettings.slave;
-            if (brokerFlag) {
-                broker = getOrAddNode("broker", brokerId + (master ? "" : ":slave"), brokerStatus, function () {
-                    return {
-                        type: master ? "broker" : "brokerSlave",
-                        typeLabel: master ? "Broker" : "Slave Broker",
-                        popup: {
-                            title: (master ? "Master" : "Slave") + " Broker: " + brokerId,
-                            content: "<p>Container: " + containerId + "</p> <p>Group: " + groupId + "</p>"
-                        }
-                    };
-                });
-                if (master) {
-                    if (!broker['objectName']) {
-                        // lets try guess the mbean name
-                        broker['objectName'] = "org.apache.activemq:type=Broker,brokerName=" + brokerId;
-                        ActiveMQ.log.info("Guessed broker mbean: " + broker['objectName']);
-                    }
-                    if (!broker['brokerContainer'] && container) {
-                        broker['brokerContainer'] = container;
-                    }
-                }
-            }
-            return broker;
-        }
-        function getOrAddNode(typeName, id, properties, createFn) {
-            var node = null;
-            if (id) {
-                var nodeId = typeName + ":" + id;
-                node = graphBuilder.getNode(nodeId);
-                if (!node) {
-                    var nodeValues = createFn();
-                    node = angular.copy(properties);
-                    angular.forEach(nodeValues, function (value, key) { return node[key] = value; });
-                    node['id'] = nodeId;
-                    if (!node['type']) {
-                        node['type'] = typeName;
-                    }
-                    if (!node['name']) {
-                        node['name'] = id;
-                    }
-                    if (node) {
-                        var size = $scope.shapeSize[typeName];
-                        if (size && !node['size']) {
-                            node['size'] = size;
-                        }
-                        if (!node['summary']) {
-                            node['summary'] = node['popup'] || "";
-                        }
-                        if (!$scope.viewSettings.popup) {
-                            delete node['popup'];
-                        }
-                        if (!$scope.viewSettings.label) {
-                            delete node['name'];
-                        }
-                        // lets not add nodes which are defined as being disabled
-                        var enabled = $scope.viewSettings[typeName];
-                        if (enabled || !angular.isDefined(enabled)) {
-                            //log.info("Adding node " + nodeId + " of type + " + typeName);
-                            graphBuilder.addNode(node);
-                        }
-                        else {
-                        }
-                    }
-                }
-            }
-            return node;
-        }
-        function addLink(object1, object2, linkType) {
-            if (object1 && object2) {
-                addLinkIds(object1.id, object2.id, linkType);
-            }
-        }
-        function addLinkIds(id1, id2, linkType) {
-            if (id1 && id2) {
-                graphBuilder.addLink(id1, id2, linkType);
-            }
-        }
-        function brokerNodeId(brokerId) {
-            return brokerId ? "broker:" + brokerId : null;
-        }
-        /**
-           * Avoid the JMX type property clashing with the ForceGraph type property; used for associating css classes with nodes on the graph
-           *
-           * @param properties
-           */
-        function renameTypeProperty(properties) {
-            properties.mbeanType = properties['type'];
-            delete properties['type'];
-        }
-        function configureDestinationProperties(properties) {
-            renameTypeProperty(properties);
-            var destinationType = properties.destinationType || "Queue";
-            var typeName = destinationType.toLowerCase();
-            properties.isQueue = !typeName.startsWith("t");
-            properties['destType'] = typeName;
-        }
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ.BrowseQueueController = ActiveMQ._module.controller("ActiveMQ.BrowseQueueController", ["$scope", "workspace", "jolokia", "localStorage", '$location', "activeMQMessage", "$timeout", function ($scope, workspace, jolokia, localStorage, location, activeMQMessage, $timeout) {
-        $scope.searchText = '';
-        $scope.allMessages = [];
-        $scope.messages = [];
-        $scope.headers = {};
-        $scope.mode = 'text';
-        $scope.deleteDialog = false;
-        $scope.moveDialog = false;
-        $scope.gridOptions = {
-            selectedItems: [],
-            data: 'messages',
-            displayFooter: false,
-            showFilter: false,
-            showColumnMenu: true,
-            enableColumnResize: true,
-            enableColumnReordering: true,
-            enableHighlighting: true,
-            filterOptions: {
-                filterText: '',
-                useExternalFilter: true
-            },
-            selectWithCheckboxOnly: true,
-            showSelectionCheckbox: true,
-            maintainColumnRatios: false,
-            columnDefs: [
-                {
-                    field: 'JMSMessageID',
-                    displayName: 'Message ID',
-                    cellTemplate: '<div class="ngCellText"><a ng-click="openMessageDialog(row)">{{row.entity.JMSMessageID}}</a></div>',
-                    // for ng-grid
-                    width: '34%'
-                },
-                {
-                    field: 'JMSType',
-                    displayName: 'Type',
-                    width: '10%'
-                },
-                {
-                    field: 'JMSPriority',
-                    displayName: 'Priority',
-                    width: '7%'
-                },
-                {
-                    field: 'JMSTimestamp',
-                    displayName: 'Timestamp',
-                    width: '19%'
-                },
-                {
-                    field: 'JMSExpiration',
-                    displayName: 'Expires',
-                    width: '10%'
-                },
-                {
-                    field: 'JMSReplyTo',
-                    displayName: 'Reply To',
-                    width: '10%'
-                },
-                {
-                    field: 'JMSCorrelationID',
-                    displayName: 'Correlation ID',
-                    width: '10%'
-                }
-            ]
-        };
-        $scope.showMessageDetails = false;
-        var ignoreColumns = ["PropertiesText", "BodyPreview", "Text"];
-        var flattenColumns = ["BooleanProperties", "ByteProperties", "ShortProperties", "IntProperties", "LongProperties", "FloatProperties", "DoubleProperties", "StringProperties"];
-        $scope.$watch('workspace.selection', function () {
-            if (workspace.moveIfViewInvalid()) {
-                return;
-            }
-            // lets defer execution as we may not have the selection just yet
-            setTimeout(loadTable, 50);
-        });
-        $scope.$watch('gridOptions.filterOptions.filterText', function (filterText) {
-            filterMessages(filterText);
-        });
-        $scope.openMessageDialog = function (message) {
-            ActiveMQ.selectCurrentMessage(message, "JMSMessageID", $scope);
-            if ($scope.row) {
-                $scope.mode = CodeEditor.detectTextFormat($scope.row.Text);
-                $scope.showMessageDetails = true;
-            }
-        };
-        $scope.refresh = loadTable;
-        ActiveMQ.decorate($scope);
-        $scope.moveMessages = function () {
-            var selection = workspace.selection;
-            var mbean = selection.objectName;
-            if (mbean && selection) {
-                var selectedItems = $scope.gridOptions.selectedItems;
-                $scope.message = "Moved " + Core.maybePlural(selectedItems.length, "message" + " to " + $scope.queueName);
-                var operation = "moveMessageTo(java.lang.String, java.lang.String)";
-                angular.forEach(selectedItems, function (item, idx) {
-                    var id = item.JMSMessageID;
-                    if (id) {
-                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : moveSuccess;
-                        jolokia.execute(mbean, operation, id, $scope.queueName, Core.onSuccess(callback));
-                    }
-                });
-            }
-        };
-        $scope.resendMessage = function () {
-            var selection = workspace.selection;
-            var mbean = selection.objectName;
-            if (mbean && selection) {
-                var selectedItems = $scope.gridOptions.selectedItems;
-                //always assume a single message
-                activeMQMessage.message = selectedItems[0];
-                location.path('activemq/sendMessage');
-            }
-        };
-        $scope.deleteMessages = function () {
-            var selection = workspace.selection;
-            var mbean = selection.objectName;
-            if (mbean && selection) {
-                var selectedItems = $scope.gridOptions.selectedItems;
-                $scope.message = "Deleted " + Core.maybePlural(selectedItems.length, "message");
-                var operation = "removeMessage(java.lang.String)";
-                angular.forEach(selectedItems, function (item, idx) {
-                    var id = item.JMSMessageID;
-                    if (id) {
-                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
-                        jolokia.execute(mbean, operation, id, Core.onSuccess(callback));
-                    }
-                });
-            }
-        };
-        $scope.retryMessages = function () {
-            var selection = workspace.selection;
-            var mbean = selection.objectName;
-            if (mbean && selection) {
-                var selectedItems = $scope.gridOptions.selectedItems;
-                $scope.message = "Retry " + Core.maybePlural(selectedItems.length, "message");
-                var operation = "retryMessage(java.lang.String)";
-                angular.forEach(selectedItems, function (item, idx) {
-                    var id = item.JMSMessageID;
-                    if (id) {
-                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
-                        jolokia.execute(mbean, operation, id, Core.onSuccess(callback));
-                    }
-                });
-            }
-        };
-        $scope.queueNames = function (completionText) {
-            var queuesFolder = ActiveMQ.getSelectionQueuesFolder(workspace);
-            return (queuesFolder) ? queuesFolder.children.map(function (n) { return n.title; }) : [];
-        };
-        function populateTable(response) {
-            var data = response.value;
-            if (!angular.isArray(data)) {
-                $scope.allMessages = [];
-                angular.forEach(data, function (value, idx) {
-                    $scope.allMessages.push(value);
-                });
-            }
-            else {
-                $scope.allMessages = data;
-            }
-            angular.forEach($scope.allMessages, function (message) {
-                message.headerHtml = createHeaderHtml(message);
-                message.bodyText = createBodyText(message);
-            });
-            Core.$apply($scope);
-            filterMessages($scope.gridOptions.filterOptions.filterText);
-        }
-        /*
-         * For some reason using ng-repeat in the modal dialog doesn't work so lets
-         * just create the HTML in code :)
-         */
-        function createBodyText(message) {
-            if (message.Text) {
-                var body = message.Text;
-                var lenTxt = "" + body.length;
-                message.textMode = "text (" + lenTxt + " chars)";
-                return body;
-            }
-            else if (message.BodyPreview) {
-                var code = Core.parseIntValue(localStorage["activemqBrowseBytesMessages"] || "1", "browse bytes messages");
-                var body;
-                message.textMode = "bytes (turned off)";
-                if (code != 99) {
-                    var bytesArr = [];
-                    var textArr = [];
-                    message.BodyPreview.forEach(function (b) {
-                        if (code === 1 || code === 2) {
-                            // text
-                            textArr.push(String.fromCharCode(b));
-                        }
-                        if (code === 1 || code === 4) {
-                            // hex and must be 2 digit so they space out evenly
-                            var s = b.toString(16);
-                            if (s.length === 1) {
-                                s = "0" + s;
-                            }
-                            bytesArr.push(s);
-                        }
-                        else {
-                            // just show as is without spacing out, as that is usually more used for hex than decimal
-                            var s = b.toString(10);
-                            bytesArr.push(s);
-                        }
-                    });
-                    var bytesData = bytesArr.join(" ");
-                    var textData = textArr.join("");
-                    if (code === 1 || code === 2) {
-                        // bytes and text
-                        var len = message.BodyPreview.length;
-                        var lenTxt = "" + textArr.length;
-                        body = "bytes:\n" + bytesData + "\n\ntext:\n" + textData;
-                        message.textMode = "bytes (" + len + " bytes) and text (" + lenTxt + " chars)";
-                    }
-                    else {
-                        // bytes only
-                        var len = message.BodyPreview.length;
-                        body = bytesData;
-                        message.textMode = "bytes (" + len + " bytes)";
-                    }
-                }
-                return body;
-            }
-            else {
-                message.textMode = "unsupported";
-                return "Unsupported message body type which cannot be displayed by hawtio";
-            }
-        }
-        /*
-         * For some reason using ng-repeat in the modal dialog doesn't work so lets
-         * just create the HTML in code :)
-         */
-        function createHeaderHtml(message) {
-            var headers = createHeaders(message);
-            var properties = createProperties(message);
-            var headerKeys = _.keys(headers);
-            function sort(a, b) {
-                if (a > b)
-                    return 1;
-                if (a < b)
-                    return -1;
-                return 0;
-            }
-            var propertiesKeys = _.keys(properties).sort(sort);
-            var jmsHeaders = headerKeys.filter(function (key) {
-                return key.startsWith("JMS");
-            }).sort(sort);
-            var remaining = headerKeys.subtract(jmsHeaders.concat(propertiesKeys)).sort(sort);
-            var buffer = [];
-            function appendHeader(key) {
-                var value = headers[key];
-                if (value === null) {
-                    value = '';
-                }
-                buffer.push('<tr><td class="propertyName"><span class="green">Header</span> - ' + key + '</td><td class="property-value">' + value + '</td></tr>');
-            }
-            function appendProperty(key) {
-                var value = properties[key];
-                if (value === null) {
-                    value = '';
-                }
-                buffer.push('<tr><td class="propertyName">' + key + '</td><td class="property-value">' + value + '</td></tr>');
-            }
-            jmsHeaders.forEach(appendHeader);
-            remaining.forEach(appendHeader);
-            propertiesKeys.forEach(appendProperty);
-            return buffer.join("\n");
-        }
-        function createHeaders(row) {
-            ActiveMQ.log.debug("headers: ", row);
-            var answer = {};
-            angular.forEach(row, function (value, key) {
-                if (!ignoreColumns.any(key) && !flattenColumns.any(key)) {
-                    answer[Core.escapeHtml(key)] = Core.escapeHtml(value);
-                }
-            });
-            return answer;
-        }
-        function createProperties(row) {
-            ActiveMQ.log.debug("properties: ", row);
-            var answer = {};
-            angular.forEach(row, function (value, key) {
-                if (!ignoreColumns.any(key) && flattenColumns.any(key)) {
-                    angular.forEach(value, function (v2, k2) {
-                        answer['<span class="green">' + key.replace('Properties', ' Property') + '</span> - ' + Core.escapeHtml(k2)] = Core.escapeHtml(v2);
-                    });
-                }
-            });
-            return answer;
-        }
-        function loadTable() {
-            var objName;
-            if (workspace.selection) {
-                objName = workspace.selection.objectName;
-            }
-            else {
-                // in case of refresh
-                var key = location.search()['nid'];
-                var node = workspace.keyToNodeMap[key];
-                objName = node.objectName;
-            }
-            if (objName) {
-                $scope.dlq = false;
-                jolokia.getAttribute(objName, "DLQ", Core.onSuccess(onDlq, { silent: true }));
-                jolokia.request({ type: 'exec', mbean: objName, operation: 'browse()' }, Core.onSuccess(populateTable));
-            }
-        }
-        function onDlq(response) {
-            $scope.dlq = response;
-            Core.$apply($scope);
-        }
-        function intermediateResult() {
-        }
-        function operationSuccess() {
-            $scope.messageDialog = false;
-            $scope.gridOptions.selectedItems.splice(0);
-            Core.notification("success", $scope.message);
-            setTimeout(loadTable, 50);
-        }
-        function moveSuccess() {
-            operationSuccess();
-            workspace.loadTree();
-        }
-        function filterMessages(filter) {
-            var searchConditions = buildSearchConditions(filter);
-            evalFilter(searchConditions);
-        }
-        function evalFilter(searchConditions) {
-            if (!searchConditions || searchConditions.length === 0) {
-                $scope.messages = $scope.allMessages;
-            }
-            else {
-                ActiveMQ.log.debug("Filtering conditions:", searchConditions);
-                $scope.messages = $scope.allMessages.filter(function (message) {
-                    ActiveMQ.log.debug("Message:", message);
-                    var matched = true;
-                    $.each(searchConditions, function (index, condition) {
-                        if (!condition.column) {
-                            matched = matched && evalMessage(message, condition.regex);
-                        }
-                        else {
-                            matched = matched && (message[condition.column] && condition.regex.test(message[condition.column])) || (message.StringProperties && message.StringProperties[condition.column] && condition.regex.test(message.StringProperties[condition.column]));
-                        }
-                    });
-                    return matched;
-                });
-            }
-        }
-        function evalMessage(message, regex) {
-            var jmsHeaders = ['JMSDestination', 'JMSDeliveryMode', 'JMSExpiration', 'JMSPriority', 'JMSMessageID', 'JMSTimestamp', 'JMSCorrelationID', 'JMSReplyTo', 'JMSType', 'JMSRedelivered'];
-            for (var i = 0; i < jmsHeaders.length; i++) {
-                var header = jmsHeaders[i];
-                if (message[header] && regex.test(message[header])) {
-                    return true;
-                }
-            }
-            if (message.StringProperties) {
-                for (var property in message.StringProperties) {
-                    if (regex.test(message.StringProperties[property])) {
-                        return true;
-                    }
-                }
-            }
-            if (message.bodyText && regex.test(message.bodyText)) {
-                return true;
-            }
-            return false;
-        }
-        function getRegExp(str, modifiers) {
-            try {
-                return new RegExp(str, modifiers);
-            }
-            catch (err) {
-                return new RegExp(str.replace(/(\^|\$|\(|\)|<|>|\[|\]|\{|\}|\\|\||\.|\*|\+|\?)/g, '\\$1'));
-            }
-        }
-        function buildSearchConditions(filterText) {
-            var searchConditions = [];
-            var qStr;
-            if (!(qStr = $.trim(filterText))) {
-                return;
-            }
-            var columnFilters = qStr.split(";");
-            for (var i = 0; i < columnFilters.length; i++) {
-                var args = columnFilters[i].split(':');
-                if (args.length > 1) {
-                    var columnName = $.trim(args[0]);
-                    var columnValue = $.trim(args[1]);
-                    if (columnName && columnValue) {
-                        searchConditions.push({
-                            column: columnName,
-                            columnDisplay: columnName.replace(/\s+/g, '').toLowerCase(),
-                            regex: getRegExp(columnValue, 'i')
-                        });
-                    }
-                }
-                else {
-                    var val = $.trim(args[0]);
-                    if (val) {
-                        searchConditions.push({
-                            column: '',
-                            regex: getRegExp(val, 'i')
-                        });
-                    }
-                }
-            }
-            return searchConditions;
-        }
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.DestinationController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
-        $scope.workspace = workspace;
-        $scope.message = "";
-        $scope.queueType = 'true';
-        $scope.deleteDialog = false;
-        $scope.purgeDialog = false;
-        updateQueueType();
-        function updateQueueType() {
-            $scope.destinationTypeName = $scope.queueType ? "Queue" : "Topic";
-        }
-        $scope.$watch('queueType', function () {
-            updateQueueType();
-        });
-        $scope.$watch('workspace.selection', function () {
-            workspace.moveIfViewInvalid();
-        });
-        function operationSuccess() {
-            $scope.destinationName = "";
-            $scope.workspace.operationCounter += 1;
-            Core.$apply($scope);
-            Core.notification("success", $scope.message);
-            $scope.workspace.loadTree();
-        }
-        function deleteSuccess() {
-            // lets set the selection to the parent
-            workspace.removeAndSelectParentNode();
-            $scope.workspace.operationCounter += 1;
-            Core.$apply($scope);
-            Core.notification("success", $scope.message);
-            $scope.workspace.loadTree();
-        }
-        function getBrokerMBean(jolokia) {
-            var mbean = null;
-            var selection = workspace.selection;
-            if (selection && ActiveMQ.isBroker(workspace) && selection.objectName) {
-                return selection.objectName;
-            }
-            var folderNames = selection.folderNames;
-            //if (selection && jolokia && folderNames && folderNames.length > 1) {
-            var parent = selection ? selection.parent : null;
-            if (selection && parent && jolokia && folderNames && folderNames.length > 1) {
-                mbean = parent.objectName;
-                // we might be a destination, so lets try one more parent
-                if (!mbean && parent) {
-                    mbean = parent.parent.objectName;
-                }
-                if (!mbean) {
-                    mbean = "" + folderNames[0] + ":BrokerName=" + folderNames[1] + ",Type=Broker";
-                }
-            }
-            return mbean;
-        }
-        $scope.createDestination = function (name, isQueue) {
-            var mbean = getBrokerMBean(jolokia);
-            if (mbean) {
-                var operation;
-                if (isQueue) {
-                    operation = "addQueue(java.lang.String)";
-                    $scope.message = "Created queue " + name;
-                }
-                else {
-                    operation = "addTopic(java.lang.String)";
-                    $scope.message = "Created topic " + name;
-                }
-                if (mbean) {
-                    jolokia.execute(mbean, operation, name, Core.onSuccess(operationSuccess));
-                }
-                else {
-                    Core.notification("error", "Could not find the Broker MBean!");
-                }
-            }
-        };
-        $scope.deleteDestination = function () {
-            var mbean = getBrokerMBean(jolokia);
-            var selection = workspace.selection;
-            var entries = selection.entries;
-            if (mbean && selection && jolokia && entries) {
-                var domain = selection.domain;
-                var name = entries["Destination"] || entries["destinationName"] || selection.title;
-                name = name.unescapeHTML();
-                var isQueue = "Topic" !== (entries["Type"] || entries["destinationType"]);
-                var operation;
-                if (isQueue) {
-                    operation = "removeQueue(java.lang.String)";
-                    $scope.message = "Deleted queue " + name;
-                }
-                else {
-                    operation = "removeTopic(java.lang.String)";
-                    $scope.message = "Deleted topic " + name;
-                }
-                jolokia.execute(mbean, operation, name, Core.onSuccess(deleteSuccess));
-            }
-        };
-        $scope.purgeDestination = function () {
-            var mbean = workspace.getSelectedMBeanName();
-            var selection = workspace.selection;
-            var entries = selection.entries;
-            if (mbean && selection && jolokia && entries) {
-                var name = entries["Destination"] || entries["destinationName"] || selection.title;
-                name = name.unescapeHTML();
-                var operation = "purge()";
-                $scope.message = "Purged queue " + name;
-                jolokia.execute(mbean, operation, Core.onSuccess(operationSuccess));
-            }
-        };
-        $scope.name = function () {
-            var selection = workspace.selection;
-            if (selection) {
-                return selection.title;
-            }
-            return null;
-        };
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.DurableSubscriberController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
-        $scope.refresh = loadTable;
-        $scope.durableSubscribers = [];
-        $scope.tempData = [];
-        $scope.createSubscriberDialog = new UI.Dialog();
-        $scope.deleteSubscriberDialog = new UI.Dialog();
-        $scope.showSubscriberDialog = new UI.Dialog();
-        $scope.topicName = '';
-        $scope.clientId = '';
-        $scope.subscriberName = '';
-        $scope.subSelector = '';
-        $scope.gridOptions = {
-            selectedItems: [],
-            data: 'durableSubscribers',
-            displayFooter: false,
-            showFilter: false,
-            showColumnMenu: true,
-            enableCellSelection: false,
-            enableColumnResize: true,
-            enableColumnReordering: true,
-            selectWithCheckboxOnly: false,
-            showSelectionCheckbox: false,
-            multiSelect: false,
-            displaySelectionCheckbox: false,
-            filterOptions: {
-                filterText: ''
-            },
-            maintainColumnRatios: false,
-            columnDefs: [
-                {
-                    field: 'destinationName',
-                    displayName: 'Topic',
-                    width: '30%'
-                },
-                {
-                    field: 'clientId',
-                    displayName: 'Client ID',
-                    width: '30%'
-                },
-                {
-                    field: 'consumerId',
-                    displayName: 'Consumer ID',
-                    cellTemplate: '<div class="ngCellText"><span ng-hide="row.entity.status != \'Offline\'">{{row.entity.consumerId}}</span><a ng-show="row.entity.status != \'Offline\'" ng-click="openSubscriberDialog(row)">{{row.entity.consumerId}}</a></div>',
-                    width: '30%'
-                },
-                {
-                    field: 'status',
-                    displayName: 'Status',
-                    width: '10%'
-                }
-            ]
-        };
-        $scope.doCreateSubscriber = function (clientId, subscriberName, topicName, subSelector) {
-            $scope.createSubscriberDialog.close();
-            $scope.clientId = clientId;
-            $scope.subscriberName = subscriberName;
-            $scope.topicName = topicName;
-            $scope.subSelector = subSelector;
-            if (Core.isBlank($scope.subSelector)) {
-                $scope.subSelector = null;
-            }
-            var mbean = getBrokerMBean(jolokia);
-            if (mbean) {
-                jolokia.execute(mbean, "createDurableSubscriber(java.lang.String, java.lang.String, java.lang.String, java.lang.String)", $scope.clientId, $scope.subscriberName, $scope.topicName, $scope.subSelector, Core.onSuccess(function () {
-                    Core.notification('success', "Created durable subscriber " + clientId);
-                    $scope.clientId = '';
-                    $scope.subscriberName = '';
-                    $scope.topicName = '';
-                    $scope.subSelector = '';
-                    loadTable();
-                }));
-            }
-            else {
-                Core.notification("error", "Could not find the Broker MBean!");
-            }
-        };
-        $scope.deleteSubscribers = function () {
-            var mbean = $scope.gridOptions.selectedItems[0]._id;
-            jolokia.execute(mbean, "destroy()", Core.onSuccess(function () {
-                $scope.showSubscriberDialog.close();
-                Core.notification('success', "Deleted durable subscriber");
-                loadTable();
-                $scope.gridOptions.selectedItems = [];
-            }));
-        };
-        $scope.openSubscriberDialog = function (subscriber) {
-            jolokia.request({ type: "read", mbean: subscriber.entity._id }, Core.onSuccess(function (response) {
-                $scope.showSubscriberDialog.subscriber = response.value;
-                $scope.showSubscriberDialog.subscriber.Status = subscriber.entity.status;
-                console.log("Subscriber is now " + $scope.showSubscriberDialog.subscriber);
-                Core.$apply($scope);
-                // now lets start opening the dialog
-                setTimeout(function () {
-                    $scope.showSubscriberDialog.open();
-                    Core.$apply($scope);
-                }, 100);
-            }));
-        };
-        $scope.topicNames = function (completionText) {
-            var topicsFolder = ActiveMQ.getSelectionTopicsFolder(workspace);
-            return (topicsFolder) ? topicsFolder.children.map(function (n) { return n.title; }) : [];
-        };
-        $scope.$watch('workspace.selection', function () {
-            if (workspace.moveIfViewInvalid())
-                return;
-            // lets defer execution as we may not have the selection just yet
-            setTimeout(loadTable, 50);
-        });
-        function loadTable() {
-            var mbean = getBrokerMBean(jolokia);
-            if (mbean) {
-                $scope.durableSubscribers = [];
-                jolokia.request({ type: "read", mbean: mbean, attribute: ["DurableTopicSubscribers"] }, Core.onSuccess(function (response) { return populateTable(response, "DurableTopicSubscribers", "Active"); }));
-                jolokia.request({ type: "read", mbean: mbean, attribute: ["InactiveDurableTopicSubscribers"] }, Core.onSuccess(function (response) { return populateTable(response, "InactiveDurableTopicSubscribers", "Offline"); }));
-            }
-        }
-        function populateTable(response, attr, status) {
-            var data = response.value;
-            ActiveMQ.log.debug("Got data: ", data);
-            $scope.durableSubscribers.push.apply($scope.durableSubscribers, data[attr].map(function (o) {
-                var objectName = o["objectName"];
-                var entries = Core.objectNameProperties(objectName);
-                if (!('objectName' in o)) {
-                    if ('canonicalName' in o) {
-                        objectName = o['canonicalName'];
-                    }
-                    entries = _.cloneDeep(o['keyPropertyList']);
-                }
-                entries["_id"] = objectName;
-                entries["status"] = status;
-                return entries;
-            }));
-            Core.$apply($scope);
-        }
-        function getBrokerMBean(jolokia) {
-            var mbean = null;
-            var selection = workspace.selection;
-            if (selection && ActiveMQ.isBroker(workspace) && selection.objectName) {
-                return selection.objectName;
-            }
-            var folderNames = selection.folderNames;
-            //if (selection && jolokia && folderNames && folderNames.length > 1) {
-            var parent = selection ? selection.parent : null;
-            if (selection && parent && jolokia && folderNames && folderNames.length > 1) {
-                mbean = parent.objectName;
-                // we might be a destination, so lets try one more parent
-                if (!mbean && parent) {
-                    mbean = parent.parent.objectName;
-                }
-                if (!mbean) {
-                    mbean = "" + folderNames[0] + ":BrokerName=" + folderNames[1] + ",Type=Broker";
-                }
-            }
-            return mbean;
-        }
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.JobSchedulerController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
-        $scope.refresh = loadTable;
-        $scope.jobs = [];
-        $scope.deleteJobsDialog = new UI.Dialog();
-        $scope.gridOptions = {
-            selectedItems: [],
-            data: 'jobs',
-            displayFooter: false,
-            showFilter: false,
-            showColumnMenu: true,
-            enableColumnResize: true,
-            enableColumnReordering: true,
-            filterOptions: {
-                filterText: ''
-            },
-            selectWithCheckboxOnly: true,
-            showSelectionCheckbox: true,
-            maintainColumnRatios: false,
-            columnDefs: [
-                {
-                    field: 'jobId',
-                    displayName: 'Job ID',
-                    width: '25%'
-                },
-                {
-                    field: 'cronEntry',
-                    displayName: 'Cron Entry',
-                    width: '10%'
-                },
-                {
-                    field: 'delay',
-                    displayName: 'Delay',
-                    width: '5%'
-                },
-                {
-                    field: 'repeat',
-                    displayName: 'repeat',
-                    width: '5%'
-                },
-                {
-                    field: 'period',
-                    displayName: 'period',
-                    width: '5%'
-                },
-                {
-                    field: 'start',
-                    displayName: 'Start',
-                    width: '25%'
-                },
-                {
-                    field: 'next',
-                    displayName: 'Next',
-                    width: '25%'
-                }
-            ]
-        };
-        $scope.$watch('workspace.selection', function () {
-            if (workspace.moveIfViewInvalid())
-                return;
-            // lets defer execution as we may not have the selection just yet
-            setTimeout(loadTable, 50);
-        });
-        function loadTable() {
-            var selection = workspace.selection;
-            if (selection) {
-                var mbean = selection.objectName;
-                if (mbean) {
-                    jolokia.request({ type: 'read', mbean: mbean, attribute: "AllJobs" }, Core.onSuccess(populateTable));
-                }
-            }
-            Core.$apply($scope);
-        }
-        function populateTable(response) {
-            var data = response.value;
-            if (!angular.isArray(data)) {
-                $scope.jobs = [];
-                angular.forEach(data, function (value, idx) {
-                    $scope.jobs.push(value);
-                });
-            }
-            else {
-                $scope.jobs = data;
-            }
-            Core.$apply($scope);
-        }
-        $scope.deleteJobs = function () {
-            var selection = workspace.selection;
-            var mbean = selection.objectName;
-            if (mbean && selection) {
-                var selectedItems = $scope.gridOptions.selectedItems;
-                $scope.message = "Deleted " + Core.maybePlural(selectedItems.length, "job");
-                var operation = "removeJob(java.lang.String)";
-                angular.forEach(selectedItems, function (item, idx) {
-                    var id = item.jobId;
-                    if (id) {
-                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
-                        jolokia.execute(mbean, operation, id, Core.onSuccess(callback));
-                    }
-                });
-            }
-        };
-        function intermediateResult() {
-        }
-        function operationSuccess() {
-            $scope.gridOptions.selectedItems.splice(0);
-            Core.notification("success", $scope.message);
-            setTimeout(loadTable, 50);
-        }
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-/**
- * @module ActiveMQ
- */
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.PreferencesController", ["$scope", "localStorage", "userDetails", "$rootScope", function ($scope, localStorage, userDetails, $rootScope) {
-        Core.initPreferenceScope($scope, localStorage, {
-            'activemqUserName': {
-                'value': userDetails.username,
-            },
-            'activemqPassword': {
-                'value': userDetails.password
-            },
-            'activemqBrowseBytesMessages': {
-                'value': 1,
-                'converter': parseInt,
-                'formatter': function (value) {
-                    return "" + value;
-                }
-            },
-            'activemqFilterAdvisoryTopics': {
-                'value': false,
-                'converter': Core.parseBooleanValue,
-                'post': function (newValue) {
-                    $rootScope.$broadcast('jmxTreeUpdated');
-                }
-            }
-        });
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.TreeHeaderController", ["$scope", function ($scope) {
-        $scope.expandAll = function () {
-            Tree.expandAll("#activemqtree");
-        };
-        $scope.contractAll = function () {
-            Tree.contractAll("#activemqtree");
-        };
-    }]);
-    ActiveMQ._module.controller("ActiveMQ.TreeController", ["$scope", "$location", "workspace", "localStorage", function ($scope, $location, workspace, localStorage) {
-        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
-            // lets do this asynchronously to avoid Error: $digest already in progress
-            setTimeout(updateSelectionFromURL, 50);
-        });
-        $scope.$watch('workspace.tree', function () {
-            reloadTree();
-        });
-        $scope.$on('jmxTreeUpdated', function () {
-            reloadTree();
-        });
-        function reloadTree() {
-            ActiveMQ.log.debug("workspace tree has changed, lets reload the activemq tree");
-            var children = [];
-            var tree = workspace.tree;
-            if (tree) {
-                var domainName = "org.apache.activemq";
-                var folder = tree.get(domainName);
-                if (folder) {
-                    children = folder.children;
-                }
-                if (children.length) {
-                    var firstChild = children[0];
-                    // the children could be AMQ 5.7 style broker name folder with the actual MBean in the children
-                    // along with folders for the Queues etc...
-                    if (!firstChild.typeName && firstChild.children.length < 4) {
-                        // lets avoid the top level folder
-                        var answer = [];
-                        angular.forEach(children, function (child) {
-                            answer = answer.concat(child.children);
-                        });
-                        children = answer;
-                    }
-                }
-                // filter out advisory topics
-                children.forEach(function (broker) {
-                    var grandChildren = broker.children;
-                    if (grandChildren) {
-                        Tree.sanitize(grandChildren);
-                        var idx = grandChildren.findIndex(function (n) { return n.title === "Topic"; });
-                        if (idx > 0) {
-                            var old = grandChildren[idx];
-                            // we need to store all topics the first time on the workspace
-                            // so we have access to them later if the user changes the filter in the preferences
-                            var key = "ActiveMQ-allTopics-" + broker.title;
-                            var allTopics = old.children.clone();
-                            workspace.mapData[key] = allTopics;
-                            var filter = Core.parseBooleanValue(localStorage["activemqFilterAdvisoryTopics"]);
-                            if (filter) {
-                                if (old && old.children) {
-                                    var filteredTopics = old.children.filter(function (c) { return !c.title.startsWith("ActiveMQ.Advisory"); });
-                                    old.children = filteredTopics;
-                                }
-                            }
-                            else if (allTopics) {
-                                old.children = allTopics;
-                            }
-                        }
-                    }
-                });
-                var treeElement = $("#activemqtree");
-                Jmx.enableTree($scope, $location, workspace, treeElement, children, true);
-                // lets do this asynchronously to avoid Error: $digest already in progress
-                setTimeout(updateSelectionFromURL, 50);
-            }
-        }
-        function updateSelectionFromURL() {
-            Jmx.updateTreeSelectionFromURLAndAutoSelect($location, $("#activemqtree"), function (first) {
-                // use function to auto select the queue folder on the 1st broker
-                var queues = first.getChildren()[0];
-                if (queues && queues.data.title === 'Queue') {
-                    first = queues;
-                    first.expand(true);
-                    return first;
-                }
-                return null;
-            }, true);
-        }
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
 
 /// <reference path="../../includes.ts"/>
 
