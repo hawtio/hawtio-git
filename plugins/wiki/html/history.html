@@ -4,7 +4,7 @@
   <script type="text/ng-template" id="changeCellTemplate.html">
     <div class="ngCellText">
       <a class="commit-link" ng-href="{{row.entity.commitLink}}{{hash}}" title="{{row.entity.name}}">{{row.entity.commitHashText}}
-        <i class="icon-circle-arrow-right"></i></a>
+        <i class="fa fa-circle-arrow-right"></i></a>
     </div>
   </script>
 
@@ -41,7 +41,7 @@
         <li class="pull-right">
           <a ng-href="{{historyLink}}{{hash}}" ng-hide="!historyLink" title="View the history of this file"
              data-placement="bottom">
-            <i class="icon-comments-alt"></i> History</a></li>
+            <i class="fa fa-comments-alt"></i> History</a></li>
         <li class="pull-right" hawtio-show object-name="{{gitMBean}}" method-name="write">
           <a ng-href="{{createLink()}}{{hash}}" title="Create new page"
              data-placement="bottom">

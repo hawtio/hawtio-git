@@ -24,12 +24,12 @@
           <li ng-show="sourceLink()">
             <a ng-href="{{sourceLink()}}" title="View source code"
                data-placement="bottom">
-              <i class="icon-file-alt"></i> Source</a>
+              <i class="fa fa-file-alt"></i> Source</a>
           </li>
           <li>
             <a ng-href="{{historyLink}}{{hash}}" ng-hide="!historyLink" title="View the history of this file"
                data-placement="bottom">
-              <i class="icon-comments-alt"></i> History</a>
+              <i class="fa fa-comments-alt"></i> History</a>
           </li>
           <!--
           <li class="divider">
@@ -90,7 +90,7 @@
              ng-disabled="mode == ViewMode.Icon"
              href="" 
              ng-click="setViewMode(ViewMode.Icon)">
-            <i class="icon-th-large"></i></a>
+            <i class="fa fa-th-large"></i></a>
         </div>
       </li>
       <li class="pull-right">

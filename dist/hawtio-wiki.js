@@ -4,3014 +4,6 @@
 /// <reference path="../libs/hawtio-utilities/defs.d.ts"/>
 
 /// <reference path="../../includes.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ.pluginName = 'activemq';
-    ActiveMQ.log = Logger.get("activemq");
-    ActiveMQ.jmxDomain = 'org.apache.activemq';
-    function getSelectionQueuesFolder(workspace) {
-        function findQueuesFolder(node) {
-            if (node) {
-                if (node.title === "Queues" || node.title === "Queue") {
-                    return node;
-                }
-                var parent = node.parent;
-                if (parent) {
-                    return findQueuesFolder(parent);
-                }
-            }
-            return null;
-        }
-        var selection = workspace.selection;
-        if (selection) {
-            return findQueuesFolder(selection);
-        }
-        return null;
-    }
-    ActiveMQ.getSelectionQueuesFolder = getSelectionQueuesFolder;
-    function getSelectionTopicsFolder(workspace) {
-        function findTopicsFolder(node) {
-            var answer = null;
-            if (node) {
-                if (node.title === "Topics" || node.title === "Topic") {
-                    answer = node;
-                }
-                if (answer === null) {
-                    angular.forEach(node.children, function (child) {
-                        if (child.title === "Topics" || child.title === "Topic") {
-                            answer = child;
-                        }
-                    });
-                }
-            }
-            return answer;
-        }
-        var selection = workspace.selection;
-        if (selection) {
-            return findTopicsFolder(selection);
-        }
-        return null;
-    }
-    ActiveMQ.getSelectionTopicsFolder = getSelectionTopicsFolder;
-    /**
-     * Sets $scope.row to currently selected JMS message.
-     * Used in:
-     *  - activemq/js/browse.ts
-     *  - camel/js/browseEndpoint.ts
-     *
-     * TODO: remove $scope argument and operate directly on other variables. but it's too much side effects here...
-     *
-     * @param message
-     * @param key unique key inside message that distinguishes between values
-     * @param $scope
-     */
-    function selectCurrentMessage(message, key, $scope) {
-        // clicking on message's link would interfere with messages selected with checkboxes
-        $scope.gridOptions.selectAll(false);
-        var idx = Core.pathGet(message, ["rowIndex"]);
-        var jmsMessageID = Core.pathGet(message, ["entity", key]);
-        $scope.rowIndex = idx;
-        var selected = $scope.gridOptions.selectedItems;
-        selected.splice(0, selected.length);
-        if (idx >= 0 && idx < $scope.messages.length) {
-            $scope.row = $scope.messages.find(function (msg) { return msg[key] === jmsMessageID; });
-            if ($scope.row) {
-                selected.push($scope.row);
-            }
-        }
-        else {
-            $scope.row = null;
-        }
-    }
-    ActiveMQ.selectCurrentMessage = selectCurrentMessage;
-    /**
-     * - Adds functions needed for message browsing with details
-     * - Adds a watch to deselect all rows after closing the slideout with message details
-     * TODO: export these functions too?
-     *
-     * @param $scope
-     */
-    function decorate($scope) {
-        $scope.selectRowIndex = function (idx) {
-            $scope.rowIndex = idx;
-            var selected = $scope.gridOptions.selectedItems;
-            selected.splice(0, selected.length);
-            if (idx >= 0 && idx < $scope.messages.length) {
-                $scope.row = $scope.messages[idx];
-                if ($scope.row) {
-                    selected.push($scope.row);
-                }
-            }
-            else {
-                $scope.row = null;
-            }
-        };
-        $scope.$watch("showMessageDetails", function () {
-            if (!$scope.showMessageDetails) {
-                $scope.row = null;
-                $scope.gridOptions.selectedItems.splice(0, $scope.gridOptions.selectedItems.length);
-            }
-        });
-    }
-    ActiveMQ.decorate = decorate;
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/**
- * @module ActiveMQ
- * @main ActiveMQ
- */
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module = angular.module(ActiveMQ.pluginName, []);
-    ActiveMQ._module.config(["$routeProvider", function ($routeProvider) {
-        $routeProvider.when('/activemq/browseQueue', { templateUrl: 'plugins/activemq/html/browseQueue.html' }).when('/activemq/diagram', { templateUrl: 'plugins/activemq/html/brokerDiagram.html', reloadOnSearch: false }).when('/activemq/createDestination', { templateUrl: 'plugins/activemq/html/createDestination.html' }).when('/activemq/createQueue', { templateUrl: 'plugins/activemq/html/createQueue.html' }).when('/activemq/createTopic', { templateUrl: 'plugins/activemq/html/createTopic.html' }).when('/activemq/deleteQueue', { templateUrl: 'plugins/activemq/html/deleteQueue.html' }).when('/activemq/deleteTopic', { templateUrl: 'plugins/activemq/html/deleteTopic.html' }).when('/activemq/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html' }).when('/activemq/durableSubscribers', { templateUrl: 'plugins/activemq/html/durableSubscribers.html' }).when('/activemq/jobs', { templateUrl: 'plugins/activemq/html/jobs.html' });
-    }]);
-    ActiveMQ._module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", function (nav, $location, workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache) {
-        viewRegistry['activemq'] = 'plugins/activemq/html/layoutActiveMQTree.html';
-        helpRegistry.addUserDoc('activemq', 'plugins/activemq/doc/help.md', function () {
-            return workspace.treeContainsDomainAndProperties("org.apache.activemq");
-        });
-        preferencesRegistry.addTab("ActiveMQ", "plugins/activemq/html/preferences.html", function () {
-            return workspace.treeContainsDomainAndProperties("org.apache.activemq");
-        });
-        workspace.addTreePostProcessor(postProcessTree);
-        // register default attribute views
-        var attributes = workspace.attributeColumnDefs;
-        attributes[ActiveMQ.jmxDomain + "/Broker/folder"] = [
-            { field: 'BrokerName', displayName: 'Name', width: "**" },
-            { field: 'TotalProducerCount', displayName: 'Producer #' },
-            { field: 'TotalConsumerCount', displayName: 'Consumer #' },
-            { field: 'StorePercentUsage', displayName: 'Store %' },
-            { field: 'TempPercentUsage', displayName: 'Temp %' },
-            { field: 'MemoryPercentUsage', displayName: 'Memory %' },
-            { field: 'TotalEnqueueCount', displayName: 'Enqueue #' },
-            { field: 'TotalDequeueCount', displayName: 'Dequeue #' }
-        ];
-        attributes[ActiveMQ.jmxDomain + "/Queue/folder"] = [
-            { field: 'Name', displayName: 'Name', width: "***" },
-            { field: 'QueueSize', displayName: 'Queue Size' },
-            { field: 'ProducerCount', displayName: 'Producer #' },
-            { field: 'ConsumerCount', displayName: 'Consumer #' },
-            { field: 'EnqueueCount', displayName: 'Enqueue #' },
-            { field: 'DequeueCount', displayName: 'Dequeue #' },
-            { field: 'MemoryPercentUsage', displayName: 'Memory %' },
-            { field: 'DispatchCount', displayName: 'Dispatch #', visible: false }
-        ];
-        attributes[ActiveMQ.jmxDomain + "/Topic/folder"] = [
-            { field: 'Name', displayName: 'Name', width: "****" },
-            { field: 'ProducerCount', displayName: 'Producer #' },
-            { field: 'ConsumerCount', displayName: 'Consumer #' },
-            { field: 'EnqueueCount', displayName: 'Enqueue #' },
-            { field: 'DequeueCount', displayName: 'Dequeue #' },
-            { field: 'MemoryPercentUsage', displayName: 'Memory %' },
-            { field: 'DispatchCount', displayName: 'Dispatch #', visible: false }
-        ];
-        attributes[ActiveMQ.jmxDomain + "/Consumer/folder"] = [
-            { field: 'ConnectionId', displayName: 'Name', width: "**" },
-            { field: 'PrefetchSize', displayName: 'Prefetch Size' },
-            { field: 'Priority', displayName: 'Priority' },
-            { field: 'DispatchedQueueSize', displayName: 'Dispatched Queue #' },
-            { field: 'SlowConsumer', displayName: 'Slow ?' },
-            { field: 'Retroactive', displayName: 'Retroactive' },
-            { field: 'Selector', displayName: 'Selector' }
-        ];
-        attributes[ActiveMQ.jmxDomain + "/networkConnectors/folder"] = [
-            { field: 'Name', displayName: 'Name', width: "**" },
-            { field: 'UserName', displayName: 'User Name' },
-            { field: 'PrefetchSize', displayName: 'Prefetch Size' },
-            { field: 'ConduitSubscriptions', displayName: 'Conduit Subscriptions?' },
-            { field: 'Duplex', displayName: 'Duplex' },
-            { field: 'DynamicOnly', displayName: 'Dynamic Only' }
-        ];
-        attributes[ActiveMQ.jmxDomain + "/PersistenceAdapter/folder"] = [
-            { field: 'IndexDirectory', displayName: 'Index Directory', width: "**" },
-            { field: 'LogDirectory', displayName: 'Log Directory', width: "**" }
-        ];
-        var builder = nav.builder();
-        var tab = builder.id('activemq').title(function () { return 'ActiveMQ'; }).href(function () { return '/jmx/attributes?tab=activemq'; }).isSelected(function () { return workspace.isTopTabActive('activemq'); }).isValid(function () { return workspace.treeContainsDomainAndProperties(ActiveMQ.jmxDomain); }).build();
-        tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
-        // add sub level tabs
-        tab.tabs.push({
-            id: 'activemq-diagram',
-            title: function () { return '<i class="fa fa-picture"></i> Diagram'; },
-            //title: "View a diagram of the producers, destinations and consumers",
-            show: function () { return workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(ActiveMQ.jmxDomain); },
-            isSelected: function () { return workspace.isLinkActive('activemq/diagram'); },
-            href: function () { return "/activemq/diagram"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-browse',
-            title: function () { return '<i class="fa fa-envelope"></i> Browse'; },
-            //title: "Browse the messages on the queue",
-            show: function () { return isQueue(workspace) && workspace.hasInvokeRights(workspace.selection, "browse()"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/browseQueue'); },
-            href: function () { return "/activemq/browseQueue"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-send',
-            title: function () { return '<i class="fa fa-pencil"></i> Send'; },
-            //title: "Send a message to this destination",
-            show: function () { return (isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(workspace.selection, "sendTextMessage(java.util.Map,java.lang.String,java.lang.String,java.lang.String)"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/sendMessage'); },
-            href: function () { return "/activemq/sendMessage"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-durable-subscribers',
-            title: function () { return '<i class="fa fa-list"></i> Durable Subscribers'; },
-            //title: "Manage durable subscribers",
-            show: function () { return isBroker(workspace); },
-            isSelected: function () { return workspace.isLinkActive('activemq/durableSubscribers'); },
-            href: function () { return "/activemq/durableSubscribers"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-jobs',
-            title: function () { return '<i class="fa fa-list"></i> Jobs'; },
-            //title: "Manage jobs",
-            show: function () { return isJobScheduler(workspace); },
-            isSelected: function () { return workspace.isLinkActive('activemq/jobs'); },
-            href: function () { return "/activemq/jobs"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-create-destination',
-            title: function () { return '<i class="fa fa-plus"></i> Create'; },
-            //title: "Create a new destination",
-            show: function () { return isBroker(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/createDestination'); },
-            href: function () { return "/activemq/createDestination"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-create-queue',
-            title: function () { return '<i class="fa fa-plus"></i> Create'; },
-            //title: "Create a new queue",
-            show: function () { return isQueuesFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/createQueue'); },
-            href: function () { return "/activemq/createQueue"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-create-topic',
-            title: function () { return '<i class="fa fa-plus"></i> Create'; },
-            //title: "Create a new topic",
-            show: function () { return isTopicsFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/createTopic'); },
-            href: function () { return "/activemq/createTopic"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-delete-topic',
-            title: function () { return '<i class="fa fa-remove"></i> Delete Topic'; },
-            //title: "Delete this topic",
-            show: function () { return isTopic(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeTopic"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/deleteTopic'); },
-            href: function () { return "/activemq/deleteTopic"; }
-        });
-        tab.tabs.push({
-            id: 'activemq-delete-queue',
-            title: function () { return '<i class="fa fa-remove"></i> Delete'; },
-            //title: "Delete or purge this queue",
-            show: function () { return isQueue(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeQueue"); },
-            isSelected: function () { return workspace.isLinkActive('activemq/deleteQueue'); },
-            href: function () { return "/activemq/deleteQueue"; }
-        });
-        nav.add(tab);
-        function postProcessTree(tree) {
-            var activemq = tree.get("org.apache.activemq");
-            setConsumerType(activemq);
-            // lets move queue and topic as first children within brokers
-            if (activemq) {
-                angular.forEach(activemq.children, function (broker) {
-                    angular.forEach(broker.children, function (child) {
-                        // lets move Topic/Queue to the front.
-                        var grandChildren = child.children;
-                        if (grandChildren) {
-                            var names = ["Topic", "Queue"];
-                            angular.forEach(names, function (name) {
-                                var idx = grandChildren.findIndex(function (n) { return n.title === name; });
-                                if (idx > 0) {
-                                    var old = grandChildren[idx];
-                                    grandChildren.splice(idx, 1);
-                                    grandChildren.splice(0, 0, old);
-                                }
-                            });
-                        }
-                    });
-                });
-            }
-        }
-        function setConsumerType(node) {
-            if (node) {
-                var parent = node.parent;
-                var entries = node.entries;
-                if (parent && !parent.typeName && entries) {
-                    var endpoint = entries["endpoint"];
-                    if (endpoint === "Consumer" || endpoint === "Producer") {
-                        //console.log("Setting the typeName on " + parent.title + " to " + endpoint);
-                        parent.typeName = endpoint;
-                    }
-                    var connectorName = entries["connectorName"];
-                    if (connectorName && !node.icon) {
-                        // lets default a connector icon
-                        node.icon = Core.url("/img/icons/activemq/connector.png");
-                    }
-                }
-                angular.forEach(node.children, function (child) { return setConsumerType(child); });
-            }
-        }
-    }]);
-    hawtioPluginLoader.addModule(ActiveMQ.pluginName);
-    function getBroker(workspace) {
-        var answer = null;
-        var selection = workspace.selection;
-        if (selection) {
-            answer = selection.findAncestor(function (current) {
-                // log.debug("Checking current: ", current);
-                var entries = current.entries;
-                if (entries) {
-                    return (('type' in entries && entries.type === 'Broker') && 'brokerName' in entries && !('destinationName' in entries) && !('destinationType' in entries));
-                }
-                else {
-                    return false;
-                }
-            });
-        }
-        return answer;
-    }
-    ActiveMQ.getBroker = getBroker;
-    function isQueue(workspace) {
-        //return workspace.selectionHasDomainAndType(jmxDomain, 'Queue');
-        return workspace.hasDomainAndProperties(ActiveMQ.jmxDomain, { 'destinationType': 'Queue' }, 4) || workspace.selectionHasDomainAndType(ActiveMQ.jmxDomain, 'Queue');
-    }
-    ActiveMQ.isQueue = isQueue;
-    function isTopic(workspace) {
-        //return workspace.selectionHasDomainAndType(jmxDomain, 'Topic');
-        return workspace.hasDomainAndProperties(ActiveMQ.jmxDomain, { 'destinationType': 'Topic' }, 4) || workspace.selectionHasDomainAndType(ActiveMQ.jmxDomain, 'Topic');
-    }
-    ActiveMQ.isTopic = isTopic;
-    function isQueuesFolder(workspace) {
-        return workspace.selectionHasDomainAndLastFolderName(ActiveMQ.jmxDomain, 'Queue');
-    }
-    ActiveMQ.isQueuesFolder = isQueuesFolder;
-    function isTopicsFolder(workspace) {
-        return workspace.selectionHasDomainAndLastFolderName(ActiveMQ.jmxDomain, 'Topic');
-    }
-    ActiveMQ.isTopicsFolder = isTopicsFolder;
-    function isJobScheduler(workspace) {
-        return workspace.hasDomainAndProperties(ActiveMQ.jmxDomain, { 'service': 'JobScheduler' }, 4);
-    }
-    ActiveMQ.isJobScheduler = isJobScheduler;
-    function isBroker(workspace) {
-        if (workspace.selectionHasDomainAndType(ActiveMQ.jmxDomain, 'Broker')) {
-            var self = Core.pathGet(workspace, ["selection"]);
-            var parent = Core.pathGet(workspace, ["selection", "parent"]);
-            return !(parent && (parent.ancestorHasType('Broker') || self.ancestorHasType('Broker')));
-        }
-        return false;
-    }
-    ActiveMQ.isBroker = isBroker;
-})(ActiveMQ || (ActiveMQ = {}));
-
-/**
- * @module Git
- */
-var Git;
-(function (Git) {
-    function createGitRepository(workspace, jolokia, localStorage) {
-        var mbean = getGitMBean(workspace);
-        if (mbean && jolokia) {
-            return new Git.JolokiaGit(mbean, jolokia, localStorage, workspace.userDetails);
-        }
-        // TODO use local storage to make a little wiki thingy?
-        return null;
-    }
-    Git.createGitRepository = createGitRepository;
-    Git.jmxDomain = "hawtio";
-    Git.mbeanType = "GitFacade";
-    function hasGit(workspace) {
-        return getGitMBean(workspace) !== null;
-    }
-    Git.hasGit = hasGit;
-    /**
-     * Returns the JMX ObjectName of the git mbean
-     * @method getGitMBean
-     * @for Git
-     * @param {Workspace} workspace
-     * @return {String}
-     */
-    function getGitMBean(workspace) {
-        return Core.getMBeanTypeObjectName(workspace, Git.jmxDomain, Git.mbeanType);
-    }
-    Git.getGitMBean = getGitMBean;
-    /**
-     * Returns the Folder for the git mbean if it can be found
-     * @method getGitMBeanFolder
-     * @for Git
-     * @param {Workspace} workspace
-     * @return {Folder}
-     */
-    function getGitMBeanFolder(workspace) {
-        return Core.getMBeanTypeFolder(workspace, Git.jmxDomain, Git.mbeanType);
-    }
-    Git.getGitMBeanFolder = getGitMBeanFolder;
-    /**
-     * Returns true if the git mbean is a fabric configuration repository
-     * (so we can use it for the fabric plugin)
-     * @method isGitMBeanFabric
-     * @for Git
-     * @param {Workspace} workspace
-     * @return {Boolean}
-     */
-    function isGitMBeanFabric(workspace) {
-        var folder = getGitMBeanFolder(workspace);
-        return folder && folder.entries["repo"] === "fabric";
-    }
-    Git.isGitMBeanFabric = isGitMBeanFabric;
-})(Git || (Git = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="../../git/ts/gitHelpers.ts"/>
-/**
- * @module Wiki
- */
-var Wiki;
-(function (Wiki) {
-    Wiki.log = Logger.get("Wiki");
-    Wiki.camelNamespaces = ["http://camel.apache.org/schema/spring", "http://camel.apache.org/schema/blueprint"];
-    Wiki.springNamespaces = ["http://www.springframework.org/schema/beans"];
-    Wiki.droolsNamespaces = ["http://drools.org/schema/drools-spring"];
-    Wiki.dozerNamespaces = ["http://dozer.sourceforge.net"];
-    Wiki.activemqNamespaces = ["http://activemq.apache.org/schema/core"];
-    Wiki.excludeAdjustmentPrefixes = ["http://", "https://", "#"];
-    (function (ViewMode) {
-        ViewMode[ViewMode["List"] = 0] = "List";
-        ViewMode[ViewMode["Icon"] = 1] = "Icon";
-    })(Wiki.ViewMode || (Wiki.ViewMode = {}));
-    var ViewMode = Wiki.ViewMode;
-    ;
-    /**
-     * The custom views within the wiki namespace; either "/wiki/$foo" or "/wiki/branch/$branch/$foo"
-     */
-    Wiki.customWikiViewPages = ["/formTable", "/camel/diagram", "/camel/canvas", "/camel/properties", "/dozer/mappings"];
-    /**
-     * Which extensions do we wish to hide in the wiki file listing
-     * @property hideExtensions
-     * @for Wiki
-     * @type Array
-     */
-    Wiki.hideExtensions = [".profile"];
-    var defaultFileNamePattern = /^[a-zA-Z0-9._-]*$/;
-    var defaultFileNamePatternInvalid = "Name must be: letters, numbers, and . _ or - characters";
-    var defaultFileNameExtensionPattern = "";
-    var defaultLowerCaseFileNamePattern = /^[a-z0-9._-]*$/;
-    var defaultLowerCaseFileNamePatternInvalid = "Name must be: lower-case letters, numbers, and . _ or - characters";
-    /**
-     * The wizard tree for creating new content in the wiki
-     * @property documentTemplates
-     * @for Wiki
-     * @type Array
-     */
-    Wiki.documentTemplates = [
-        {
-            label: "Folder",
-            tooltip: "Create a new folder to contain documents",
-            folder: true,
-            icon: "/img/icons/wiki/folder.gif",
-            exemplar: "myfolder",
-            regex: defaultLowerCaseFileNamePattern,
-            invalid: defaultLowerCaseFileNamePatternInvalid
-        },
-        {
-            label: "App",
-            tooltip: "Creates a new App folder used to configure and run containers",
-            addClass: "fa fa-cog green",
-            exemplar: 'myapp',
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: '',
-            generated: {
-                mbean: ['io.fabric8', { type: 'KubernetesTemplateManager' }],
-                init: function (workspace, $scope) {
-                },
-                generate: function (options) {
-                    Wiki.log.debug("Got options: ", options);
-                    options.form.name = options.name;
-                    options.form.path = options.parentId;
-                    options.form.branch = options.branch;
-                    var json = angular.toJson(options.form);
-                    var jolokia = HawtioCore.injector.get("jolokia");
-                    jolokia.request({
-                        type: 'exec',
-                        mbean: 'io.fabric8:type=KubernetesTemplateManager',
-                        operation: 'createAppByJson',
-                        arguments: [json]
-                    }, Core.onSuccess(function (response) {
-                        Wiki.log.debug("Generated app, response: ", response);
-                        options.success(undefined);
-                    }, {
-                        error: function (response) {
-                            options.error(response.error);
-                        }
-                    }));
-                },
-                form: function (workspace, $scope) {
-                    if (!$scope.doDockerRegistryCompletion) {
-                        $scope.fetchDockerRepositories = function () {
-                            return DockerRegistry.completeDockerRegistry();
-                        };
-                    }
-                    return {
-                        summaryMarkdown: 'Add app summary here',
-                        replicaCount: 1
-                    };
-                },
-                schema: {
-                    description: 'App settings',
-                    type: 'java.lang.String',
-                    properties: {
-                        'dockerImage': {
-                            'description': 'Docker Image',
-                            'type': 'java.lang.String',
-                            'input-attributes': {
-                                'required': '',
-                                'class': 'input-xlarge',
-                                'typeahead': 'repo for repo in fetchDockerRepositories() | filter:$viewValue',
-                                'typeahead-wait-ms': '200'
-                            }
-                        },
-                        'summaryMarkdown': {
-                            'description': 'Short Description',
-                            'type': 'java.lang.String',
-                            'input-attributes': { 'class': 'input-xlarge' }
-                        },
-                        'replicaCount': {
-                            'description': 'Replica Count',
-                            'type': 'java.lang.Integer',
-                            'input-attributes': {
-                                min: '0'
-                            }
-                        },
-                        'labels': {
-                            'description': 'Labels',
-                            'type': 'map',
-                            'items': {
-                                'type': 'string'
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        {
-            label: "Fabric8 Profile",
-            tooltip: "Create a new empty fabric profile. Using a hyphen ('-') will create a folder heirarchy, for example 'my-awesome-profile' will be available via the path 'my/awesome/profile'.",
-            profile: true,
-            addClass: "fa fa-book green",
-            exemplar: "user-profile",
-            regex: defaultLowerCaseFileNamePattern,
-            invalid: defaultLowerCaseFileNamePatternInvalid,
-            fabricOnly: true
-        },
-        {
-            label: "Properties File",
-            tooltip: "A properties file typically used to configure Java classes",
-            exemplar: "properties-file.properties",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".properties"
-        },
-        {
-            label: "JSON File",
-            tooltip: "A file containing JSON data",
-            exemplar: "document.json",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".json"
-        },
-        {
-            label: "Key Store File",
-            tooltip: "Creates a keystore (database) of cryptographic keys, X.509 certificate chains, and trusted certificates.",
-            exemplar: 'keystore.jks',
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".jks",
-            generated: {
-                mbean: ['hawtio', { type: 'KeystoreService' }],
-                init: function (workspace, $scope) {
-                    var mbean = 'hawtio:type=KeystoreService';
-                    var response = workspace.jolokia.request({ type: "read", mbean: mbean, attribute: "SecurityProviderInfo" }, {
-                        success: function (response) {
-                            $scope.securityProviderInfo = response.value;
-                            Core.$apply($scope);
-                        },
-                        error: function (response) {
-                            console.log('Could not find the supported security algorithms: ', response.error);
-                            Core.$apply($scope);
-                        }
-                    });
-                },
-                generate: function (options) {
-                    var encodedForm = JSON.stringify(options.form);
-                    var mbean = 'hawtio:type=KeystoreService';
-                    var response = options.workspace.jolokia.request({
-                        type: 'exec',
-                        mbean: mbean,
-                        operation: 'createKeyStoreViaJSON(java.lang.String)',
-                        arguments: [encodedForm]
-                    }, {
-                        method: 'POST',
-                        success: function (response) {
-                            options.success(response.value);
-                        },
-                        error: function (response) {
-                            options.error(response.error);
-                        }
-                    });
-                },
-                form: function (workspace, $scope) {
-                    return {
-                        storeType: $scope.securityProviderInfo.supportedKeyStoreTypes[0],
-                        createPrivateKey: false,
-                        keyLength: 4096,
-                        keyAlgorithm: $scope.securityProviderInfo.supportedKeyAlgorithms[0],
-                        keyValidity: 365
-                    };
-                },
-                schema: {
-                    "description": "Keystore Settings",
-                    "type": "java.lang.String",
-                    "properties": {
-                        "storePassword": {
-                            "description": "Keystore password.",
-                            "type": "password",
-                            'input-attributes': { "required": "", "ng-minlength": 6 }
-                        },
-                        "storeType": {
-                            "description": "The type of store to create",
-                            "type": "java.lang.String",
-                            'input-element': "select",
-                            'input-attributes': { "ng-options": "v for v in securityProviderInfo.supportedKeyStoreTypes" }
-                        },
-                        "createPrivateKey": {
-                            "description": "Should we generate a self-signed private key?",
-                            "type": "boolean"
-                        },
-                        "keyCommonName": {
-                            "description": "The common name of the key, typically set to the hostname of the server",
-                            "type": "java.lang.String",
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        },
-                        "keyLength": {
-                            "description": "The length of the cryptographic key",
-                            "type": "Long",
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        },
-                        "keyAlgorithm": {
-                            "description": "The key algorithm",
-                            "type": "java.lang.String",
-                            'input-element': "select",
-                            'input-attributes': { "ng-options": "v for v in securityProviderInfo.supportedKeyAlgorithms" },
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        },
-                        "keyValidity": {
-                            "description": "The number of days the key will be valid for",
-                            "type": "Long",
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        },
-                        "keyPassword": {
-                            "description": "Password to the private key",
-                            "type": "password",
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        }
-                    }
-                }
-            }
-        },
-        {
-            label: "Markdown Document",
-            tooltip: "A basic markup document using the Markdown wiki markup, particularly useful for ReadMe files in directories",
-            exemplar: "ReadMe.md",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".md"
-        },
-        {
-            label: "Text Document",
-            tooltip: "A plain text file",
-            exemplar: "document.text",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".txt"
-        },
-        {
-            label: "HTML Document",
-            tooltip: "A HTML document you can edit directly using the HTML markup",
-            exemplar: "document.html",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".html"
-        },
-        {
-            label: "XML Document",
-            tooltip: "An empty XML document",
-            exemplar: "document.xml",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".xml"
-        },
-        {
-            label: "Integration Flows",
-            tooltip: "Camel routes for defining your integration flows",
-            children: [
-                {
-                    label: "Camel XML document",
-                    tooltip: "A vanilla Camel XML document for integration flows",
-                    icon: "/img/icons/camel.svg",
-                    exemplar: "camel.xml",
-                    regex: defaultFileNamePattern,
-                    invalid: defaultFileNamePatternInvalid,
-                    extension: ".xml"
-                },
-                {
-                    label: "Camel OSGi Blueprint XML document",
-                    tooltip: "A vanilla Camel XML document for integration flows when using OSGi Blueprint",
-                    icon: "/img/icons/camel.svg",
-                    exemplar: "camel-blueprint.xml",
-                    regex: defaultFileNamePattern,
-                    invalid: defaultFileNamePatternInvalid,
-                    extension: ".xml"
-                },
-                {
-                    label: "Camel Spring XML document",
-                    tooltip: "A vanilla Camel XML document for integration flows when using the Spring framework",
-                    icon: "/img/icons/camel.svg",
-                    exemplar: "camel-spring.xml",
-                    regex: defaultFileNamePattern,
-                    invalid: defaultFileNamePatternInvalid,
-                    extension: ".xml"
-                }
-            ]
-        },
-        {
-            label: "Data Mapping Document",
-            tooltip: "Dozer based configuration of mapping documents",
-            icon: "/img/icons/dozer/dozer.gif",
-            exemplar: "dozer-mapping.xml",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".xml"
-        }
-    ];
-    function isFMCContainer(workspace) {
-        return false;
-    }
-    Wiki.isFMCContainer = isFMCContainer;
-    function isWikiEnabled(workspace, jolokia, localStorage) {
-        return Git.createGitRepository(workspace, jolokia, localStorage) !== null;
-    }
-    Wiki.isWikiEnabled = isWikiEnabled;
-    function goToLink(link, $timeout, $location) {
-        var href = Core.trimLeading(link, "#");
-        $timeout(function () {
-            Wiki.log.debug("About to navigate to: " + href);
-            $location.url(href);
-        }, 100);
-    }
-    Wiki.goToLink = goToLink;
-    /**
-     * Returns all the links for the given branch for the custom views, starting with "/"
-     * @param $scope
-     * @returns {string[]}
-     */
-    function customViewLinks($scope) {
-        var branch = $scope.branch;
-        var prefix = Core.trimLeading(Wiki.startLink(branch), "#");
-        return Wiki.customWikiViewPages.map(function (path) { return prefix + path; });
-    }
-    Wiki.customViewLinks = customViewLinks;
-    /**
-     * Returns a new create document wizard tree
-     * @method createWizardTree
-     * @for Wiki
-     * @static
-     */
-    function createWizardTree(workspace, $scope) {
-        var root = new Folder("New Documents");
-        addCreateWizardFolders(workspace, $scope, root, Wiki.documentTemplates);
-        return root;
-    }
-    Wiki.createWizardTree = createWizardTree;
-    function addCreateWizardFolders(workspace, $scope, parent, templates) {
-        angular.forEach(templates, function (template) {
-            if (template['fabricOnly'] && !Fabric.hasFabric(workspace)) {
-                return;
-            }
-            if (template.generated) {
-                if (template.generated.mbean) {
-                    var exists = workspace.treeContainsDomainAndProperties.apply(workspace, template.generated.mbean);
-                    if (!exists) {
-                        return;
-                    }
-                }
-                if (template.generated.init) {
-                    template.generated.init(workspace, $scope);
-                }
-            }
-            var title = template.label || key;
-            var node = new Folder(title);
-            node.parent = parent;
-            node.entity = template;
-            var addClass = template.addClass;
-            if (addClass) {
-                node.addClass = addClass;
-            }
-            var key = template.exemplar;
-            var parentKey = parent.key || "";
-            node.key = parentKey ? parentKey + "_" + key : key;
-            var icon = template.icon;
-            if (icon) {
-                node.icon = Core.url(icon);
-            }
-            // compiler was complaining about 'label' had no idea where it's coming from
-            // var tooltip = value["tooltip"] || value["description"] || label;
-            var tooltip = template["tooltip"] || template["description"] || '';
-            node.tooltip = tooltip;
-            if (template["folder"]) {
-                node.isFolder = function () {
-                    return true;
-                };
-            }
-            parent.children.push(node);
-            var children = template.children;
-            if (children) {
-                addCreateWizardFolders(workspace, $scope, node, children);
-            }
-        });
-    }
-    Wiki.addCreateWizardFolders = addCreateWizardFolders;
-    function startLink(branch) {
-        var start = "/wiki";
-        if (branch) {
-            start = UrlHelpers.join(start, 'branch', branch);
-        }
-        return start;
-    }
-    Wiki.startLink = startLink;
-    /**
-     * Returns true if the given filename/path is an index page (named index.* and is a markdown/html page).
-     *
-     * @param path
-     * @returns {boolean}
-     */
-    function isIndexPage(path) {
-        return path && (path.endsWith("index.md") || path.endsWith("index.html") || path.endsWith("index")) ? true : false;
-    }
-    Wiki.isIndexPage = isIndexPage;
-    function viewLink(branch, pageId, $location, fileName) {
-        if (fileName === void 0) { fileName = null; }
-        var link = null;
-        var start = startLink(branch);
-        if (pageId) {
-            // figure out which view to use for this page
-            var view = isIndexPage(pageId) ? "/book/" : "/view/";
-            link = start + view + encodePath(Core.trimLeading(pageId, "/"));
-        }
-        else {
-            // lets use the current path
-            var path = $location.path();
-            link = "#" + path.replace(/(edit|create)/, "view");
-        }
-        if (fileName && pageId && pageId.endsWith(fileName)) {
-            return link;
-        }
-        if (fileName) {
-            if (!link.endsWith("/")) {
-                link += "/";
-            }
-            link += fileName;
-        }
-        return link;
-    }
-    Wiki.viewLink = viewLink;
-    function branchLink(branch, pageId, $location, fileName) {
-        if (fileName === void 0) { fileName = null; }
-        return viewLink(branch, pageId, $location, fileName);
-    }
-    Wiki.branchLink = branchLink;
-    function editLink(branch, pageId, $location) {
-        var link = null;
-        var format = Wiki.fileFormat(pageId);
-        switch (format) {
-            case "image":
-                break;
-            default:
-                var start = startLink(branch);
-                if (pageId) {
-                    link = start + "/edit/" + encodePath(pageId);
-                }
-                else {
-                    // lets use the current path
-                    var path = $location.path();
-                    link = "#" + path.replace(/(view|create)/, "edit");
-                }
-        }
-        return link;
-    }
-    Wiki.editLink = editLink;
-    function createLink(branch, pageId, $location, $scope) {
-        var path = $location.path();
-        var start = startLink(branch);
-        var link = '';
-        if (pageId) {
-            link = start + "/create/" + encodePath(pageId);
-        }
-        else {
-            // lets use the current path
-            link = "#" + path.replace(/(view|edit|formTable)/, "create");
-        }
-        // we have the link so lets now remove the last path
-        // or if there is no / in the path then remove the last section
-        var idx = link.lastIndexOf("/");
-        if (idx > 0 && !$scope.children && !path.startsWith("/wiki/formTable")) {
-            link = link.substring(0, idx + 1);
-        }
-        return link;
-    }
-    Wiki.createLink = createLink;
-    function encodePath(pageId) {
-        return pageId.split("/").map(encodeURIComponent).join("/");
-    }
-    Wiki.encodePath = encodePath;
-    function decodePath(pageId) {
-        return pageId.split("/").map(decodeURIComponent).join("/");
-    }
-    Wiki.decodePath = decodePath;
-    function fileFormat(name, fileExtensionTypeRegistry) {
-        var extension = fileExtension(name);
-        var answer = null;
-        if (!fileExtensionTypeRegistry) {
-            fileExtensionTypeRegistry = HawtioCore.injector.get("fileExtensionTypeRegistry");
-        }
-        angular.forEach(fileExtensionTypeRegistry, function (array, key) {
-            if (array.indexOf(extension) >= 0) {
-                answer = key;
-            }
-        });
-        return answer;
-    }
-    Wiki.fileFormat = fileFormat;
-    /**
-     * Returns the file name of the given path; stripping off any directories
-     * @method fileName
-     * @for Wiki
-     * @static
-     * @param {String} path
-     * @return {String}
-     */
-    function fileName(path) {
-        if (path) {
-            var idx = path.lastIndexOf("/");
-            if (idx > 0) {
-                return path.substring(idx + 1);
-            }
-        }
-        return path;
-    }
-    Wiki.fileName = fileName;
-    /**
-     * Returns the folder of the given path (everything but the last path name)
-     * @method fileParent
-     * @for Wiki
-     * @static
-     * @param {String} path
-     * @return {String}
-     */
-    function fileParent(path) {
-        if (path) {
-            var idx = path.lastIndexOf("/");
-            if (idx > 0) {
-                return path.substring(0, idx);
-            }
-        }
-        // lets return the root directory
-        return "";
-    }
-    Wiki.fileParent = fileParent;
-    /**
-     * Returns the file name for the given name; we hide some extensions
-     * @method hideFineNameExtensions
-     * @for Wiki
-     * @static
-     * @param {String} name
-     * @return {String}
-     */
-    function hideFileNameExtensions(name) {
-        if (name) {
-            angular.forEach(Wiki.hideExtensions, function (extension) {
-                if (name.endsWith(extension)) {
-                    name = name.substring(0, name.length - extension.length);
-                }
-            });
-        }
-        return name;
-    }
-    Wiki.hideFileNameExtensions = hideFileNameExtensions;
-    /**
-     * Returns the URL to perform a GET or POST for the given branch name and path
-     */
-    function gitRestURL(branch, path) {
-        var url = gitRelativeURL(branch, path);
-        url = Core.url('/' + url);
-        var connectionName = Core.getConnectionNameParameter();
-        if (connectionName) {
-            var connectionOptions = Core.getConnectOptions(connectionName);
-            if (connectionOptions) {
-                connectionOptions.path = url;
-                url = Core.createServerConnectionUrl(connectionOptions);
-            }
-        }
-        return url;
-    }
-    Wiki.gitRestURL = gitRestURL;
-    /**
-     * Returns a relative URL to perform a GET or POST for the given branch/path
-     */
-    function gitRelativeURL(branch, path) {
-        branch = branch || "master";
-        path = path || "/";
-        return UrlHelpers.join("git/" + branch, path);
-    }
-    Wiki.gitRelativeURL = gitRelativeURL;
-    /**
-     * Takes a row containing the entity object; or can take the entity directly.
-     *
-     * It then uses the name, directory and xmlNamespaces properties
-     *
-     * @method fileIconHtml
-     * @for Wiki
-     * @static
-     * @param {any} row
-     * @return {String}
-     *
-     */
-    function fileIconHtml(row) {
-        var name = row.name;
-        var path = row.path;
-        var branch = row.branch;
-        var directory = row.directory;
-        var xmlNamespaces = row.xmlNamespaces;
-        var iconUrl = row.iconUrl;
-        var entity = row.entity;
-        if (entity) {
-            name = name || entity.name;
-            path = path || entity.path;
-            branch = branch || entity.branch;
-            directory = directory || entity.directory;
-            xmlNamespaces = xmlNamespaces || entity.xmlNamespaces;
-            iconUrl = iconUrl || entity.iconUrl;
-        }
-        branch = branch || "master";
-        var css = null;
-        var icon = null;
-        var extension = fileExtension(name);
-        // TODO could we use different icons for markdown v xml v html
-        if (xmlNamespaces && xmlNamespaces.length) {
-            if (xmlNamespaces.any(function (ns) { return Wiki.camelNamespaces.any(ns); })) {
-                icon = "img/icons/camel.svg";
-            }
-            else if (xmlNamespaces.any(function (ns) { return Wiki.dozerNamespaces.any(ns); })) {
-                icon = "img/icons/dozer/dozer.gif";
-            }
-            else if (xmlNamespaces.any(function (ns) { return Wiki.activemqNamespaces.any(ns); })) {
-                icon = "img/icons/messagebroker.svg";
-            }
-            else {
-                Wiki.log.debug("file " + name + " has namespaces " + xmlNamespaces);
-            }
-        }
-        if (iconUrl) {
-            css = null;
-            icon = UrlHelpers.join("git", iconUrl);
-            var connectionName = Core.getConnectionNameParameter();
-            if (connectionName) {
-                var connectionOptions = Core.getConnectOptions(connectionName);
-                if (connectionOptions) {
-                    connectionOptions.path = Core.url('/' + icon);
-                    icon = Core.createServerConnectionUrl(connectionOptions);
-                }
-            }
-        }
-        if (!icon) {
-            if (directory) {
-                switch (extension) {
-                    case 'profile':
-                        css = "fa fa-book";
-                        break;
-                    default:
-                        // log.debug("No match for extension: ", extension, " using a generic folder icon");
-                        css = "fa fa-folder";
-                }
-            }
-            else {
-                switch (extension) {
-                    case 'png':
-                    case 'svg':
-                    case 'jpg':
-                    case 'gif':
-                        css = null;
-                        icon = Wiki.gitRelativeURL(branch, path);
-                        var connectionName = Core.getConnectionNameParameter();
-                        if (connectionName) {
-                            var connectionOptions = Core.getConnectOptions(connectionName);
-                            if (connectionOptions) {
-                                connectionOptions.path = Core.url('/' + icon);
-                                icon = Core.createServerConnectionUrl(connectionOptions);
-                            }
-                        }
-                        break;
-                    case 'json':
-                    case 'xml':
-                        css = "fa fa-file-text";
-                        break;
-                    case 'md':
-                        css = "fa fa-file-text-o";
-                        break;
-                    default:
-                        // log.debug("No match for extension: ", extension, " using a generic file icon");
-                        css = "fa fa-file-alt";
-                }
-            }
-        }
-        if (icon) {
-            return "<img src='" + Core.url(icon) + "'>";
-        }
-        else {
-            return "<i class='" + css + "'></i>";
-        }
-    }
-    Wiki.fileIconHtml = fileIconHtml;
-    function iconClass(row) {
-        var name = row.getProperty("name");
-        var extension = fileExtension(name);
-        var directory = row.getProperty("directory");
-        if (directory) {
-            return "fa fa-folder";
-        }
-        if ("xml" === extension) {
-            return "fa fa-cog";
-        }
-        else if ("md" === extension) {
-            return "fa fa-file-text-o";
-        }
-        // TODO could we use different icons for markdown v xml v html
-        return "fa fa-file-alt";
-    }
-    Wiki.iconClass = iconClass;
-    /**
-     * Extracts the pageId, branch, objectId from the route parameters
-     * @method initScope
-     * @for Wiki
-     * @static
-     * @param {*} $scope
-     * @param {any} $routeParams
-     * @param {ng.ILocationService} $location
-     */
-    function initScope($scope, $routeParams, $location) {
-        $scope.pageId = Wiki.pageId($routeParams, $location);
-        $scope.branch = $routeParams["branch"] || $location.search()["branch"];
-        $scope.objectId = $routeParams["objectId"];
-        $scope.startLink = Wiki.startLink($scope.branch);
-        $scope.historyLink = startLink($scope.branch) + "/history/" + ($scope.pageId || "");
-    }
-    Wiki.initScope = initScope;
-    /**
-     * Loads the branches for this wiki repository and stores them in the branches property in
-     * the $scope and ensures $scope.branch is set to a valid value
-     *
-     * @param wikiRepository
-     * @param $scope
-     * @param isFmc whether we run as fabric8 or as hawtio
-     */
-    function loadBranches(jolokia, wikiRepository, $scope, isFmc) {
-        if (isFmc === void 0) { isFmc = false; }
-        if (isFmc) {
-            // when using fabric then the branches is the fabric versions, so we should use that instead
-            $scope.branches = Fabric.getVersionIds(jolokia);
-            var defaultVersion = Fabric.getDefaultVersionId(jolokia);
-            // use current default version as default branch
-            if (!$scope.branch) {
-                $scope.branch = defaultVersion;
-            }
-            // lets sort by version number
-            $scope.branches = $scope.branches.sortBy(function (v) { return Core.versionToSortableString(v); }, true);
-            Core.$apply($scope);
-        }
-        else {
-            wikiRepository.branches(function (response) {
-                // lets sort by version number
-                $scope.branches = response.sortBy(function (v) { return Core.versionToSortableString(v); }, true);
-                // default the branch name if we have 'master'
-                if (!$scope.branch && $scope.branches.find(function (branch) {
-                    return branch === "master";
-                })) {
-                    $scope.branch = "master";
-                }
-                Core.$apply($scope);
-            });
-        }
-    }
-    Wiki.loadBranches = loadBranches;
-    /**
-     * Extracts the pageId from the route parameters
-     * @method pageId
-     * @for Wiki
-     * @static
-     * @param {any} $routeParams
-     * @param @ng.ILocationService @location
-     * @return {String}
-     */
-    function pageId($routeParams, $location) {
-        var pageId = $routeParams['page'];
-        if (!pageId) {
-            for (var i = 0; i < 100; i++) {
-                var value = $routeParams['path' + i];
-                if (angular.isDefined(value)) {
-                    if (!pageId) {
-                        pageId = value;
-                    }
-                    else {
-                        pageId += "/" + value;
-                    }
-                }
-                else
-                    break;
-            }
-            return pageId || "/";
-        }
-        // if no $routeParams variables lets figure it out from the $location
-        if (!pageId) {
-            pageId = pageIdFromURI($location.path());
-        }
-        return pageId;
-    }
-    Wiki.pageId = pageId;
-    function pageIdFromURI(url) {
-        var wikiPrefix = "/wiki/";
-        if (url && url.startsWith(wikiPrefix)) {
-            var idx = url.indexOf("/", wikiPrefix.length + 1);
-            if (idx > 0) {
-                return url.substring(idx + 1, url.length);
-            }
-        }
-        return null;
-    }
-    Wiki.pageIdFromURI = pageIdFromURI;
-    function fileExtension(name) {
-        if (name.indexOf('#') > 0)
-            name = name.substring(0, name.indexOf('#'));
-        return Core.fileExtension(name, "markdown");
-    }
-    Wiki.fileExtension = fileExtension;
-    function onComplete(status) {
-        console.log("Completed operation with status: " + JSON.stringify(status));
-    }
-    Wiki.onComplete = onComplete;
-    /**
-     * Parses the given JSON text reporting to the user if there is a parse error
-     * @method parseJson
-     * @for Wiki
-     * @static
-     * @param {String} text
-     * @return {any}
-     */
-    function parseJson(text) {
-        if (text) {
-            try {
-                return JSON.parse(text);
-            }
-            catch (e) {
-                Core.notification("error", "Failed to parse JSON: " + e);
-            }
-        }
-        return null;
-    }
-    Wiki.parseJson = parseJson;
-    /**
-     * Adjusts a relative or absolute link from a wiki or file system to one using the hash bang syntax
-     * @method adjustHref
-     * @for Wiki
-     * @static
-     * @param {*} $scope
-     * @param {ng.ILocationService} $location
-     * @param {String} href
-     * @param {String} fileExtension
-     * @return {string}
-     */
-    function adjustHref($scope, $location, href, fileExtension) {
-        var extension = fileExtension ? "." + fileExtension : "";
-        // if the last part of the path has a dot in it lets
-        // exclude it as we are relative to a markdown or html file in a folder
-        // such as when viewing readme.md or index.md
-        var path = $location.path();
-        var folderPath = path;
-        var idx = path.lastIndexOf("/");
-        if (idx > 0) {
-            var lastName = path.substring(idx + 1);
-            if (lastName.indexOf(".") >= 0) {
-                folderPath = path.substring(0, idx);
-            }
-        }
-        // Deal with relative URLs first...
-        if (href.startsWith('../')) {
-            var parts = href.split('/');
-            var pathParts = folderPath.split('/');
-            var parents = parts.filter(function (part) {
-                return part === "..";
-            });
-            parts = parts.last(parts.length - parents.length);
-            pathParts = pathParts.first(pathParts.length - parents.length);
-            return '#' + pathParts.join('/') + '/' + parts.join('/') + extension + $location.hash();
-        }
-        // Turn an absolute link into a wiki link...
-        if (href.startsWith('/')) {
-            return Wiki.branchLink($scope.branch, href + extension, $location) + extension;
-        }
-        if (!Wiki.excludeAdjustmentPrefixes.any(function (exclude) {
-            return href.startsWith(exclude);
-        })) {
-            return '#' + folderPath + "/" + href + extension + $location.hash();
-        }
-        else {
-            return null;
-        }
-    }
-    Wiki.adjustHref = adjustHref;
-})(Wiki || (Wiki = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="../../wiki/ts/wikiHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.BrokerDiagramController", ["$scope", "$compile", "$location", "localStorage", "jolokia", "workspace", function ($scope, $compile, $location, localStorage, jolokia, workspace) {
-        Fabric.initScope($scope, $location, jolokia, workspace);
-        var isFmc = Wiki.isFMCContainer(workspace);
-        $scope.isFmc = isFmc;
-        $scope.selectedNode = null;
-        var defaultFlags = {
-            panel: true,
-            popup: false,
-            label: true,
-            group: false,
-            profile: false,
-            slave: false,
-            broker: isFmc,
-            network: true,
-            container: false,
-            queue: true,
-            topic: true,
-            consumer: true,
-            producer: true
-        };
-        $scope.viewSettings = {};
-        $scope.shapeSize = {
-            broker: 20,
-            queue: 14,
-            topic: 14
-        };
-        var redrawGraph = Core.throttled(doRedrawGraph, 1000);
-        var graphBuilder = new ForceGraph.GraphBuilder();
-        Core.bindModelToSearchParam($scope, $location, "searchFilter", "q", "");
-        angular.forEach(defaultFlags, function (defaultValue, key) {
-            var modelName = "viewSettings." + key;
-            // bind model values to search params...
-            function currentValue() {
-                var answer = $location.search()[paramName] || defaultValue;
-                return answer === "false" ? false : answer;
-            }
-            var paramName = key;
-            var value = currentValue();
-            Core.pathSet($scope, modelName, value);
-            $scope.$watch(modelName, function () {
-                var current = Core.pathGet($scope, modelName);
-                var old = currentValue();
-                if (current !== old) {
-                    var defaultValue = defaultFlags[key];
-                    if (current !== defaultValue) {
-                        if (!current) {
-                            current = "false";
-                        }
-                        $location.search(paramName, current);
-                    }
-                    else {
-                        $location.search(paramName, null);
-                    }
-                }
-                redrawGraph();
-            });
-        });
-        $scope.connectToBroker = function () {
-            var selectedNode = $scope.selectedNode;
-            if (selectedNode) {
-                var container = selectedNode["brokerContainer"] || selectedNode;
-                connectToBroker(container, selectedNode["brokerName"]);
-            }
-        };
-        function connectToBroker(container, brokerName, postfix) {
-            if (postfix === void 0) { postfix = null; }
-            if (isFmc && container.jolokia !== jolokia) {
-                Fabric.connectToBroker($scope, container, postfix);
-            }
-            else {
-                var view = "/jmx/attributes?tab=activemq";
-                if (!postfix) {
-                    if (brokerName) {
-                        // lets default to the broker view
-                        postfix = "nid=root-org.apache.activemq-Broker-" + brokerName;
-                    }
-                }
-                if (postfix) {
-                    view += "&" + postfix;
-                }
-                ActiveMQ.log.info("Opening view " + view);
-                var path = Core.url("/#" + view);
-                window.open(path, '_destination');
-                window.focus();
-            }
-        }
-        $scope.connectToDestination = function () {
-            var selectedNode = $scope.selectedNode;
-            if (selectedNode) {
-                var container = selectedNode["brokerContainer"] || selectedNode;
-                var brokerName = selectedNode["brokerName"];
-                var destinationType = selectedNode["destinationType"] || selectedNode["typeLabel"];
-                var destinationName = selectedNode["destinationName"];
-                var postfix = null;
-                if (brokerName && destinationType && destinationName) {
-                    postfix = "nid=root-org.apache.activemq-Broker-" + brokerName + "-" + destinationType + "-" + destinationName;
-                }
-                connectToBroker(container, brokerName, postfix);
-            }
-        };
-        $scope.$on('$destroy', function (event) {
-            stopOldJolokia();
-        });
-        function stopOldJolokia() {
-            var oldJolokia = $scope.selectedNodeJolokia;
-            if (oldJolokia && oldJolokia !== jolokia) {
-                oldJolokia.stop();
-            }
-        }
-        $scope.$watch("selectedNode", function (newValue, oldValue) {
-            // lets cancel any previously registered thingy
-            if ($scope.unregisterFn) {
-                $scope.unregisterFn();
-                $scope.unregisterFn = null;
-            }
-            var node = $scope.selectedNode;
-            if (node) {
-                var mbean = node.objectName;
-                var brokerContainer = node.brokerContainer || {};
-                var nodeJolokia = node.jolokia || brokerContainer.jolokia || jolokia;
-                if (nodeJolokia !== $scope.selectedNodeJolokia) {
-                    stopOldJolokia();
-                    $scope.selectedNodeJolokia = nodeJolokia;
-                    if (nodeJolokia !== jolokia) {
-                        var rate = Core.parseIntValue(localStorage['updateRate'] || "2000", "update rate");
-                        if (rate) {
-                            nodeJolokia.start(rate);
-                        }
-                    }
-                }
-                var dummyResponse = { value: node.panelProperties || {} };
-                if (mbean && nodeJolokia) {
-                    ActiveMQ.log.debug("reading ", mbean, " on remote container");
-                    $scope.unregisterFn = Core.register(nodeJolokia, $scope, {
-                        type: 'read',
-                        mbean: mbean
-                    }, Core.onSuccess(renderNodeAttributes, {
-                        error: function (response) {
-                            // probably we've got a wrong mbean name?
-                            // so lets render at least
-                            renderNodeAttributes(dummyResponse);
-                            Core.defaultJolokiaErrorHandler(response);
-                        }
-                    }));
-                }
-                else {
-                    ActiveMQ.log.debug("no mbean or jolokia available, using dummy response");
-                    renderNodeAttributes(dummyResponse);
-                }
-            }
-        });
-        function getDestinationTypeName(attributes) {
-            var prefix = attributes["DestinationTemporary"] ? "Temporary " : "";
-            return prefix + (attributes["DestinationTopic"] ? "Topic" : "Queue");
-        }
-        var ignoreNodeAttributes = ["Broker", "BrokerId", "BrokerName", "Connection", "DestinationName", "DestinationQueue", "DestinationTemporary", "DestinationTopic",];
-        var ignoreNodeAttributesByType = {
-            producer: ["Producer", "ProducerId"],
-            queue: ["Name", "MessageGroups", "MessageGroupType", "Subscriptions"],
-            topic: ["Name", "Subscriptions"],
-            broker: ["DataDirectory", "DurableTopicSubscriptions", "DynamicDestinationProducers", "InactiveDurableToppicSubscribers"]
-        };
-        var brokerShowProperties = ["AverageMessageSize", "BrokerId", "JobSchedulerStorePercentUsage", "Slave", "MemoryPercentUsage", "StorePercentUsage", "TempPercentUsage"];
-        var onlyShowAttributesByType = {
-            broker: brokerShowProperties,
-            brokerSlave: brokerShowProperties
-        };
-        function renderNodeAttributes(response) {
-            var properties = [];
-            if (response) {
-                var value = response.value || {};
-                $scope.selectedNodeAttributes = value;
-                var selectedNode = $scope.selectedNode || {};
-                var brokerContainer = selectedNode['brokerContainer'] || {};
-                var nodeType = selectedNode["type"];
-                var brokerName = selectedNode["brokerName"];
-                var containerId = selectedNode["container"] || brokerContainer["container"];
-                var group = selectedNode["group"] || brokerContainer["group"];
-                var jolokiaUrl = selectedNode["jolokiaUrl"] || brokerContainer["jolokiaUrl"];
-                var profile = selectedNode["profile"] || brokerContainer["profile"];
-                var version = selectedNode["version"] || brokerContainer["version"];
-                var isBroker = nodeType && nodeType.startsWith("broker");
-                var ignoreKeys = ignoreNodeAttributes.concat(ignoreNodeAttributesByType[nodeType] || []);
-                var onlyShowKeys = onlyShowAttributesByType[nodeType];
-                angular.forEach(value, function (v, k) {
-                    if (onlyShowKeys ? onlyShowKeys.indexOf(k) >= 0 : ignoreKeys.indexOf(k) < 0) {
-                        var formattedValue = Core.humanizeValueHtml(v);
-                        properties.push({ key: Core.humanizeValue(k), value: formattedValue });
-                    }
-                });
-                properties = properties.sortBy("key");
-                var brokerProperty = null;
-                if (brokerName) {
-                    var brokerHtml = '<a target="broker" ng-click="connectToBroker()">' + '<img title="Apache ActiveMQ" src="img/icons/messagebroker.svg"> ' + brokerName + '</a>';
-                    if (version && profile) {
-                        var brokerLink = Fabric.brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName);
-                        if (brokerLink) {
-                            brokerHtml += ' <a title="configuration settings" target="brokerConfig" href="' + brokerLink + '"><i class="fa fa-tasks"></i></a>';
-                        }
-                    }
-                    var html = $compile(brokerHtml)($scope);
-                    brokerProperty = { key: "Broker", value: html };
-                    if (!isBroker) {
-                        properties.splice(0, 0, brokerProperty);
-                    }
-                }
-                if (containerId) {
-                    //var containerModel = "selectedNode" + (selectedNode['brokerContainer'] ? ".brokerContainer" : "");
-                    properties.splice(0, 0, { key: "Container", value: $compile('<div fabric-container-link="' + selectedNode['container'] + '"></div>')($scope) });
-                }
-                var destinationName = value["DestinationName"] || selectedNode["destinationName"];
-                if (destinationName && (nodeType !== "queue" && nodeType !== "topic")) {
-                    var destinationTypeName = getDestinationTypeName(value);
-                    var html = createDestinationLink(destinationName, destinationTypeName);
-                    properties.splice(0, 0, { key: destinationTypeName, value: html });
-                }
-                var typeLabel = selectedNode["typeLabel"];
-                var name = selectedNode["name"] || selectedNode["id"] || selectedNode['objectName'];
-                if (typeLabel) {
-                    var html = name;
-                    if (nodeType === "queue" || nodeType === "topic") {
-                        html = createDestinationLink(name, nodeType);
-                    }
-                    var typeProperty = { key: typeLabel, value: html };
-                    if (isBroker && brokerProperty) {
-                        typeProperty = brokerProperty;
-                    }
-                    properties.splice(0, 0, typeProperty);
-                }
-            }
-            $scope.selectedNodeProperties = properties;
-            Core.$apply($scope);
-        }
-        /**
-         * Generates the HTML for a link to the destination
-         */
-        function createDestinationLink(destinationName, destinationType) {
-            if (destinationType === void 0) { destinationType = "queue"; }
-            return $compile('<a target="destination" title="' + destinationName + '" ng-click="connectToDestination()">' + destinationName + '</a>')($scope);
-        }
-        $scope.$watch("searchFilter", function (newValue, oldValue) {
-            redrawGraph();
-        });
-        if (isFmc) {
-            Fabric.loadBrokerStatus(onBrokerData);
-        }
-        else {
-            // lets just use the current stuff from the workspace
-            $scope.$watch('workspace.tree', function () {
-                redrawGraph();
-            });
-            $scope.$on('jmxTreeUpdated', function () {
-                redrawGraph();
-            });
-        }
-        function onBrokerData(response) {
-            if (response) {
-                var responseJson = angular.toJson(response.value);
-                if ($scope.responseJson === responseJson) {
-                    return;
-                }
-                $scope.responseJson = responseJson;
-                $scope.brokers = response.value;
-                doRedrawGraph();
-            }
-        }
-        function redrawFabricBrokers() {
-            var containersToDelete = $scope.activeContainers || {};
-            $scope.activeContainers = {};
-            angular.forEach($scope.brokers, function (brokerStatus) {
-                // only query master brokers which are provisioned correctly
-                brokerStatus.validContainer = brokerStatus.alive && brokerStatus.master && brokerStatus.provisionStatus === "success";
-                // don't use type field so we can use it for the node types..
-                renameTypeProperty(brokerStatus);
-                //log.info("Broker status: " + angular.toJson(brokerStatus, true));
-                var groupId = brokerStatus.group;
-                var profileId = brokerStatus.profile;
-                var brokerId = brokerStatus.brokerName;
-                var containerId = brokerStatus.container;
-                var versionId = brokerStatus.version || "1.0";
-                var group = getOrAddNode("group", groupId, brokerStatus, function () {
-                    return {
-                        /*
-                         navUrl: ,
-                         image: {
-                         url: "/hawtio/img/icons/osgi/bundle.png",
-                         width: 32,
-                         height:32
-                         },
-                         */
-                        typeLabel: "Broker Group",
-                        popup: {
-                            title: "Broker Group: " + groupId,
-                            content: "<p>" + groupId + "</p>"
-                        }
-                    };
-                });
-                var profile = getOrAddNode("profile", profileId, brokerStatus, function () {
-                    return {
-                        typeLabel: "Profile",
-                        popup: {
-                            title: "Profile: " + profileId,
-                            content: "<p>" + profileId + "</p>"
-                        }
-                    };
-                });
-                // TODO do we need to create a physical broker node per container and logical broker maybe?
-                var container = null;
-                if (containerId) {
-                    container = getOrAddNode("container", containerId, brokerStatus, function () {
-                        return {
-                            containerId: containerId,
-                            typeLabel: "Container",
-                            popup: {
-                                title: "Container: " + containerId,
-                                content: "<p>" + containerId + " version: " + versionId + "</p>"
-                            }
-                        };
-                    });
-                }
-                var master = brokerStatus.master;
-                var broker = getOrAddBroker(master, brokerId, groupId, containerId, container, brokerStatus);
-                if (container && container.validContainer) {
-                    var key = container.containerId;
-                    $scope.activeContainers[key] = container;
-                    delete containersToDelete[key];
-                }
-                // add the links...
-                if ($scope.viewSettings.group) {
-                    if ($scope.viewSettings.profile) {
-                        addLink(group, profile, "group");
-                        addLink(profile, broker, "broker");
-                    }
-                    else {
-                        addLink(group, broker, "group");
-                    }
-                }
-                else {
-                    if ($scope.viewSettings.profile) {
-                        addLink(profile, broker, "broker");
-                    }
-                }
-                if (container) {
-                    if ((master || $scope.viewSettings.slave) && $scope.viewSettings.container) {
-                        addLink(broker, container, "container");
-                        container.destinationLinkNode = container;
-                    }
-                    else {
-                        container.destinationLinkNode = broker;
-                    }
-                }
-            });
-            redrawActiveContainers();
-        }
-        function redrawLocalBroker() {
-            var container = {
-                jolokia: jolokia
-            };
-            var containerId = "local";
-            $scope.activeContainers = {
-                containerId: container
-            };
-            if ($scope.viewSettings.broker) {
-                jolokia.search("org.apache.activemq:type=Broker,brokerName=*", Core.onSuccess(function (response) {
-                    angular.forEach(response, function (objectName) {
-                        var details = Core.parseMBean(objectName);
-                        if (details) {
-                            var properties = details['attributes'];
-                            ActiveMQ.log.info("Got broker: " + objectName + " on container: " + containerId + " properties: " + angular.toJson(properties, true));
-                            if (properties) {
-                                var master = true;
-                                var brokerId = properties["brokerName"] || "unknown";
-                                var groupId = "";
-                                var broker = getOrAddBroker(master, brokerId, groupId, containerId, container, properties);
-                            }
-                        }
-                    });
-                    redrawActiveContainers();
-                }));
-            }
-            else {
-                redrawActiveContainers();
-            }
-        }
-        function redrawActiveContainers() {
-            // TODO delete any nodes from dead containers in containersToDelete
-            angular.forEach($scope.activeContainers, function (container, id) {
-                var containerJolokia = container.jolokia;
-                if (containerJolokia) {
-                    onContainerJolokia(containerJolokia, container, id);
-                }
-                else {
-                    Fabric.containerJolokia(jolokia, id, function (containerJolokia) { return onContainerJolokia(containerJolokia, container, id); });
-                }
-            });
-            $scope.graph = graphBuilder.buildGraph();
-            Core.$apply($scope);
-        }
-        function doRedrawGraph() {
-            graphBuilder = new ForceGraph.GraphBuilder();
-            if (isFmc) {
-                redrawFabricBrokers();
-            }
-            else {
-                redrawLocalBroker();
-            }
-        }
-        function brokerNameMarkup(brokerName) {
-            return brokerName ? "<p></p>broker: " + brokerName + "</p>" : "";
-        }
-        function matchesDestinationName(destinationName, typeName) {
-            if (destinationName) {
-                var selection = workspace.selection;
-                if (selection && selection.domain === ActiveMQ.jmxDomain) {
-                    var type = selection.entries["destinationType"];
-                    if (type) {
-                        if ((type === "Queue" && typeName === "topic") || (type === "Topic" && typeName === "queue")) {
-                            return false;
-                        }
-                    }
-                    var destName = selection.entries["destinationName"];
-                    if (destName) {
-                        if (destName !== destinationName)
-                            return false;
-                    }
-                }
-                ActiveMQ.log.info("selection: " + selection);
-                // TODO if the current selection is a destination...
-                return !$scope.searchFilter || destinationName.indexOf($scope.searchFilter) >= 0;
-            }
-            return false;
-        }
-        function onContainerJolokia(containerJolokia, container, id) {
-            if (containerJolokia) {
-                container.jolokia = containerJolokia;
-                function getOrAddDestination(properties) {
-                    var typeName = properties.destType;
-                    var brokerName = properties.brokerName;
-                    var destinationName = properties.destinationName;
-                    if (!matchesDestinationName(destinationName, typeName)) {
-                        return null;
-                    }
-                    // should we be filtering this destination out
-                    var hideFlag = "topic" === typeName ? $scope.viewSettings.topic : $scope.viewSettings.queue;
-                    if (!hideFlag) {
-                        return null;
-                    }
-                    var destination = getOrAddNode(typeName, destinationName, properties, function () {
-                        var destinationTypeName = properties.destinationType || "Queue";
-                        var objectName = "";
-                        if (brokerName) {
-                            // lets ignore temp topic stuff as there's no mbean for these
-                            if (!destinationName.startsWith("ActiveMQ.Advisory.TempQueue_ActiveMQ.Advisory.TempTopic")) {
-                                objectName = "org.apache.activemq:type=Broker,brokerName=" + brokerName + ",destinationType=" + destinationTypeName + ",destinationName=" + destinationName;
-                            }
-                        }
-                        var answer = {
-                            typeLabel: destinationTypeName,
-                            brokerContainer: container,
-                            objectName: objectName,
-                            jolokia: containerJolokia,
-                            popup: {
-                                title: destinationTypeName + ": " + destinationName,
-                                content: brokerNameMarkup(properties.brokerName)
-                            }
-                        };
-                        if (!brokerName) {
-                            containerJolokia.search("org.apache.activemq:destinationType=" + destinationTypeName + ",destinationName=" + destinationName + ",*", Core.onSuccess(function (response) {
-                                ActiveMQ.log.info("Found destination mbean: " + response);
-                                if (response && response.length) {
-                                    answer.objectName = response[0];
-                                }
-                            }));
-                        }
-                        return answer;
-                    });
-                    if (destination && $scope.viewSettings.broker && brokerName) {
-                        addLinkIds(brokerNodeId(brokerName), destination["id"], "destination");
-                    }
-                    return destination;
-                }
-                // find networks
-                var brokerId = container.brokerName;
-                if (brokerId && $scope.viewSettings.network && $scope.viewSettings.broker) {
-                    containerJolokia.request({ type: "read", mbean: "org.apache.activemq:connector=networkConnectors,*" }, Core.onSuccess(function (response) {
-                        angular.forEach(response.value, function (properties, objectName) {
-                            var details = Core.parseMBean(objectName);
-                            var attributes = details['attributes'];
-                            if (properties) {
-                                configureDestinationProperties(properties);
-                                var remoteBrokerId = properties.RemoteBrokerName;
-                                if (remoteBrokerId) {
-                                    addLinkIds(brokerNodeId(brokerId), brokerNodeId(remoteBrokerId), "network");
-                                }
-                            }
-                        });
-                        graphModelUpdated();
-                    }));
-                }
-                // find consumers
-                if ($scope.viewSettings.consumer) {
-                    containerJolokia.search("org.apache.activemq:endpoint=Consumer,*", Core.onSuccess(function (response) {
-                        angular.forEach(response, function (objectName) {
-                            //log.info("Got consumer: " + objectName + " on container: " + id);
-                            var details = Core.parseMBean(objectName);
-                            if (details) {
-                                var properties = details['attributes'];
-                                if (properties) {
-                                    configureDestinationProperties(properties);
-                                    var consumerId = properties.consumerId;
-                                    if (consumerId) {
-                                        var destination = getOrAddDestination(properties);
-                                        if (destination) {
-                                            addLink(container.destinationLinkNode, destination, "destination");
-                                            var consumer = getOrAddNode("consumer", consumerId, properties, function () {
-                                                return {
-                                                    typeLabel: "Consumer",
-                                                    brokerContainer: container,
-                                                    objectName: objectName,
-                                                    jolokia: containerJolokia,
-                                                    popup: {
-                                                        title: "Consumer: " + consumerId,
-                                                        content: "<p>client: " + (properties.clientId || "") + "</p> " + brokerNameMarkup(properties.brokerName)
-                                                    }
-                                                };
-                                            });
-                                            addLink(destination, consumer, "consumer");
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                        graphModelUpdated();
-                    }));
-                }
-                // find producers
-                if ($scope.viewSettings.producer) {
-                    containerJolokia.search("org.apache.activemq:endpoint=Producer,*", Core.onSuccess(function (response) {
-                        angular.forEach(response, function (objectName) {
-                            var details = Core.parseMBean(objectName);
-                            if (details) {
-                                var properties = details['attributes'];
-                                if (properties) {
-                                    configureDestinationProperties(properties);
-                                    var producerId = properties.producerId;
-                                    if (producerId) {
-                                        var destination = getOrAddDestination(properties);
-                                        if (destination) {
-                                            addLink(container.destinationLinkNode, destination, "destination");
-                                            var producer = getOrAddNode("producer", producerId, properties, function () {
-                                                return {
-                                                    typeLabel: "Producer",
-                                                    brokerContainer: container,
-                                                    objectName: objectName,
-                                                    jolokia: containerJolokia,
-                                                    popup: {
-                                                        title: "Producer: " + producerId,
-                                                        content: "<p>client: " + (properties.clientId || "") + "</p> " + brokerNameMarkup(properties.brokerName)
-                                                    }
-                                                };
-                                            });
-                                            addLink(producer, destination, "producer");
-                                        }
-                                        graphModelUpdated();
-                                    }
-                                }
-                            }
-                        });
-                        graphModelUpdated();
-                    }));
-                }
-                // find dynamic producers
-                if ($scope.viewSettings.producer) {
-                    containerJolokia.request({ type: "read", mbean: "org.apache.activemq:endpoint=dynamicProducer,*" }, Core.onSuccess(function (response) {
-                        angular.forEach(response.value, function (mbeanValues, objectName) {
-                            var details = Core.parseMBean(objectName);
-                            var attributes = details['attributes'];
-                            var properties = {};
-                            angular.forEach(attributes, function (value, key) {
-                                properties[key] = value;
-                            });
-                            angular.forEach(mbeanValues, function (value, key) {
-                                properties[key] = value;
-                            });
-                            configureDestinationProperties(properties);
-                            properties['destinationName'] = properties['DestinationName'];
-                            var producerId = properties["producerId"] || properties["ProducerId"];
-                            if (properties["DestinationTemporary"] || properties["DestinationTopc"]) {
-                                properties["destType"] = "topic";
-                            }
-                            var destination = getOrAddDestination(properties);
-                            if (producerId && destination) {
-                                addLink(container.destinationLinkNode, destination, "destination");
-                                var producer = getOrAddNode("producer", producerId, properties, function () {
-                                    return {
-                                        typeLabel: "Producer (Dynamic)",
-                                        brokerContainer: container,
-                                        objectName: objectName,
-                                        jolokia: containerJolokia,
-                                        popup: {
-                                            title: "Producer (Dynamic): " + producerId,
-                                            content: "<p>client: " + (properties['ClientId'] || "") + "</p> " + brokerNameMarkup(properties['brokerName'])
-                                        }
-                                    };
-                                });
-                                addLink(producer, destination, "producer");
-                            }
-                        });
-                        graphModelUpdated();
-                    }));
-                }
-            }
-        }
-        function graphModelUpdated() {
-            $scope.graph = graphBuilder.buildGraph();
-            Core.$apply($scope);
-        }
-        function getOrAddBroker(master, brokerId, groupId, containerId, container, brokerStatus) {
-            var broker = null;
-            var brokerFlag = master ? $scope.viewSettings.broker : $scope.viewSettings.slave;
-            if (brokerFlag) {
-                broker = getOrAddNode("broker", brokerId + (master ? "" : ":slave"), brokerStatus, function () {
-                    return {
-                        type: master ? "broker" : "brokerSlave",
-                        typeLabel: master ? "Broker" : "Slave Broker",
-                        popup: {
-                            title: (master ? "Master" : "Slave") + " Broker: " + brokerId,
-                            content: "<p>Container: " + containerId + "</p> <p>Group: " + groupId + "</p>"
-                        }
-                    };
-                });
-                if (master) {
-                    if (!broker['objectName']) {
-                        // lets try guess the mbean name
-                        broker['objectName'] = "org.apache.activemq:type=Broker,brokerName=" + brokerId;
-                        ActiveMQ.log.info("Guessed broker mbean: " + broker['objectName']);
-                    }
-                    if (!broker['brokerContainer'] && container) {
-                        broker['brokerContainer'] = container;
-                    }
-                }
-            }
-            return broker;
-        }
-        function getOrAddNode(typeName, id, properties, createFn) {
-            var node = null;
-            if (id) {
-                var nodeId = typeName + ":" + id;
-                node = graphBuilder.getNode(nodeId);
-                if (!node) {
-                    var nodeValues = createFn();
-                    node = angular.copy(properties);
-                    angular.forEach(nodeValues, function (value, key) { return node[key] = value; });
-                    node['id'] = nodeId;
-                    if (!node['type']) {
-                        node['type'] = typeName;
-                    }
-                    if (!node['name']) {
-                        node['name'] = id;
-                    }
-                    if (node) {
-                        var size = $scope.shapeSize[typeName];
-                        if (size && !node['size']) {
-                            node['size'] = size;
-                        }
-                        if (!node['summary']) {
-                            node['summary'] = node['popup'] || "";
-                        }
-                        if (!$scope.viewSettings.popup) {
-                            delete node['popup'];
-                        }
-                        if (!$scope.viewSettings.label) {
-                            delete node['name'];
-                        }
-                        // lets not add nodes which are defined as being disabled
-                        var enabled = $scope.viewSettings[typeName];
-                        if (enabled || !angular.isDefined(enabled)) {
-                            //log.info("Adding node " + nodeId + " of type + " + typeName);
-                            graphBuilder.addNode(node);
-                        }
-                        else {
-                        }
-                    }
-                }
-            }
-            return node;
-        }
-        function addLink(object1, object2, linkType) {
-            if (object1 && object2) {
-                addLinkIds(object1.id, object2.id, linkType);
-            }
-        }
-        function addLinkIds(id1, id2, linkType) {
-            if (id1 && id2) {
-                graphBuilder.addLink(id1, id2, linkType);
-            }
-        }
-        function brokerNodeId(brokerId) {
-            return brokerId ? "broker:" + brokerId : null;
-        }
-        /**
-           * Avoid the JMX type property clashing with the ForceGraph type property; used for associating css classes with nodes on the graph
-           *
-           * @param properties
-           */
-        function renameTypeProperty(properties) {
-            properties.mbeanType = properties['type'];
-            delete properties['type'];
-        }
-        function configureDestinationProperties(properties) {
-            renameTypeProperty(properties);
-            var destinationType = properties.destinationType || "Queue";
-            var typeName = destinationType.toLowerCase();
-            properties.isQueue = !typeName.startsWith("t");
-            properties['destType'] = typeName;
-        }
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ.BrowseQueueController = ActiveMQ._module.controller("ActiveMQ.BrowseQueueController", ["$scope", "workspace", "jolokia", "localStorage", '$location', "activeMQMessage", "$timeout", function ($scope, workspace, jolokia, localStorage, location, activeMQMessage, $timeout) {
-        $scope.searchText = '';
-        $scope.allMessages = [];
-        $scope.messages = [];
-        $scope.headers = {};
-        $scope.mode = 'text';
-        $scope.deleteDialog = false;
-        $scope.moveDialog = false;
-        $scope.gridOptions = {
-            selectedItems: [],
-            data: 'messages',
-            displayFooter: false,
-            showFilter: false,
-            showColumnMenu: true,
-            enableColumnResize: true,
-            enableColumnReordering: true,
-            enableHighlighting: true,
-            filterOptions: {
-                filterText: '',
-                useExternalFilter: true
-            },
-            selectWithCheckboxOnly: true,
-            showSelectionCheckbox: true,
-            maintainColumnRatios: false,
-            columnDefs: [
-                {
-                    field: 'JMSMessageID',
-                    displayName: 'Message ID',
-                    cellTemplate: '<div class="ngCellText"><a ng-click="openMessageDialog(row)">{{row.entity.JMSMessageID}}</a></div>',
-                    // for ng-grid
-                    width: '34%'
-                },
-                {
-                    field: 'JMSType',
-                    displayName: 'Type',
-                    width: '10%'
-                },
-                {
-                    field: 'JMSPriority',
-                    displayName: 'Priority',
-                    width: '7%'
-                },
-                {
-                    field: 'JMSTimestamp',
-                    displayName: 'Timestamp',
-                    width: '19%'
-                },
-                {
-                    field: 'JMSExpiration',
-                    displayName: 'Expires',
-                    width: '10%'
-                },
-                {
-                    field: 'JMSReplyTo',
-                    displayName: 'Reply To',
-                    width: '10%'
-                },
-                {
-                    field: 'JMSCorrelationID',
-                    displayName: 'Correlation ID',
-                    width: '10%'
-                }
-            ]
-        };
-        $scope.showMessageDetails = false;
-        var ignoreColumns = ["PropertiesText", "BodyPreview", "Text"];
-        var flattenColumns = ["BooleanProperties", "ByteProperties", "ShortProperties", "IntProperties", "LongProperties", "FloatProperties", "DoubleProperties", "StringProperties"];
-        $scope.$watch('workspace.selection', function () {
-            if (workspace.moveIfViewInvalid()) {
-                return;
-            }
-            // lets defer execution as we may not have the selection just yet
-            setTimeout(loadTable, 50);
-        });
-        $scope.$watch('gridOptions.filterOptions.filterText', function (filterText) {
-            filterMessages(filterText);
-        });
-        $scope.openMessageDialog = function (message) {
-            ActiveMQ.selectCurrentMessage(message, "JMSMessageID", $scope);
-            if ($scope.row) {
-                $scope.mode = CodeEditor.detectTextFormat($scope.row.Text);
-                $scope.showMessageDetails = true;
-            }
-        };
-        $scope.refresh = loadTable;
-        ActiveMQ.decorate($scope);
-        $scope.moveMessages = function () {
-            var selection = workspace.selection;
-            var mbean = selection.objectName;
-            if (mbean && selection) {
-                var selectedItems = $scope.gridOptions.selectedItems;
-                $scope.message = "Moved " + Core.maybePlural(selectedItems.length, "message" + " to " + $scope.queueName);
-                var operation = "moveMessageTo(java.lang.String, java.lang.String)";
-                angular.forEach(selectedItems, function (item, idx) {
-                    var id = item.JMSMessageID;
-                    if (id) {
-                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : moveSuccess;
-                        jolokia.execute(mbean, operation, id, $scope.queueName, Core.onSuccess(callback));
-                    }
-                });
-            }
-        };
-        $scope.resendMessage = function () {
-            var selection = workspace.selection;
-            var mbean = selection.objectName;
-            if (mbean && selection) {
-                var selectedItems = $scope.gridOptions.selectedItems;
-                //always assume a single message
-                activeMQMessage.message = selectedItems[0];
-                location.path('activemq/sendMessage');
-            }
-        };
-        $scope.deleteMessages = function () {
-            var selection = workspace.selection;
-            var mbean = selection.objectName;
-            if (mbean && selection) {
-                var selectedItems = $scope.gridOptions.selectedItems;
-                $scope.message = "Deleted " + Core.maybePlural(selectedItems.length, "message");
-                var operation = "removeMessage(java.lang.String)";
-                angular.forEach(selectedItems, function (item, idx) {
-                    var id = item.JMSMessageID;
-                    if (id) {
-                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
-                        jolokia.execute(mbean, operation, id, Core.onSuccess(callback));
-                    }
-                });
-            }
-        };
-        $scope.retryMessages = function () {
-            var selection = workspace.selection;
-            var mbean = selection.objectName;
-            if (mbean && selection) {
-                var selectedItems = $scope.gridOptions.selectedItems;
-                $scope.message = "Retry " + Core.maybePlural(selectedItems.length, "message");
-                var operation = "retryMessage(java.lang.String)";
-                angular.forEach(selectedItems, function (item, idx) {
-                    var id = item.JMSMessageID;
-                    if (id) {
-                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
-                        jolokia.execute(mbean, operation, id, Core.onSuccess(callback));
-                    }
-                });
-            }
-        };
-        $scope.queueNames = function (completionText) {
-            var queuesFolder = ActiveMQ.getSelectionQueuesFolder(workspace);
-            return (queuesFolder) ? queuesFolder.children.map(function (n) { return n.title; }) : [];
-        };
-        function populateTable(response) {
-            var data = response.value;
-            if (!angular.isArray(data)) {
-                $scope.allMessages = [];
-                angular.forEach(data, function (value, idx) {
-                    $scope.allMessages.push(value);
-                });
-            }
-            else {
-                $scope.allMessages = data;
-            }
-            angular.forEach($scope.allMessages, function (message) {
-                message.headerHtml = createHeaderHtml(message);
-                message.bodyText = createBodyText(message);
-            });
-            Core.$apply($scope);
-            filterMessages($scope.gridOptions.filterOptions.filterText);
-        }
-        /*
-         * For some reason using ng-repeat in the modal dialog doesn't work so lets
-         * just create the HTML in code :)
-         */
-        function createBodyText(message) {
-            if (message.Text) {
-                var body = message.Text;
-                var lenTxt = "" + body.length;
-                message.textMode = "text (" + lenTxt + " chars)";
-                return body;
-            }
-            else if (message.BodyPreview) {
-                var code = Core.parseIntValue(localStorage["activemqBrowseBytesMessages"] || "1", "browse bytes messages");
-                var body;
-                message.textMode = "bytes (turned off)";
-                if (code != 99) {
-                    var bytesArr = [];
-                    var textArr = [];
-                    message.BodyPreview.forEach(function (b) {
-                        if (code === 1 || code === 2) {
-                            // text
-                            textArr.push(String.fromCharCode(b));
-                        }
-                        if (code === 1 || code === 4) {
-                            // hex and must be 2 digit so they space out evenly
-                            var s = b.toString(16);
-                            if (s.length === 1) {
-                                s = "0" + s;
-                            }
-                            bytesArr.push(s);
-                        }
-                        else {
-                            // just show as is without spacing out, as that is usually more used for hex than decimal
-                            var s = b.toString(10);
-                            bytesArr.push(s);
-                        }
-                    });
-                    var bytesData = bytesArr.join(" ");
-                    var textData = textArr.join("");
-                    if (code === 1 || code === 2) {
-                        // bytes and text
-                        var len = message.BodyPreview.length;
-                        var lenTxt = "" + textArr.length;
-                        body = "bytes:\n" + bytesData + "\n\ntext:\n" + textData;
-                        message.textMode = "bytes (" + len + " bytes) and text (" + lenTxt + " chars)";
-                    }
-                    else {
-                        // bytes only
-                        var len = message.BodyPreview.length;
-                        body = bytesData;
-                        message.textMode = "bytes (" + len + " bytes)";
-                    }
-                }
-                return body;
-            }
-            else {
-                message.textMode = "unsupported";
-                return "Unsupported message body type which cannot be displayed by hawtio";
-            }
-        }
-        /*
-         * For some reason using ng-repeat in the modal dialog doesn't work so lets
-         * just create the HTML in code :)
-         */
-        function createHeaderHtml(message) {
-            var headers = createHeaders(message);
-            var properties = createProperties(message);
-            var headerKeys = _.keys(headers);
-            function sort(a, b) {
-                if (a > b)
-                    return 1;
-                if (a < b)
-                    return -1;
-                return 0;
-            }
-            var propertiesKeys = _.keys(properties).sort(sort);
-            var jmsHeaders = headerKeys.filter(function (key) {
-                return key.startsWith("JMS");
-            }).sort(sort);
-            var remaining = headerKeys.subtract(jmsHeaders.concat(propertiesKeys)).sort(sort);
-            var buffer = [];
-            function appendHeader(key) {
-                var value = headers[key];
-                if (value === null) {
-                    value = '';
-                }
-                buffer.push('<tr><td class="propertyName"><span class="green">Header</span> - ' + key + '</td><td class="property-value">' + value + '</td></tr>');
-            }
-            function appendProperty(key) {
-                var value = properties[key];
-                if (value === null) {
-                    value = '';
-                }
-                buffer.push('<tr><td class="propertyName">' + key + '</td><td class="property-value">' + value + '</td></tr>');
-            }
-            jmsHeaders.forEach(appendHeader);
-            remaining.forEach(appendHeader);
-            propertiesKeys.forEach(appendProperty);
-            return buffer.join("\n");
-        }
-        function createHeaders(row) {
-            ActiveMQ.log.debug("headers: ", row);
-            var answer = {};
-            angular.forEach(row, function (value, key) {
-                if (!ignoreColumns.any(key) && !flattenColumns.any(key)) {
-                    answer[Core.escapeHtml(key)] = Core.escapeHtml(value);
-                }
-            });
-            return answer;
-        }
-        function createProperties(row) {
-            ActiveMQ.log.debug("properties: ", row);
-            var answer = {};
-            angular.forEach(row, function (value, key) {
-                if (!ignoreColumns.any(key) && flattenColumns.any(key)) {
-                    angular.forEach(value, function (v2, k2) {
-                        answer['<span class="green">' + key.replace('Properties', ' Property') + '</span> - ' + Core.escapeHtml(k2)] = Core.escapeHtml(v2);
-                    });
-                }
-            });
-            return answer;
-        }
-        function loadTable() {
-            var objName;
-            if (workspace.selection) {
-                objName = workspace.selection.objectName;
-            }
-            else {
-                // in case of refresh
-                var key = location.search()['nid'];
-                var node = workspace.keyToNodeMap[key];
-                objName = node.objectName;
-            }
-            if (objName) {
-                $scope.dlq = false;
-                jolokia.getAttribute(objName, "DLQ", Core.onSuccess(onDlq, { silent: true }));
-                jolokia.request({ type: 'exec', mbean: objName, operation: 'browse()' }, Core.onSuccess(populateTable));
-            }
-        }
-        function onDlq(response) {
-            $scope.dlq = response;
-            Core.$apply($scope);
-        }
-        function intermediateResult() {
-        }
-        function operationSuccess() {
-            $scope.messageDialog = false;
-            $scope.gridOptions.selectedItems.splice(0);
-            Core.notification("success", $scope.message);
-            setTimeout(loadTable, 50);
-        }
-        function moveSuccess() {
-            operationSuccess();
-            workspace.loadTree();
-        }
-        function filterMessages(filter) {
-            var searchConditions = buildSearchConditions(filter);
-            evalFilter(searchConditions);
-        }
-        function evalFilter(searchConditions) {
-            if (!searchConditions || searchConditions.length === 0) {
-                $scope.messages = $scope.allMessages;
-            }
-            else {
-                ActiveMQ.log.debug("Filtering conditions:", searchConditions);
-                $scope.messages = $scope.allMessages.filter(function (message) {
-                    ActiveMQ.log.debug("Message:", message);
-                    var matched = true;
-                    $.each(searchConditions, function (index, condition) {
-                        if (!condition.column) {
-                            matched = matched && evalMessage(message, condition.regex);
-                        }
-                        else {
-                            matched = matched && (message[condition.column] && condition.regex.test(message[condition.column])) || (message.StringProperties && message.StringProperties[condition.column] && condition.regex.test(message.StringProperties[condition.column]));
-                        }
-                    });
-                    return matched;
-                });
-            }
-        }
-        function evalMessage(message, regex) {
-            var jmsHeaders = ['JMSDestination', 'JMSDeliveryMode', 'JMSExpiration', 'JMSPriority', 'JMSMessageID', 'JMSTimestamp', 'JMSCorrelationID', 'JMSReplyTo', 'JMSType', 'JMSRedelivered'];
-            for (var i = 0; i < jmsHeaders.length; i++) {
-                var header = jmsHeaders[i];
-                if (message[header] && regex.test(message[header])) {
-                    return true;
-                }
-            }
-            if (message.StringProperties) {
-                for (var property in message.StringProperties) {
-                    if (regex.test(message.StringProperties[property])) {
-                        return true;
-                    }
-                }
-            }
-            if (message.bodyText && regex.test(message.bodyText)) {
-                return true;
-            }
-            return false;
-        }
-        function getRegExp(str, modifiers) {
-            try {
-                return new RegExp(str, modifiers);
-            }
-            catch (err) {
-                return new RegExp(str.replace(/(\^|\$|\(|\)|<|>|\[|\]|\{|\}|\\|\||\.|\*|\+|\?)/g, '\\$1'));
-            }
-        }
-        function buildSearchConditions(filterText) {
-            var searchConditions = [];
-            var qStr;
-            if (!(qStr = $.trim(filterText))) {
-                return;
-            }
-            var columnFilters = qStr.split(";");
-            for (var i = 0; i < columnFilters.length; i++) {
-                var args = columnFilters[i].split(':');
-                if (args.length > 1) {
-                    var columnName = $.trim(args[0]);
-                    var columnValue = $.trim(args[1]);
-                    if (columnName && columnValue) {
-                        searchConditions.push({
-                            column: columnName,
-                            columnDisplay: columnName.replace(/\s+/g, '').toLowerCase(),
-                            regex: getRegExp(columnValue, 'i')
-                        });
-                    }
-                }
-                else {
-                    var val = $.trim(args[0]);
-                    if (val) {
-                        searchConditions.push({
-                            column: '',
-                            regex: getRegExp(val, 'i')
-                        });
-                    }
-                }
-            }
-            return searchConditions;
-        }
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.DestinationController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
-        $scope.workspace = workspace;
-        $scope.message = "";
-        $scope.queueType = 'true';
-        $scope.deleteDialog = false;
-        $scope.purgeDialog = false;
-        updateQueueType();
-        function updateQueueType() {
-            $scope.destinationTypeName = $scope.queueType ? "Queue" : "Topic";
-        }
-        $scope.$watch('queueType', function () {
-            updateQueueType();
-        });
-        $scope.$watch('workspace.selection', function () {
-            workspace.moveIfViewInvalid();
-        });
-        function operationSuccess() {
-            $scope.destinationName = "";
-            $scope.workspace.operationCounter += 1;
-            Core.$apply($scope);
-            Core.notification("success", $scope.message);
-            $scope.workspace.loadTree();
-        }
-        function deleteSuccess() {
-            // lets set the selection to the parent
-            workspace.removeAndSelectParentNode();
-            $scope.workspace.operationCounter += 1;
-            Core.$apply($scope);
-            Core.notification("success", $scope.message);
-            $scope.workspace.loadTree();
-        }
-        function getBrokerMBean(jolokia) {
-            var mbean = null;
-            var selection = workspace.selection;
-            if (selection && ActiveMQ.isBroker(workspace) && selection.objectName) {
-                return selection.objectName;
-            }
-            var folderNames = selection.folderNames;
-            //if (selection && jolokia && folderNames && folderNames.length > 1) {
-            var parent = selection ? selection.parent : null;
-            if (selection && parent && jolokia && folderNames && folderNames.length > 1) {
-                mbean = parent.objectName;
-                // we might be a destination, so lets try one more parent
-                if (!mbean && parent) {
-                    mbean = parent.parent.objectName;
-                }
-                if (!mbean) {
-                    mbean = "" + folderNames[0] + ":BrokerName=" + folderNames[1] + ",Type=Broker";
-                }
-            }
-            return mbean;
-        }
-        $scope.createDestination = function (name, isQueue) {
-            var mbean = getBrokerMBean(jolokia);
-            if (mbean) {
-                var operation;
-                if (isQueue) {
-                    operation = "addQueue(java.lang.String)";
-                    $scope.message = "Created queue " + name;
-                }
-                else {
-                    operation = "addTopic(java.lang.String)";
-                    $scope.message = "Created topic " + name;
-                }
-                if (mbean) {
-                    jolokia.execute(mbean, operation, name, Core.onSuccess(operationSuccess));
-                }
-                else {
-                    Core.notification("error", "Could not find the Broker MBean!");
-                }
-            }
-        };
-        $scope.deleteDestination = function () {
-            var mbean = getBrokerMBean(jolokia);
-            var selection = workspace.selection;
-            var entries = selection.entries;
-            if (mbean && selection && jolokia && entries) {
-                var domain = selection.domain;
-                var name = entries["Destination"] || entries["destinationName"] || selection.title;
-                name = name.unescapeHTML();
-                var isQueue = "Topic" !== (entries["Type"] || entries["destinationType"]);
-                var operation;
-                if (isQueue) {
-                    operation = "removeQueue(java.lang.String)";
-                    $scope.message = "Deleted queue " + name;
-                }
-                else {
-                    operation = "removeTopic(java.lang.String)";
-                    $scope.message = "Deleted topic " + name;
-                }
-                jolokia.execute(mbean, operation, name, Core.onSuccess(deleteSuccess));
-            }
-        };
-        $scope.purgeDestination = function () {
-            var mbean = workspace.getSelectedMBeanName();
-            var selection = workspace.selection;
-            var entries = selection.entries;
-            if (mbean && selection && jolokia && entries) {
-                var name = entries["Destination"] || entries["destinationName"] || selection.title;
-                name = name.unescapeHTML();
-                var operation = "purge()";
-                $scope.message = "Purged queue " + name;
-                jolokia.execute(mbean, operation, Core.onSuccess(operationSuccess));
-            }
-        };
-        $scope.name = function () {
-            var selection = workspace.selection;
-            if (selection) {
-                return selection.title;
-            }
-            return null;
-        };
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.DurableSubscriberController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
-        $scope.refresh = loadTable;
-        $scope.durableSubscribers = [];
-        $scope.tempData = [];
-        $scope.createSubscriberDialog = new UI.Dialog();
-        $scope.deleteSubscriberDialog = new UI.Dialog();
-        $scope.showSubscriberDialog = new UI.Dialog();
-        $scope.topicName = '';
-        $scope.clientId = '';
-        $scope.subscriberName = '';
-        $scope.subSelector = '';
-        $scope.gridOptions = {
-            selectedItems: [],
-            data: 'durableSubscribers',
-            displayFooter: false,
-            showFilter: false,
-            showColumnMenu: true,
-            enableCellSelection: false,
-            enableColumnResize: true,
-            enableColumnReordering: true,
-            selectWithCheckboxOnly: false,
-            showSelectionCheckbox: false,
-            multiSelect: false,
-            displaySelectionCheckbox: false,
-            filterOptions: {
-                filterText: ''
-            },
-            maintainColumnRatios: false,
-            columnDefs: [
-                {
-                    field: 'destinationName',
-                    displayName: 'Topic',
-                    width: '30%'
-                },
-                {
-                    field: 'clientId',
-                    displayName: 'Client ID',
-                    width: '30%'
-                },
-                {
-                    field: 'consumerId',
-                    displayName: 'Consumer ID',
-                    cellTemplate: '<div class="ngCellText"><span ng-hide="row.entity.status != \'Offline\'">{{row.entity.consumerId}}</span><a ng-show="row.entity.status != \'Offline\'" ng-click="openSubscriberDialog(row)">{{row.entity.consumerId}}</a></div>',
-                    width: '30%'
-                },
-                {
-                    field: 'status',
-                    displayName: 'Status',
-                    width: '10%'
-                }
-            ]
-        };
-        $scope.doCreateSubscriber = function (clientId, subscriberName, topicName, subSelector) {
-            $scope.createSubscriberDialog.close();
-            $scope.clientId = clientId;
-            $scope.subscriberName = subscriberName;
-            $scope.topicName = topicName;
-            $scope.subSelector = subSelector;
-            if (Core.isBlank($scope.subSelector)) {
-                $scope.subSelector = null;
-            }
-            var mbean = getBrokerMBean(jolokia);
-            if (mbean) {
-                jolokia.execute(mbean, "createDurableSubscriber(java.lang.String, java.lang.String, java.lang.String, java.lang.String)", $scope.clientId, $scope.subscriberName, $scope.topicName, $scope.subSelector, Core.onSuccess(function () {
-                    Core.notification('success', "Created durable subscriber " + clientId);
-                    $scope.clientId = '';
-                    $scope.subscriberName = '';
-                    $scope.topicName = '';
-                    $scope.subSelector = '';
-                    loadTable();
-                }));
-            }
-            else {
-                Core.notification("error", "Could not find the Broker MBean!");
-            }
-        };
-        $scope.deleteSubscribers = function () {
-            var mbean = $scope.gridOptions.selectedItems[0]._id;
-            jolokia.execute(mbean, "destroy()", Core.onSuccess(function () {
-                $scope.showSubscriberDialog.close();
-                Core.notification('success', "Deleted durable subscriber");
-                loadTable();
-                $scope.gridOptions.selectedItems = [];
-            }));
-        };
-        $scope.openSubscriberDialog = function (subscriber) {
-            jolokia.request({ type: "read", mbean: subscriber.entity._id }, Core.onSuccess(function (response) {
-                $scope.showSubscriberDialog.subscriber = response.value;
-                $scope.showSubscriberDialog.subscriber.Status = subscriber.entity.status;
-                console.log("Subscriber is now " + $scope.showSubscriberDialog.subscriber);
-                Core.$apply($scope);
-                // now lets start opening the dialog
-                setTimeout(function () {
-                    $scope.showSubscriberDialog.open();
-                    Core.$apply($scope);
-                }, 100);
-            }));
-        };
-        $scope.topicNames = function (completionText) {
-            var topicsFolder = ActiveMQ.getSelectionTopicsFolder(workspace);
-            return (topicsFolder) ? topicsFolder.children.map(function (n) { return n.title; }) : [];
-        };
-        $scope.$watch('workspace.selection', function () {
-            if (workspace.moveIfViewInvalid())
-                return;
-            // lets defer execution as we may not have the selection just yet
-            setTimeout(loadTable, 50);
-        });
-        function loadTable() {
-            var mbean = getBrokerMBean(jolokia);
-            if (mbean) {
-                $scope.durableSubscribers = [];
-                jolokia.request({ type: "read", mbean: mbean, attribute: ["DurableTopicSubscribers"] }, Core.onSuccess(function (response) { return populateTable(response, "DurableTopicSubscribers", "Active"); }));
-                jolokia.request({ type: "read", mbean: mbean, attribute: ["InactiveDurableTopicSubscribers"] }, Core.onSuccess(function (response) { return populateTable(response, "InactiveDurableTopicSubscribers", "Offline"); }));
-            }
-        }
-        function populateTable(response, attr, status) {
-            var data = response.value;
-            ActiveMQ.log.debug("Got data: ", data);
-            $scope.durableSubscribers.push.apply($scope.durableSubscribers, data[attr].map(function (o) {
-                var objectName = o["objectName"];
-                var entries = Core.objectNameProperties(objectName);
-                if (!('objectName' in o)) {
-                    if ('canonicalName' in o) {
-                        objectName = o['canonicalName'];
-                    }
-                    entries = _.cloneDeep(o['keyPropertyList']);
-                }
-                entries["_id"] = objectName;
-                entries["status"] = status;
-                return entries;
-            }));
-            Core.$apply($scope);
-        }
-        function getBrokerMBean(jolokia) {
-            var mbean = null;
-            var selection = workspace.selection;
-            if (selection && ActiveMQ.isBroker(workspace) && selection.objectName) {
-                return selection.objectName;
-            }
-            var folderNames = selection.folderNames;
-            //if (selection && jolokia && folderNames && folderNames.length > 1) {
-            var parent = selection ? selection.parent : null;
-            if (selection && parent && jolokia && folderNames && folderNames.length > 1) {
-                mbean = parent.objectName;
-                // we might be a destination, so lets try one more parent
-                if (!mbean && parent) {
-                    mbean = parent.parent.objectName;
-                }
-                if (!mbean) {
-                    mbean = "" + folderNames[0] + ":BrokerName=" + folderNames[1] + ",Type=Broker";
-                }
-            }
-            return mbean;
-        }
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.JobSchedulerController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
-        $scope.refresh = loadTable;
-        $scope.jobs = [];
-        $scope.deleteJobsDialog = new UI.Dialog();
-        $scope.gridOptions = {
-            selectedItems: [],
-            data: 'jobs',
-            displayFooter: false,
-            showFilter: false,
-            showColumnMenu: true,
-            enableColumnResize: true,
-            enableColumnReordering: true,
-            filterOptions: {
-                filterText: ''
-            },
-            selectWithCheckboxOnly: true,
-            showSelectionCheckbox: true,
-            maintainColumnRatios: false,
-            columnDefs: [
-                {
-                    field: 'jobId',
-                    displayName: 'Job ID',
-                    width: '25%'
-                },
-                {
-                    field: 'cronEntry',
-                    displayName: 'Cron Entry',
-                    width: '10%'
-                },
-                {
-                    field: 'delay',
-                    displayName: 'Delay',
-                    width: '5%'
-                },
-                {
-                    field: 'repeat',
-                    displayName: 'repeat',
-                    width: '5%'
-                },
-                {
-                    field: 'period',
-                    displayName: 'period',
-                    width: '5%'
-                },
-                {
-                    field: 'start',
-                    displayName: 'Start',
-                    width: '25%'
-                },
-                {
-                    field: 'next',
-                    displayName: 'Next',
-                    width: '25%'
-                }
-            ]
-        };
-        $scope.$watch('workspace.selection', function () {
-            if (workspace.moveIfViewInvalid())
-                return;
-            // lets defer execution as we may not have the selection just yet
-            setTimeout(loadTable, 50);
-        });
-        function loadTable() {
-            var selection = workspace.selection;
-            if (selection) {
-                var mbean = selection.objectName;
-                if (mbean) {
-                    jolokia.request({ type: 'read', mbean: mbean, attribute: "AllJobs" }, Core.onSuccess(populateTable));
-                }
-            }
-            Core.$apply($scope);
-        }
-        function populateTable(response) {
-            var data = response.value;
-            if (!angular.isArray(data)) {
-                $scope.jobs = [];
-                angular.forEach(data, function (value, idx) {
-                    $scope.jobs.push(value);
-                });
-            }
-            else {
-                $scope.jobs = data;
-            }
-            Core.$apply($scope);
-        }
-        $scope.deleteJobs = function () {
-            var selection = workspace.selection;
-            var mbean = selection.objectName;
-            if (mbean && selection) {
-                var selectedItems = $scope.gridOptions.selectedItems;
-                $scope.message = "Deleted " + Core.maybePlural(selectedItems.length, "job");
-                var operation = "removeJob(java.lang.String)";
-                angular.forEach(selectedItems, function (item, idx) {
-                    var id = item.jobId;
-                    if (id) {
-                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
-                        jolokia.execute(mbean, operation, id, Core.onSuccess(callback));
-                    }
-                });
-            }
-        };
-        function intermediateResult() {
-        }
-        function operationSuccess() {
-            $scope.gridOptions.selectedItems.splice(0);
-            Core.notification("success", $scope.message);
-            setTimeout(loadTable, 50);
-        }
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-/**
- * @module ActiveMQ
- */
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.PreferencesController", ["$scope", "localStorage", "userDetails", "$rootScope", function ($scope, localStorage, userDetails, $rootScope) {
-        Core.initPreferenceScope($scope, localStorage, {
-            'activemqUserName': {
-                'value': userDetails.username,
-            },
-            'activemqPassword': {
-                'value': userDetails.password
-            },
-            'activemqBrowseBytesMessages': {
-                'value': 1,
-                'converter': parseInt,
-                'formatter': function (value) {
-                    return "" + value;
-                }
-            },
-            'activemqFilterAdvisoryTopics': {
-                'value': false,
-                'converter': Core.parseBooleanValue,
-                'post': function (newValue) {
-                    $rootScope.$broadcast('jmxTreeUpdated');
-                }
-            }
-        });
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="activemqHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.TreeHeaderController", ["$scope", function ($scope) {
-        $scope.expandAll = function () {
-            Tree.expandAll("#activemqtree");
-        };
-        $scope.contractAll = function () {
-            Tree.contractAll("#activemqtree");
-        };
-    }]);
-    ActiveMQ._module.controller("ActiveMQ.TreeController", ["$scope", "$location", "workspace", "localStorage", function ($scope, $location, workspace, localStorage) {
-        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
-            // lets do this asynchronously to avoid Error: $digest already in progress
-            setTimeout(updateSelectionFromURL, 50);
-        });
-        $scope.$watch('workspace.tree', function () {
-            reloadTree();
-        });
-        $scope.$on('jmxTreeUpdated', function () {
-            reloadTree();
-        });
-        function reloadTree() {
-            ActiveMQ.log.debug("workspace tree has changed, lets reload the activemq tree");
-            var children = [];
-            var tree = workspace.tree;
-            if (tree) {
-                var domainName = "org.apache.activemq";
-                var folder = tree.get(domainName);
-                if (folder) {
-                    children = folder.children;
-                }
-                if (children.length) {
-                    var firstChild = children[0];
-                    // the children could be AMQ 5.7 style broker name folder with the actual MBean in the children
-                    // along with folders for the Queues etc...
-                    if (!firstChild.typeName && firstChild.children.length < 4) {
-                        // lets avoid the top level folder
-                        var answer = [];
-                        angular.forEach(children, function (child) {
-                            answer = answer.concat(child.children);
-                        });
-                        children = answer;
-                    }
-                }
-                // filter out advisory topics
-                children.forEach(function (broker) {
-                    var grandChildren = broker.children;
-                    if (grandChildren) {
-                        Tree.sanitize(grandChildren);
-                        var idx = grandChildren.findIndex(function (n) { return n.title === "Topic"; });
-                        if (idx > 0) {
-                            var old = grandChildren[idx];
-                            // we need to store all topics the first time on the workspace
-                            // so we have access to them later if the user changes the filter in the preferences
-                            var key = "ActiveMQ-allTopics-" + broker.title;
-                            var allTopics = old.children.clone();
-                            workspace.mapData[key] = allTopics;
-                            var filter = Core.parseBooleanValue(localStorage["activemqFilterAdvisoryTopics"]);
-                            if (filter) {
-                                if (old && old.children) {
-                                    var filteredTopics = old.children.filter(function (c) { return !c.title.startsWith("ActiveMQ.Advisory"); });
-                                    old.children = filteredTopics;
-                                }
-                            }
-                            else if (allTopics) {
-                                old.children = allTopics;
-                            }
-                        }
-                    }
-                });
-                var treeElement = $("#activemqtree");
-                Jmx.enableTree($scope, $location, workspace, treeElement, children, true);
-                // lets do this asynchronously to avoid Error: $digest already in progress
-                setTimeout(updateSelectionFromURL, 50);
-            }
-        }
-        function updateSelectionFromURL() {
-            Jmx.updateTreeSelectionFromURLAndAutoSelect($location, $("#activemqtree"), function (first) {
-                // use function to auto select the queue folder on the 1st broker
-                var queues = first.getChildren()[0];
-                if (queues && queues.data.title === 'Queue') {
-                    first = queues;
-                    first.expand(true);
-                    return first;
-                }
-                return null;
-            }, true);
-        }
-    }]);
-})(ActiveMQ || (ActiveMQ = {}));
-
-/// <reference path="../../includes.ts"/>
 /**
  * @module Camel
  */
@@ -8525,6 +5517,3014 @@ var Camel;
         loadConverters();
     }]);
 })(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ.pluginName = 'activemq';
+    ActiveMQ.log = Logger.get("activemq");
+    ActiveMQ.jmxDomain = 'org.apache.activemq';
+    function getSelectionQueuesFolder(workspace) {
+        function findQueuesFolder(node) {
+            if (node) {
+                if (node.title === "Queues" || node.title === "Queue") {
+                    return node;
+                }
+                var parent = node.parent;
+                if (parent) {
+                    return findQueuesFolder(parent);
+                }
+            }
+            return null;
+        }
+        var selection = workspace.selection;
+        if (selection) {
+            return findQueuesFolder(selection);
+        }
+        return null;
+    }
+    ActiveMQ.getSelectionQueuesFolder = getSelectionQueuesFolder;
+    function getSelectionTopicsFolder(workspace) {
+        function findTopicsFolder(node) {
+            var answer = null;
+            if (node) {
+                if (node.title === "Topics" || node.title === "Topic") {
+                    answer = node;
+                }
+                if (answer === null) {
+                    angular.forEach(node.children, function (child) {
+                        if (child.title === "Topics" || child.title === "Topic") {
+                            answer = child;
+                        }
+                    });
+                }
+            }
+            return answer;
+        }
+        var selection = workspace.selection;
+        if (selection) {
+            return findTopicsFolder(selection);
+        }
+        return null;
+    }
+    ActiveMQ.getSelectionTopicsFolder = getSelectionTopicsFolder;
+    /**
+     * Sets $scope.row to currently selected JMS message.
+     * Used in:
+     *  - activemq/js/browse.ts
+     *  - camel/js/browseEndpoint.ts
+     *
+     * TODO: remove $scope argument and operate directly on other variables. but it's too much side effects here...
+     *
+     * @param message
+     * @param key unique key inside message that distinguishes between values
+     * @param $scope
+     */
+    function selectCurrentMessage(message, key, $scope) {
+        // clicking on message's link would interfere with messages selected with checkboxes
+        $scope.gridOptions.selectAll(false);
+        var idx = Core.pathGet(message, ["rowIndex"]);
+        var jmsMessageID = Core.pathGet(message, ["entity", key]);
+        $scope.rowIndex = idx;
+        var selected = $scope.gridOptions.selectedItems;
+        selected.splice(0, selected.length);
+        if (idx >= 0 && idx < $scope.messages.length) {
+            $scope.row = $scope.messages.find(function (msg) { return msg[key] === jmsMessageID; });
+            if ($scope.row) {
+                selected.push($scope.row);
+            }
+        }
+        else {
+            $scope.row = null;
+        }
+    }
+    ActiveMQ.selectCurrentMessage = selectCurrentMessage;
+    /**
+     * - Adds functions needed for message browsing with details
+     * - Adds a watch to deselect all rows after closing the slideout with message details
+     * TODO: export these functions too?
+     *
+     * @param $scope
+     */
+    function decorate($scope) {
+        $scope.selectRowIndex = function (idx) {
+            $scope.rowIndex = idx;
+            var selected = $scope.gridOptions.selectedItems;
+            selected.splice(0, selected.length);
+            if (idx >= 0 && idx < $scope.messages.length) {
+                $scope.row = $scope.messages[idx];
+                if ($scope.row) {
+                    selected.push($scope.row);
+                }
+            }
+            else {
+                $scope.row = null;
+            }
+        };
+        $scope.$watch("showMessageDetails", function () {
+            if (!$scope.showMessageDetails) {
+                $scope.row = null;
+                $scope.gridOptions.selectedItems.splice(0, $scope.gridOptions.selectedItems.length);
+            }
+        });
+    }
+    ActiveMQ.decorate = decorate;
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/**
+ * @module ActiveMQ
+ * @main ActiveMQ
+ */
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module = angular.module(ActiveMQ.pluginName, []);
+    ActiveMQ._module.config(["$routeProvider", function ($routeProvider) {
+        $routeProvider.when('/activemq/browseQueue', { templateUrl: 'plugins/activemq/html/browseQueue.html' }).when('/activemq/diagram', { templateUrl: 'plugins/activemq/html/brokerDiagram.html', reloadOnSearch: false }).when('/activemq/createDestination', { templateUrl: 'plugins/activemq/html/createDestination.html' }).when('/activemq/createQueue', { templateUrl: 'plugins/activemq/html/createQueue.html' }).when('/activemq/createTopic', { templateUrl: 'plugins/activemq/html/createTopic.html' }).when('/activemq/deleteQueue', { templateUrl: 'plugins/activemq/html/deleteQueue.html' }).when('/activemq/deleteTopic', { templateUrl: 'plugins/activemq/html/deleteTopic.html' }).when('/activemq/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html' }).when('/activemq/durableSubscribers', { templateUrl: 'plugins/activemq/html/durableSubscribers.html' }).when('/activemq/jobs', { templateUrl: 'plugins/activemq/html/jobs.html' });
+    }]);
+    ActiveMQ._module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", function (nav, $location, workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache) {
+        viewRegistry['activemq'] = 'plugins/activemq/html/layoutActiveMQTree.html';
+        helpRegistry.addUserDoc('activemq', 'plugins/activemq/doc/help.md', function () {
+            return workspace.treeContainsDomainAndProperties("org.apache.activemq");
+        });
+        preferencesRegistry.addTab("ActiveMQ", "plugins/activemq/html/preferences.html", function () {
+            return workspace.treeContainsDomainAndProperties("org.apache.activemq");
+        });
+        workspace.addTreePostProcessor(postProcessTree);
+        // register default attribute views
+        var attributes = workspace.attributeColumnDefs;
+        attributes[ActiveMQ.jmxDomain + "/Broker/folder"] = [
+            { field: 'BrokerName', displayName: 'Name', width: "**" },
+            { field: 'TotalProducerCount', displayName: 'Producer #' },
+            { field: 'TotalConsumerCount', displayName: 'Consumer #' },
+            { field: 'StorePercentUsage', displayName: 'Store %' },
+            { field: 'TempPercentUsage', displayName: 'Temp %' },
+            { field: 'MemoryPercentUsage', displayName: 'Memory %' },
+            { field: 'TotalEnqueueCount', displayName: 'Enqueue #' },
+            { field: 'TotalDequeueCount', displayName: 'Dequeue #' }
+        ];
+        attributes[ActiveMQ.jmxDomain + "/Queue/folder"] = [
+            { field: 'Name', displayName: 'Name', width: "***" },
+            { field: 'QueueSize', displayName: 'Queue Size' },
+            { field: 'ProducerCount', displayName: 'Producer #' },
+            { field: 'ConsumerCount', displayName: 'Consumer #' },
+            { field: 'EnqueueCount', displayName: 'Enqueue #' },
+            { field: 'DequeueCount', displayName: 'Dequeue #' },
+            { field: 'MemoryPercentUsage', displayName: 'Memory %' },
+            { field: 'DispatchCount', displayName: 'Dispatch #', visible: false }
+        ];
+        attributes[ActiveMQ.jmxDomain + "/Topic/folder"] = [
+            { field: 'Name', displayName: 'Name', width: "****" },
+            { field: 'ProducerCount', displayName: 'Producer #' },
+            { field: 'ConsumerCount', displayName: 'Consumer #' },
+            { field: 'EnqueueCount', displayName: 'Enqueue #' },
+            { field: 'DequeueCount', displayName: 'Dequeue #' },
+            { field: 'MemoryPercentUsage', displayName: 'Memory %' },
+            { field: 'DispatchCount', displayName: 'Dispatch #', visible: false }
+        ];
+        attributes[ActiveMQ.jmxDomain + "/Consumer/folder"] = [
+            { field: 'ConnectionId', displayName: 'Name', width: "**" },
+            { field: 'PrefetchSize', displayName: 'Prefetch Size' },
+            { field: 'Priority', displayName: 'Priority' },
+            { field: 'DispatchedQueueSize', displayName: 'Dispatched Queue #' },
+            { field: 'SlowConsumer', displayName: 'Slow ?' },
+            { field: 'Retroactive', displayName: 'Retroactive' },
+            { field: 'Selector', displayName: 'Selector' }
+        ];
+        attributes[ActiveMQ.jmxDomain + "/networkConnectors/folder"] = [
+            { field: 'Name', displayName: 'Name', width: "**" },
+            { field: 'UserName', displayName: 'User Name' },
+            { field: 'PrefetchSize', displayName: 'Prefetch Size' },
+            { field: 'ConduitSubscriptions', displayName: 'Conduit Subscriptions?' },
+            { field: 'Duplex', displayName: 'Duplex' },
+            { field: 'DynamicOnly', displayName: 'Dynamic Only' }
+        ];
+        attributes[ActiveMQ.jmxDomain + "/PersistenceAdapter/folder"] = [
+            { field: 'IndexDirectory', displayName: 'Index Directory', width: "**" },
+            { field: 'LogDirectory', displayName: 'Log Directory', width: "**" }
+        ];
+        var builder = nav.builder();
+        var tab = builder.id('activemq').title(function () { return 'ActiveMQ'; }).href(function () { return '/jmx/attributes?tab=activemq'; }).isSelected(function () { return workspace.isTopTabActive('activemq'); }).isValid(function () { return workspace.treeContainsDomainAndProperties(ActiveMQ.jmxDomain); }).build();
+        tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
+        // add sub level tabs
+        tab.tabs.push({
+            id: 'activemq-diagram',
+            title: function () { return '<i class="fa fa-picture"></i> Diagram'; },
+            //title: "View a diagram of the producers, destinations and consumers",
+            show: function () { return workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(ActiveMQ.jmxDomain); },
+            isSelected: function () { return workspace.isLinkActive('activemq/diagram'); },
+            href: function () { return "/activemq/diagram"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-browse',
+            title: function () { return '<i class="fa fa-envelope"></i> Browse'; },
+            //title: "Browse the messages on the queue",
+            show: function () { return isQueue(workspace) && workspace.hasInvokeRights(workspace.selection, "browse()"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/browseQueue'); },
+            href: function () { return "/activemq/browseQueue"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-send',
+            title: function () { return '<i class="fa fa-pencil"></i> Send'; },
+            //title: "Send a message to this destination",
+            show: function () { return (isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(workspace.selection, "sendTextMessage(java.util.Map,java.lang.String,java.lang.String,java.lang.String)"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/sendMessage'); },
+            href: function () { return "/activemq/sendMessage"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-durable-subscribers',
+            title: function () { return '<i class="fa fa-list"></i> Durable Subscribers'; },
+            //title: "Manage durable subscribers",
+            show: function () { return isBroker(workspace); },
+            isSelected: function () { return workspace.isLinkActive('activemq/durableSubscribers'); },
+            href: function () { return "/activemq/durableSubscribers"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-jobs',
+            title: function () { return '<i class="fa fa-list"></i> Jobs'; },
+            //title: "Manage jobs",
+            show: function () { return isJobScheduler(workspace); },
+            isSelected: function () { return workspace.isLinkActive('activemq/jobs'); },
+            href: function () { return "/activemq/jobs"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-create-destination',
+            title: function () { return '<i class="fa fa-plus"></i> Create'; },
+            //title: "Create a new destination",
+            show: function () { return isBroker(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/createDestination'); },
+            href: function () { return "/activemq/createDestination"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-create-queue',
+            title: function () { return '<i class="fa fa-plus"></i> Create'; },
+            //title: "Create a new queue",
+            show: function () { return isQueuesFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/createQueue'); },
+            href: function () { return "/activemq/createQueue"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-create-topic',
+            title: function () { return '<i class="fa fa-plus"></i> Create'; },
+            //title: "Create a new topic",
+            show: function () { return isTopicsFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/createTopic'); },
+            href: function () { return "/activemq/createTopic"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-delete-topic',
+            title: function () { return '<i class="fa fa-remove"></i> Delete Topic'; },
+            //title: "Delete this topic",
+            show: function () { return isTopic(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeTopic"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/deleteTopic'); },
+            href: function () { return "/activemq/deleteTopic"; }
+        });
+        tab.tabs.push({
+            id: 'activemq-delete-queue',
+            title: function () { return '<i class="fa fa-remove"></i> Delete'; },
+            //title: "Delete or purge this queue",
+            show: function () { return isQueue(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeQueue"); },
+            isSelected: function () { return workspace.isLinkActive('activemq/deleteQueue'); },
+            href: function () { return "/activemq/deleteQueue"; }
+        });
+        nav.add(tab);
+        function postProcessTree(tree) {
+            var activemq = tree.get("org.apache.activemq");
+            setConsumerType(activemq);
+            // lets move queue and topic as first children within brokers
+            if (activemq) {
+                angular.forEach(activemq.children, function (broker) {
+                    angular.forEach(broker.children, function (child) {
+                        // lets move Topic/Queue to the front.
+                        var grandChildren = child.children;
+                        if (grandChildren) {
+                            var names = ["Topic", "Queue"];
+                            angular.forEach(names, function (name) {
+                                var idx = grandChildren.findIndex(function (n) { return n.title === name; });
+                                if (idx > 0) {
+                                    var old = grandChildren[idx];
+                                    grandChildren.splice(idx, 1);
+                                    grandChildren.splice(0, 0, old);
+                                }
+                            });
+                        }
+                    });
+                });
+            }
+        }
+        function setConsumerType(node) {
+            if (node) {
+                var parent = node.parent;
+                var entries = node.entries;
+                if (parent && !parent.typeName && entries) {
+                    var endpoint = entries["endpoint"];
+                    if (endpoint === "Consumer" || endpoint === "Producer") {
+                        //console.log("Setting the typeName on " + parent.title + " to " + endpoint);
+                        parent.typeName = endpoint;
+                    }
+                    var connectorName = entries["connectorName"];
+                    if (connectorName && !node.icon) {
+                        // lets default a connector icon
+                        node.icon = Core.url("/img/icons/activemq/connector.png");
+                    }
+                }
+                angular.forEach(node.children, function (child) { return setConsumerType(child); });
+            }
+        }
+    }]);
+    hawtioPluginLoader.addModule(ActiveMQ.pluginName);
+    function getBroker(workspace) {
+        var answer = null;
+        var selection = workspace.selection;
+        if (selection) {
+            answer = selection.findAncestor(function (current) {
+                // log.debug("Checking current: ", current);
+                var entries = current.entries;
+                if (entries) {
+                    return (('type' in entries && entries.type === 'Broker') && 'brokerName' in entries && !('destinationName' in entries) && !('destinationType' in entries));
+                }
+                else {
+                    return false;
+                }
+            });
+        }
+        return answer;
+    }
+    ActiveMQ.getBroker = getBroker;
+    function isQueue(workspace) {
+        //return workspace.selectionHasDomainAndType(jmxDomain, 'Queue');
+        return workspace.hasDomainAndProperties(ActiveMQ.jmxDomain, { 'destinationType': 'Queue' }, 4) || workspace.selectionHasDomainAndType(ActiveMQ.jmxDomain, 'Queue');
+    }
+    ActiveMQ.isQueue = isQueue;
+    function isTopic(workspace) {
+        //return workspace.selectionHasDomainAndType(jmxDomain, 'Topic');
+        return workspace.hasDomainAndProperties(ActiveMQ.jmxDomain, { 'destinationType': 'Topic' }, 4) || workspace.selectionHasDomainAndType(ActiveMQ.jmxDomain, 'Topic');
+    }
+    ActiveMQ.isTopic = isTopic;
+    function isQueuesFolder(workspace) {
+        return workspace.selectionHasDomainAndLastFolderName(ActiveMQ.jmxDomain, 'Queue');
+    }
+    ActiveMQ.isQueuesFolder = isQueuesFolder;
+    function isTopicsFolder(workspace) {
+        return workspace.selectionHasDomainAndLastFolderName(ActiveMQ.jmxDomain, 'Topic');
+    }
+    ActiveMQ.isTopicsFolder = isTopicsFolder;
+    function isJobScheduler(workspace) {
+        return workspace.hasDomainAndProperties(ActiveMQ.jmxDomain, { 'service': 'JobScheduler' }, 4);
+    }
+    ActiveMQ.isJobScheduler = isJobScheduler;
+    function isBroker(workspace) {
+        if (workspace.selectionHasDomainAndType(ActiveMQ.jmxDomain, 'Broker')) {
+            var self = Core.pathGet(workspace, ["selection"]);
+            var parent = Core.pathGet(workspace, ["selection", "parent"]);
+            return !(parent && (parent.ancestorHasType('Broker') || self.ancestorHasType('Broker')));
+        }
+        return false;
+    }
+    ActiveMQ.isBroker = isBroker;
+})(ActiveMQ || (ActiveMQ = {}));
+
+/**
+ * @module Git
+ */
+var Git;
+(function (Git) {
+    function createGitRepository(workspace, jolokia, localStorage) {
+        var mbean = getGitMBean(workspace);
+        if (mbean && jolokia) {
+            return new Git.JolokiaGit(mbean, jolokia, localStorage, workspace.userDetails);
+        }
+        // TODO use local storage to make a little wiki thingy?
+        return null;
+    }
+    Git.createGitRepository = createGitRepository;
+    Git.jmxDomain = "hawtio";
+    Git.mbeanType = "GitFacade";
+    function hasGit(workspace) {
+        return getGitMBean(workspace) !== null;
+    }
+    Git.hasGit = hasGit;
+    /**
+     * Returns the JMX ObjectName of the git mbean
+     * @method getGitMBean
+     * @for Git
+     * @param {Workspace} workspace
+     * @return {String}
+     */
+    function getGitMBean(workspace) {
+        return Core.getMBeanTypeObjectName(workspace, Git.jmxDomain, Git.mbeanType);
+    }
+    Git.getGitMBean = getGitMBean;
+    /**
+     * Returns the Folder for the git mbean if it can be found
+     * @method getGitMBeanFolder
+     * @for Git
+     * @param {Workspace} workspace
+     * @return {Folder}
+     */
+    function getGitMBeanFolder(workspace) {
+        return Core.getMBeanTypeFolder(workspace, Git.jmxDomain, Git.mbeanType);
+    }
+    Git.getGitMBeanFolder = getGitMBeanFolder;
+    /**
+     * Returns true if the git mbean is a fabric configuration repository
+     * (so we can use it for the fabric plugin)
+     * @method isGitMBeanFabric
+     * @for Git
+     * @param {Workspace} workspace
+     * @return {Boolean}
+     */
+    function isGitMBeanFabric(workspace) {
+        var folder = getGitMBeanFolder(workspace);
+        return folder && folder.entries["repo"] === "fabric";
+    }
+    Git.isGitMBeanFabric = isGitMBeanFabric;
+})(Git || (Git = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
+/**
+ * @module Wiki
+ */
+var Wiki;
+(function (Wiki) {
+    Wiki.log = Logger.get("Wiki");
+    Wiki.camelNamespaces = ["http://camel.apache.org/schema/spring", "http://camel.apache.org/schema/blueprint"];
+    Wiki.springNamespaces = ["http://www.springframework.org/schema/beans"];
+    Wiki.droolsNamespaces = ["http://drools.org/schema/drools-spring"];
+    Wiki.dozerNamespaces = ["http://dozer.sourceforge.net"];
+    Wiki.activemqNamespaces = ["http://activemq.apache.org/schema/core"];
+    Wiki.excludeAdjustmentPrefixes = ["http://", "https://", "#"];
+    (function (ViewMode) {
+        ViewMode[ViewMode["List"] = 0] = "List";
+        ViewMode[ViewMode["Icon"] = 1] = "Icon";
+    })(Wiki.ViewMode || (Wiki.ViewMode = {}));
+    var ViewMode = Wiki.ViewMode;
+    ;
+    /**
+     * The custom views within the wiki namespace; either "/wiki/$foo" or "/wiki/branch/$branch/$foo"
+     */
+    Wiki.customWikiViewPages = ["/formTable", "/camel/diagram", "/camel/canvas", "/camel/properties", "/dozer/mappings"];
+    /**
+     * Which extensions do we wish to hide in the wiki file listing
+     * @property hideExtensions
+     * @for Wiki
+     * @type Array
+     */
+    Wiki.hideExtensions = [".profile"];
+    var defaultFileNamePattern = /^[a-zA-Z0-9._-]*$/;
+    var defaultFileNamePatternInvalid = "Name must be: letters, numbers, and . _ or - characters";
+    var defaultFileNameExtensionPattern = "";
+    var defaultLowerCaseFileNamePattern = /^[a-z0-9._-]*$/;
+    var defaultLowerCaseFileNamePatternInvalid = "Name must be: lower-case letters, numbers, and . _ or - characters";
+    /**
+     * The wizard tree for creating new content in the wiki
+     * @property documentTemplates
+     * @for Wiki
+     * @type Array
+     */
+    Wiki.documentTemplates = [
+        {
+            label: "Folder",
+            tooltip: "Create a new folder to contain documents",
+            folder: true,
+            icon: "/img/icons/wiki/folder.gif",
+            exemplar: "myfolder",
+            regex: defaultLowerCaseFileNamePattern,
+            invalid: defaultLowerCaseFileNamePatternInvalid
+        },
+        {
+            label: "App",
+            tooltip: "Creates a new App folder used to configure and run containers",
+            addClass: "fa fa-cog green",
+            exemplar: 'myapp',
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: '',
+            generated: {
+                mbean: ['io.fabric8', { type: 'KubernetesTemplateManager' }],
+                init: function (workspace, $scope) {
+                },
+                generate: function (options) {
+                    Wiki.log.debug("Got options: ", options);
+                    options.form.name = options.name;
+                    options.form.path = options.parentId;
+                    options.form.branch = options.branch;
+                    var json = angular.toJson(options.form);
+                    var jolokia = HawtioCore.injector.get("jolokia");
+                    jolokia.request({
+                        type: 'exec',
+                        mbean: 'io.fabric8:type=KubernetesTemplateManager',
+                        operation: 'createAppByJson',
+                        arguments: [json]
+                    }, Core.onSuccess(function (response) {
+                        Wiki.log.debug("Generated app, response: ", response);
+                        options.success(undefined);
+                    }, {
+                        error: function (response) {
+                            options.error(response.error);
+                        }
+                    }));
+                },
+                form: function (workspace, $scope) {
+                    if (!$scope.doDockerRegistryCompletion) {
+                        $scope.fetchDockerRepositories = function () {
+                            return DockerRegistry.completeDockerRegistry();
+                        };
+                    }
+                    return {
+                        summaryMarkdown: 'Add app summary here',
+                        replicaCount: 1
+                    };
+                },
+                schema: {
+                    description: 'App settings',
+                    type: 'java.lang.String',
+                    properties: {
+                        'dockerImage': {
+                            'description': 'Docker Image',
+                            'type': 'java.lang.String',
+                            'input-attributes': {
+                                'required': '',
+                                'class': 'input-xlarge',
+                                'typeahead': 'repo for repo in fetchDockerRepositories() | filter:$viewValue',
+                                'typeahead-wait-ms': '200'
+                            }
+                        },
+                        'summaryMarkdown': {
+                            'description': 'Short Description',
+                            'type': 'java.lang.String',
+                            'input-attributes': { 'class': 'input-xlarge' }
+                        },
+                        'replicaCount': {
+                            'description': 'Replica Count',
+                            'type': 'java.lang.Integer',
+                            'input-attributes': {
+                                min: '0'
+                            }
+                        },
+                        'labels': {
+                            'description': 'Labels',
+                            'type': 'map',
+                            'items': {
+                                'type': 'string'
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            label: "Fabric8 Profile",
+            tooltip: "Create a new empty fabric profile. Using a hyphen ('-') will create a folder heirarchy, for example 'my-awesome-profile' will be available via the path 'my/awesome/profile'.",
+            profile: true,
+            addClass: "fa fa-book green",
+            exemplar: "user-profile",
+            regex: defaultLowerCaseFileNamePattern,
+            invalid: defaultLowerCaseFileNamePatternInvalid,
+            fabricOnly: true
+        },
+        {
+            label: "Properties File",
+            tooltip: "A properties file typically used to configure Java classes",
+            exemplar: "properties-file.properties",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".properties"
+        },
+        {
+            label: "JSON File",
+            tooltip: "A file containing JSON data",
+            exemplar: "document.json",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".json"
+        },
+        {
+            label: "Key Store File",
+            tooltip: "Creates a keystore (database) of cryptographic keys, X.509 certificate chains, and trusted certificates.",
+            exemplar: 'keystore.jks',
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".jks",
+            generated: {
+                mbean: ['hawtio', { type: 'KeystoreService' }],
+                init: function (workspace, $scope) {
+                    var mbean = 'hawtio:type=KeystoreService';
+                    var response = workspace.jolokia.request({ type: "read", mbean: mbean, attribute: "SecurityProviderInfo" }, {
+                        success: function (response) {
+                            $scope.securityProviderInfo = response.value;
+                            Core.$apply($scope);
+                        },
+                        error: function (response) {
+                            console.log('Could not find the supported security algorithms: ', response.error);
+                            Core.$apply($scope);
+                        }
+                    });
+                },
+                generate: function (options) {
+                    var encodedForm = JSON.stringify(options.form);
+                    var mbean = 'hawtio:type=KeystoreService';
+                    var response = options.workspace.jolokia.request({
+                        type: 'exec',
+                        mbean: mbean,
+                        operation: 'createKeyStoreViaJSON(java.lang.String)',
+                        arguments: [encodedForm]
+                    }, {
+                        method: 'POST',
+                        success: function (response) {
+                            options.success(response.value);
+                        },
+                        error: function (response) {
+                            options.error(response.error);
+                        }
+                    });
+                },
+                form: function (workspace, $scope) {
+                    return {
+                        storeType: $scope.securityProviderInfo.supportedKeyStoreTypes[0],
+                        createPrivateKey: false,
+                        keyLength: 4096,
+                        keyAlgorithm: $scope.securityProviderInfo.supportedKeyAlgorithms[0],
+                        keyValidity: 365
+                    };
+                },
+                schema: {
+                    "description": "Keystore Settings",
+                    "type": "java.lang.String",
+                    "properties": {
+                        "storePassword": {
+                            "description": "Keystore password.",
+                            "type": "password",
+                            'input-attributes': { "required": "", "ng-minlength": 6 }
+                        },
+                        "storeType": {
+                            "description": "The type of store to create",
+                            "type": "java.lang.String",
+                            'input-element': "select",
+                            'input-attributes': { "ng-options": "v for v in securityProviderInfo.supportedKeyStoreTypes" }
+                        },
+                        "createPrivateKey": {
+                            "description": "Should we generate a self-signed private key?",
+                            "type": "boolean"
+                        },
+                        "keyCommonName": {
+                            "description": "The common name of the key, typically set to the hostname of the server",
+                            "type": "java.lang.String",
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        },
+                        "keyLength": {
+                            "description": "The length of the cryptographic key",
+                            "type": "Long",
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        },
+                        "keyAlgorithm": {
+                            "description": "The key algorithm",
+                            "type": "java.lang.String",
+                            'input-element': "select",
+                            'input-attributes': { "ng-options": "v for v in securityProviderInfo.supportedKeyAlgorithms" },
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        },
+                        "keyValidity": {
+                            "description": "The number of days the key will be valid for",
+                            "type": "Long",
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        },
+                        "keyPassword": {
+                            "description": "Password to the private key",
+                            "type": "password",
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            label: "Markdown Document",
+            tooltip: "A basic markup document using the Markdown wiki markup, particularly useful for ReadMe files in directories",
+            exemplar: "ReadMe.md",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".md"
+        },
+        {
+            label: "Text Document",
+            tooltip: "A plain text file",
+            exemplar: "document.text",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".txt"
+        },
+        {
+            label: "HTML Document",
+            tooltip: "A HTML document you can edit directly using the HTML markup",
+            exemplar: "document.html",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".html"
+        },
+        {
+            label: "XML Document",
+            tooltip: "An empty XML document",
+            exemplar: "document.xml",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".xml"
+        },
+        {
+            label: "Integration Flows",
+            tooltip: "Camel routes for defining your integration flows",
+            children: [
+                {
+                    label: "Camel XML document",
+                    tooltip: "A vanilla Camel XML document for integration flows",
+                    icon: "/img/icons/camel.svg",
+                    exemplar: "camel.xml",
+                    regex: defaultFileNamePattern,
+                    invalid: defaultFileNamePatternInvalid,
+                    extension: ".xml"
+                },
+                {
+                    label: "Camel OSGi Blueprint XML document",
+                    tooltip: "A vanilla Camel XML document for integration flows when using OSGi Blueprint",
+                    icon: "/img/icons/camel.svg",
+                    exemplar: "camel-blueprint.xml",
+                    regex: defaultFileNamePattern,
+                    invalid: defaultFileNamePatternInvalid,
+                    extension: ".xml"
+                },
+                {
+                    label: "Camel Spring XML document",
+                    tooltip: "A vanilla Camel XML document for integration flows when using the Spring framework",
+                    icon: "/img/icons/camel.svg",
+                    exemplar: "camel-spring.xml",
+                    regex: defaultFileNamePattern,
+                    invalid: defaultFileNamePatternInvalid,
+                    extension: ".xml"
+                }
+            ]
+        },
+        {
+            label: "Data Mapping Document",
+            tooltip: "Dozer based configuration of mapping documents",
+            icon: "/img/icons/dozer/dozer.gif",
+            exemplar: "dozer-mapping.xml",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".xml"
+        }
+    ];
+    function isFMCContainer(workspace) {
+        return false;
+    }
+    Wiki.isFMCContainer = isFMCContainer;
+    function isWikiEnabled(workspace, jolokia, localStorage) {
+        return Git.createGitRepository(workspace, jolokia, localStorage) !== null;
+    }
+    Wiki.isWikiEnabled = isWikiEnabled;
+    function goToLink(link, $timeout, $location) {
+        var href = Core.trimLeading(link, "#");
+        $timeout(function () {
+            Wiki.log.debug("About to navigate to: " + href);
+            $location.url(href);
+        }, 100);
+    }
+    Wiki.goToLink = goToLink;
+    /**
+     * Returns all the links for the given branch for the custom views, starting with "/"
+     * @param $scope
+     * @returns {string[]}
+     */
+    function customViewLinks($scope) {
+        var branch = $scope.branch;
+        var prefix = Core.trimLeading(Wiki.startLink(branch), "#");
+        return Wiki.customWikiViewPages.map(function (path) { return prefix + path; });
+    }
+    Wiki.customViewLinks = customViewLinks;
+    /**
+     * Returns a new create document wizard tree
+     * @method createWizardTree
+     * @for Wiki
+     * @static
+     */
+    function createWizardTree(workspace, $scope) {
+        var root = new Folder("New Documents");
+        addCreateWizardFolders(workspace, $scope, root, Wiki.documentTemplates);
+        return root;
+    }
+    Wiki.createWizardTree = createWizardTree;
+    function addCreateWizardFolders(workspace, $scope, parent, templates) {
+        angular.forEach(templates, function (template) {
+            if (template['fabricOnly'] && !Fabric.hasFabric(workspace)) {
+                return;
+            }
+            if (template.generated) {
+                if (template.generated.mbean) {
+                    var exists = workspace.treeContainsDomainAndProperties.apply(workspace, template.generated.mbean);
+                    if (!exists) {
+                        return;
+                    }
+                }
+                if (template.generated.init) {
+                    template.generated.init(workspace, $scope);
+                }
+            }
+            var title = template.label || key;
+            var node = new Folder(title);
+            node.parent = parent;
+            node.entity = template;
+            var addClass = template.addClass;
+            if (addClass) {
+                node.addClass = addClass;
+            }
+            var key = template.exemplar;
+            var parentKey = parent.key || "";
+            node.key = parentKey ? parentKey + "_" + key : key;
+            var icon = template.icon;
+            if (icon) {
+                node.icon = Core.url(icon);
+            }
+            // compiler was complaining about 'label' had no idea where it's coming from
+            // var tooltip = value["tooltip"] || value["description"] || label;
+            var tooltip = template["tooltip"] || template["description"] || '';
+            node.tooltip = tooltip;
+            if (template["folder"]) {
+                node.isFolder = function () {
+                    return true;
+                };
+            }
+            parent.children.push(node);
+            var children = template.children;
+            if (children) {
+                addCreateWizardFolders(workspace, $scope, node, children);
+            }
+        });
+    }
+    Wiki.addCreateWizardFolders = addCreateWizardFolders;
+    function startLink(branch) {
+        var start = "/wiki";
+        if (branch) {
+            start = UrlHelpers.join(start, 'branch', branch);
+        }
+        return start;
+    }
+    Wiki.startLink = startLink;
+    /**
+     * Returns true if the given filename/path is an index page (named index.* and is a markdown/html page).
+     *
+     * @param path
+     * @returns {boolean}
+     */
+    function isIndexPage(path) {
+        return path && (path.endsWith("index.md") || path.endsWith("index.html") || path.endsWith("index")) ? true : false;
+    }
+    Wiki.isIndexPage = isIndexPage;
+    function viewLink(branch, pageId, $location, fileName) {
+        if (fileName === void 0) { fileName = null; }
+        var link = null;
+        var start = startLink(branch);
+        if (pageId) {
+            // figure out which view to use for this page
+            var view = isIndexPage(pageId) ? "/book/" : "/view/";
+            link = start + view + encodePath(Core.trimLeading(pageId, "/"));
+        }
+        else {
+            // lets use the current path
+            var path = $location.path();
+            link = "#" + path.replace(/(edit|create)/, "view");
+        }
+        if (fileName && pageId && pageId.endsWith(fileName)) {
+            return link;
+        }
+        if (fileName) {
+            if (!link.endsWith("/")) {
+                link += "/";
+            }
+            link += fileName;
+        }
+        return link;
+    }
+    Wiki.viewLink = viewLink;
+    function branchLink(branch, pageId, $location, fileName) {
+        if (fileName === void 0) { fileName = null; }
+        return viewLink(branch, pageId, $location, fileName);
+    }
+    Wiki.branchLink = branchLink;
+    function editLink(branch, pageId, $location) {
+        var link = null;
+        var format = Wiki.fileFormat(pageId);
+        switch (format) {
+            case "image":
+                break;
+            default:
+                var start = startLink(branch);
+                if (pageId) {
+                    link = start + "/edit/" + encodePath(pageId);
+                }
+                else {
+                    // lets use the current path
+                    var path = $location.path();
+                    link = "#" + path.replace(/(view|create)/, "edit");
+                }
+        }
+        return link;
+    }
+    Wiki.editLink = editLink;
+    function createLink(branch, pageId, $location, $scope) {
+        var path = $location.path();
+        var start = startLink(branch);
+        var link = '';
+        if (pageId) {
+            link = start + "/create/" + encodePath(pageId);
+        }
+        else {
+            // lets use the current path
+            link = "#" + path.replace(/(view|edit|formTable)/, "create");
+        }
+        // we have the link so lets now remove the last path
+        // or if there is no / in the path then remove the last section
+        var idx = link.lastIndexOf("/");
+        if (idx > 0 && !$scope.children && !path.startsWith("/wiki/formTable")) {
+            link = link.substring(0, idx + 1);
+        }
+        return link;
+    }
+    Wiki.createLink = createLink;
+    function encodePath(pageId) {
+        return pageId.split("/").map(encodeURIComponent).join("/");
+    }
+    Wiki.encodePath = encodePath;
+    function decodePath(pageId) {
+        return pageId.split("/").map(decodeURIComponent).join("/");
+    }
+    Wiki.decodePath = decodePath;
+    function fileFormat(name, fileExtensionTypeRegistry) {
+        var extension = fileExtension(name);
+        var answer = null;
+        if (!fileExtensionTypeRegistry) {
+            fileExtensionTypeRegistry = HawtioCore.injector.get("fileExtensionTypeRegistry");
+        }
+        angular.forEach(fileExtensionTypeRegistry, function (array, key) {
+            if (array.indexOf(extension) >= 0) {
+                answer = key;
+            }
+        });
+        return answer;
+    }
+    Wiki.fileFormat = fileFormat;
+    /**
+     * Returns the file name of the given path; stripping off any directories
+     * @method fileName
+     * @for Wiki
+     * @static
+     * @param {String} path
+     * @return {String}
+     */
+    function fileName(path) {
+        if (path) {
+            var idx = path.lastIndexOf("/");
+            if (idx > 0) {
+                return path.substring(idx + 1);
+            }
+        }
+        return path;
+    }
+    Wiki.fileName = fileName;
+    /**
+     * Returns the folder of the given path (everything but the last path name)
+     * @method fileParent
+     * @for Wiki
+     * @static
+     * @param {String} path
+     * @return {String}
+     */
+    function fileParent(path) {
+        if (path) {
+            var idx = path.lastIndexOf("/");
+            if (idx > 0) {
+                return path.substring(0, idx);
+            }
+        }
+        // lets return the root directory
+        return "";
+    }
+    Wiki.fileParent = fileParent;
+    /**
+     * Returns the file name for the given name; we hide some extensions
+     * @method hideFineNameExtensions
+     * @for Wiki
+     * @static
+     * @param {String} name
+     * @return {String}
+     */
+    function hideFileNameExtensions(name) {
+        if (name) {
+            angular.forEach(Wiki.hideExtensions, function (extension) {
+                if (name.endsWith(extension)) {
+                    name = name.substring(0, name.length - extension.length);
+                }
+            });
+        }
+        return name;
+    }
+    Wiki.hideFileNameExtensions = hideFileNameExtensions;
+    /**
+     * Returns the URL to perform a GET or POST for the given branch name and path
+     */
+    function gitRestURL(branch, path) {
+        var url = gitRelativeURL(branch, path);
+        url = Core.url('/' + url);
+        var connectionName = Core.getConnectionNameParameter();
+        if (connectionName) {
+            var connectionOptions = Core.getConnectOptions(connectionName);
+            if (connectionOptions) {
+                connectionOptions.path = url;
+                url = Core.createServerConnectionUrl(connectionOptions);
+            }
+        }
+        return url;
+    }
+    Wiki.gitRestURL = gitRestURL;
+    /**
+     * Returns a relative URL to perform a GET or POST for the given branch/path
+     */
+    function gitRelativeURL(branch, path) {
+        branch = branch || "master";
+        path = path || "/";
+        return UrlHelpers.join("git/" + branch, path);
+    }
+    Wiki.gitRelativeURL = gitRelativeURL;
+    /**
+     * Takes a row containing the entity object; or can take the entity directly.
+     *
+     * It then uses the name, directory and xmlNamespaces properties
+     *
+     * @method fileIconHtml
+     * @for Wiki
+     * @static
+     * @param {any} row
+     * @return {String}
+     *
+     */
+    function fileIconHtml(row) {
+        var name = row.name;
+        var path = row.path;
+        var branch = row.branch;
+        var directory = row.directory;
+        var xmlNamespaces = row.xmlNamespaces;
+        var iconUrl = row.iconUrl;
+        var entity = row.entity;
+        if (entity) {
+            name = name || entity.name;
+            path = path || entity.path;
+            branch = branch || entity.branch;
+            directory = directory || entity.directory;
+            xmlNamespaces = xmlNamespaces || entity.xmlNamespaces;
+            iconUrl = iconUrl || entity.iconUrl;
+        }
+        branch = branch || "master";
+        var css = null;
+        var icon = null;
+        var extension = fileExtension(name);
+        // TODO could we use different icons for markdown v xml v html
+        if (xmlNamespaces && xmlNamespaces.length) {
+            if (xmlNamespaces.any(function (ns) { return Wiki.camelNamespaces.any(ns); })) {
+                icon = "img/icons/camel.svg";
+            }
+            else if (xmlNamespaces.any(function (ns) { return Wiki.dozerNamespaces.any(ns); })) {
+                icon = "img/icons/dozer/dozer.gif";
+            }
+            else if (xmlNamespaces.any(function (ns) { return Wiki.activemqNamespaces.any(ns); })) {
+                icon = "img/icons/messagebroker.svg";
+            }
+            else {
+                Wiki.log.debug("file " + name + " has namespaces " + xmlNamespaces);
+            }
+        }
+        if (iconUrl) {
+            css = null;
+            icon = UrlHelpers.join("git", iconUrl);
+            var connectionName = Core.getConnectionNameParameter();
+            if (connectionName) {
+                var connectionOptions = Core.getConnectOptions(connectionName);
+                if (connectionOptions) {
+                    connectionOptions.path = Core.url('/' + icon);
+                    icon = Core.createServerConnectionUrl(connectionOptions);
+                }
+            }
+        }
+        if (!icon) {
+            if (directory) {
+                switch (extension) {
+                    case 'profile':
+                        css = "fa fa-book";
+                        break;
+                    default:
+                        // log.debug("No match for extension: ", extension, " using a generic folder icon");
+                        css = "fa fa-folder";
+                }
+            }
+            else {
+                switch (extension) {
+                    case 'png':
+                    case 'svg':
+                    case 'jpg':
+                    case 'gif':
+                        css = null;
+                        icon = Wiki.gitRelativeURL(branch, path);
+                        var connectionName = Core.getConnectionNameParameter();
+                        if (connectionName) {
+                            var connectionOptions = Core.getConnectOptions(connectionName);
+                            if (connectionOptions) {
+                                connectionOptions.path = Core.url('/' + icon);
+                                icon = Core.createServerConnectionUrl(connectionOptions);
+                            }
+                        }
+                        break;
+                    case 'json':
+                    case 'xml':
+                        css = "fa fa-file-text";
+                        break;
+                    case 'md':
+                        css = "fa fa-file-text-o";
+                        break;
+                    default:
+                        // log.debug("No match for extension: ", extension, " using a generic file icon");
+                        css = "fa fa-file-alt";
+                }
+            }
+        }
+        if (icon) {
+            return "<img src='" + Core.url(icon) + "'>";
+        }
+        else {
+            return "<i class='" + css + "'></i>";
+        }
+    }
+    Wiki.fileIconHtml = fileIconHtml;
+    function iconClass(row) {
+        var name = row.getProperty("name");
+        var extension = fileExtension(name);
+        var directory = row.getProperty("directory");
+        if (directory) {
+            return "fa fa-folder";
+        }
+        if ("xml" === extension) {
+            return "fa fa-cog";
+        }
+        else if ("md" === extension) {
+            return "fa fa-file-text-o";
+        }
+        // TODO could we use different icons for markdown v xml v html
+        return "fa fa-file-alt";
+    }
+    Wiki.iconClass = iconClass;
+    /**
+     * Extracts the pageId, branch, objectId from the route parameters
+     * @method initScope
+     * @for Wiki
+     * @static
+     * @param {*} $scope
+     * @param {any} $routeParams
+     * @param {ng.ILocationService} $location
+     */
+    function initScope($scope, $routeParams, $location) {
+        $scope.pageId = Wiki.pageId($routeParams, $location);
+        $scope.branch = $routeParams["branch"] || $location.search()["branch"];
+        $scope.objectId = $routeParams["objectId"];
+        $scope.startLink = Wiki.startLink($scope.branch);
+        $scope.historyLink = startLink($scope.branch) + "/history/" + ($scope.pageId || "");
+    }
+    Wiki.initScope = initScope;
+    /**
+     * Loads the branches for this wiki repository and stores them in the branches property in
+     * the $scope and ensures $scope.branch is set to a valid value
+     *
+     * @param wikiRepository
+     * @param $scope
+     * @param isFmc whether we run as fabric8 or as hawtio
+     */
+    function loadBranches(jolokia, wikiRepository, $scope, isFmc) {
+        if (isFmc === void 0) { isFmc = false; }
+        if (isFmc) {
+            // when using fabric then the branches is the fabric versions, so we should use that instead
+            $scope.branches = Fabric.getVersionIds(jolokia);
+            var defaultVersion = Fabric.getDefaultVersionId(jolokia);
+            // use current default version as default branch
+            if (!$scope.branch) {
+                $scope.branch = defaultVersion;
+            }
+            // lets sort by version number
+            $scope.branches = $scope.branches.sortBy(function (v) { return Core.versionToSortableString(v); }, true);
+            Core.$apply($scope);
+        }
+        else {
+            wikiRepository.branches(function (response) {
+                // lets sort by version number
+                $scope.branches = response.sortBy(function (v) { return Core.versionToSortableString(v); }, true);
+                // default the branch name if we have 'master'
+                if (!$scope.branch && $scope.branches.find(function (branch) {
+                    return branch === "master";
+                })) {
+                    $scope.branch = "master";
+                }
+                Core.$apply($scope);
+            });
+        }
+    }
+    Wiki.loadBranches = loadBranches;
+    /**
+     * Extracts the pageId from the route parameters
+     * @method pageId
+     * @for Wiki
+     * @static
+     * @param {any} $routeParams
+     * @param @ng.ILocationService @location
+     * @return {String}
+     */
+    function pageId($routeParams, $location) {
+        var pageId = $routeParams['page'];
+        if (!pageId) {
+            for (var i = 0; i < 100; i++) {
+                var value = $routeParams['path' + i];
+                if (angular.isDefined(value)) {
+                    if (!pageId) {
+                        pageId = value;
+                    }
+                    else {
+                        pageId += "/" + value;
+                    }
+                }
+                else
+                    break;
+            }
+            return pageId || "/";
+        }
+        // if no $routeParams variables lets figure it out from the $location
+        if (!pageId) {
+            pageId = pageIdFromURI($location.path());
+        }
+        return pageId;
+    }
+    Wiki.pageId = pageId;
+    function pageIdFromURI(url) {
+        var wikiPrefix = "/wiki/";
+        if (url && url.startsWith(wikiPrefix)) {
+            var idx = url.indexOf("/", wikiPrefix.length + 1);
+            if (idx > 0) {
+                return url.substring(idx + 1, url.length);
+            }
+        }
+        return null;
+    }
+    Wiki.pageIdFromURI = pageIdFromURI;
+    function fileExtension(name) {
+        if (name.indexOf('#') > 0)
+            name = name.substring(0, name.indexOf('#'));
+        return Core.fileExtension(name, "markdown");
+    }
+    Wiki.fileExtension = fileExtension;
+    function onComplete(status) {
+        console.log("Completed operation with status: " + JSON.stringify(status));
+    }
+    Wiki.onComplete = onComplete;
+    /**
+     * Parses the given JSON text reporting to the user if there is a parse error
+     * @method parseJson
+     * @for Wiki
+     * @static
+     * @param {String} text
+     * @return {any}
+     */
+    function parseJson(text) {
+        if (text) {
+            try {
+                return JSON.parse(text);
+            }
+            catch (e) {
+                Core.notification("error", "Failed to parse JSON: " + e);
+            }
+        }
+        return null;
+    }
+    Wiki.parseJson = parseJson;
+    /**
+     * Adjusts a relative or absolute link from a wiki or file system to one using the hash bang syntax
+     * @method adjustHref
+     * @for Wiki
+     * @static
+     * @param {*} $scope
+     * @param {ng.ILocationService} $location
+     * @param {String} href
+     * @param {String} fileExtension
+     * @return {string}
+     */
+    function adjustHref($scope, $location, href, fileExtension) {
+        var extension = fileExtension ? "." + fileExtension : "";
+        // if the last part of the path has a dot in it lets
+        // exclude it as we are relative to a markdown or html file in a folder
+        // such as when viewing readme.md or index.md
+        var path = $location.path();
+        var folderPath = path;
+        var idx = path.lastIndexOf("/");
+        if (idx > 0) {
+            var lastName = path.substring(idx + 1);
+            if (lastName.indexOf(".") >= 0) {
+                folderPath = path.substring(0, idx);
+            }
+        }
+        // Deal with relative URLs first...
+        if (href.startsWith('../')) {
+            var parts = href.split('/');
+            var pathParts = folderPath.split('/');
+            var parents = parts.filter(function (part) {
+                return part === "..";
+            });
+            parts = parts.last(parts.length - parents.length);
+            pathParts = pathParts.first(pathParts.length - parents.length);
+            return '#' + pathParts.join('/') + '/' + parts.join('/') + extension + $location.hash();
+        }
+        // Turn an absolute link into a wiki link...
+        if (href.startsWith('/')) {
+            return Wiki.branchLink($scope.branch, href + extension, $location) + extension;
+        }
+        if (!Wiki.excludeAdjustmentPrefixes.any(function (exclude) {
+            return href.startsWith(exclude);
+        })) {
+            return '#' + folderPath + "/" + href + extension + $location.hash();
+        }
+        else {
+            return null;
+        }
+    }
+    Wiki.adjustHref = adjustHref;
+})(Wiki || (Wiki = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../wiki/ts/wikiHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module.controller("ActiveMQ.BrokerDiagramController", ["$scope", "$compile", "$location", "localStorage", "jolokia", "workspace", function ($scope, $compile, $location, localStorage, jolokia, workspace) {
+        Fabric.initScope($scope, $location, jolokia, workspace);
+        var isFmc = Wiki.isFMCContainer(workspace);
+        $scope.isFmc = isFmc;
+        $scope.selectedNode = null;
+        var defaultFlags = {
+            panel: true,
+            popup: false,
+            label: true,
+            group: false,
+            profile: false,
+            slave: false,
+            broker: isFmc,
+            network: true,
+            container: false,
+            queue: true,
+            topic: true,
+            consumer: true,
+            producer: true
+        };
+        $scope.viewSettings = {};
+        $scope.shapeSize = {
+            broker: 20,
+            queue: 14,
+            topic: 14
+        };
+        var redrawGraph = Core.throttled(doRedrawGraph, 1000);
+        var graphBuilder = new ForceGraph.GraphBuilder();
+        Core.bindModelToSearchParam($scope, $location, "searchFilter", "q", "");
+        angular.forEach(defaultFlags, function (defaultValue, key) {
+            var modelName = "viewSettings." + key;
+            // bind model values to search params...
+            function currentValue() {
+                var answer = $location.search()[paramName] || defaultValue;
+                return answer === "false" ? false : answer;
+            }
+            var paramName = key;
+            var value = currentValue();
+            Core.pathSet($scope, modelName, value);
+            $scope.$watch(modelName, function () {
+                var current = Core.pathGet($scope, modelName);
+                var old = currentValue();
+                if (current !== old) {
+                    var defaultValue = defaultFlags[key];
+                    if (current !== defaultValue) {
+                        if (!current) {
+                            current = "false";
+                        }
+                        $location.search(paramName, current);
+                    }
+                    else {
+                        $location.search(paramName, null);
+                    }
+                }
+                redrawGraph();
+            });
+        });
+        $scope.connectToBroker = function () {
+            var selectedNode = $scope.selectedNode;
+            if (selectedNode) {
+                var container = selectedNode["brokerContainer"] || selectedNode;
+                connectToBroker(container, selectedNode["brokerName"]);
+            }
+        };
+        function connectToBroker(container, brokerName, postfix) {
+            if (postfix === void 0) { postfix = null; }
+            if (isFmc && container.jolokia !== jolokia) {
+                Fabric.connectToBroker($scope, container, postfix);
+            }
+            else {
+                var view = "/jmx/attributes?tab=activemq";
+                if (!postfix) {
+                    if (brokerName) {
+                        // lets default to the broker view
+                        postfix = "nid=root-org.apache.activemq-Broker-" + brokerName;
+                    }
+                }
+                if (postfix) {
+                    view += "&" + postfix;
+                }
+                ActiveMQ.log.info("Opening view " + view);
+                var path = Core.url("/#" + view);
+                window.open(path, '_destination');
+                window.focus();
+            }
+        }
+        $scope.connectToDestination = function () {
+            var selectedNode = $scope.selectedNode;
+            if (selectedNode) {
+                var container = selectedNode["brokerContainer"] || selectedNode;
+                var brokerName = selectedNode["brokerName"];
+                var destinationType = selectedNode["destinationType"] || selectedNode["typeLabel"];
+                var destinationName = selectedNode["destinationName"];
+                var postfix = null;
+                if (brokerName && destinationType && destinationName) {
+                    postfix = "nid=root-org.apache.activemq-Broker-" + brokerName + "-" + destinationType + "-" + destinationName;
+                }
+                connectToBroker(container, brokerName, postfix);
+            }
+        };
+        $scope.$on('$destroy', function (event) {
+            stopOldJolokia();
+        });
+        function stopOldJolokia() {
+            var oldJolokia = $scope.selectedNodeJolokia;
+            if (oldJolokia && oldJolokia !== jolokia) {
+                oldJolokia.stop();
+            }
+        }
+        $scope.$watch("selectedNode", function (newValue, oldValue) {
+            // lets cancel any previously registered thingy
+            if ($scope.unregisterFn) {
+                $scope.unregisterFn();
+                $scope.unregisterFn = null;
+            }
+            var node = $scope.selectedNode;
+            if (node) {
+                var mbean = node.objectName;
+                var brokerContainer = node.brokerContainer || {};
+                var nodeJolokia = node.jolokia || brokerContainer.jolokia || jolokia;
+                if (nodeJolokia !== $scope.selectedNodeJolokia) {
+                    stopOldJolokia();
+                    $scope.selectedNodeJolokia = nodeJolokia;
+                    if (nodeJolokia !== jolokia) {
+                        var rate = Core.parseIntValue(localStorage['updateRate'] || "2000", "update rate");
+                        if (rate) {
+                            nodeJolokia.start(rate);
+                        }
+                    }
+                }
+                var dummyResponse = { value: node.panelProperties || {} };
+                if (mbean && nodeJolokia) {
+                    ActiveMQ.log.debug("reading ", mbean, " on remote container");
+                    $scope.unregisterFn = Core.register(nodeJolokia, $scope, {
+                        type: 'read',
+                        mbean: mbean
+                    }, Core.onSuccess(renderNodeAttributes, {
+                        error: function (response) {
+                            // probably we've got a wrong mbean name?
+                            // so lets render at least
+                            renderNodeAttributes(dummyResponse);
+                            Core.defaultJolokiaErrorHandler(response);
+                        }
+                    }));
+                }
+                else {
+                    ActiveMQ.log.debug("no mbean or jolokia available, using dummy response");
+                    renderNodeAttributes(dummyResponse);
+                }
+            }
+        });
+        function getDestinationTypeName(attributes) {
+            var prefix = attributes["DestinationTemporary"] ? "Temporary " : "";
+            return prefix + (attributes["DestinationTopic"] ? "Topic" : "Queue");
+        }
+        var ignoreNodeAttributes = ["Broker", "BrokerId", "BrokerName", "Connection", "DestinationName", "DestinationQueue", "DestinationTemporary", "DestinationTopic",];
+        var ignoreNodeAttributesByType = {
+            producer: ["Producer", "ProducerId"],
+            queue: ["Name", "MessageGroups", "MessageGroupType", "Subscriptions"],
+            topic: ["Name", "Subscriptions"],
+            broker: ["DataDirectory", "DurableTopicSubscriptions", "DynamicDestinationProducers", "InactiveDurableToppicSubscribers"]
+        };
+        var brokerShowProperties = ["AverageMessageSize", "BrokerId", "JobSchedulerStorePercentUsage", "Slave", "MemoryPercentUsage", "StorePercentUsage", "TempPercentUsage"];
+        var onlyShowAttributesByType = {
+            broker: brokerShowProperties,
+            brokerSlave: brokerShowProperties
+        };
+        function renderNodeAttributes(response) {
+            var properties = [];
+            if (response) {
+                var value = response.value || {};
+                $scope.selectedNodeAttributes = value;
+                var selectedNode = $scope.selectedNode || {};
+                var brokerContainer = selectedNode['brokerContainer'] || {};
+                var nodeType = selectedNode["type"];
+                var brokerName = selectedNode["brokerName"];
+                var containerId = selectedNode["container"] || brokerContainer["container"];
+                var group = selectedNode["group"] || brokerContainer["group"];
+                var jolokiaUrl = selectedNode["jolokiaUrl"] || brokerContainer["jolokiaUrl"];
+                var profile = selectedNode["profile"] || brokerContainer["profile"];
+                var version = selectedNode["version"] || brokerContainer["version"];
+                var isBroker = nodeType && nodeType.startsWith("broker");
+                var ignoreKeys = ignoreNodeAttributes.concat(ignoreNodeAttributesByType[nodeType] || []);
+                var onlyShowKeys = onlyShowAttributesByType[nodeType];
+                angular.forEach(value, function (v, k) {
+                    if (onlyShowKeys ? onlyShowKeys.indexOf(k) >= 0 : ignoreKeys.indexOf(k) < 0) {
+                        var formattedValue = Core.humanizeValueHtml(v);
+                        properties.push({ key: Core.humanizeValue(k), value: formattedValue });
+                    }
+                });
+                properties = properties.sortBy("key");
+                var brokerProperty = null;
+                if (brokerName) {
+                    var brokerHtml = '<a target="broker" ng-click="connectToBroker()">' + '<img title="Apache ActiveMQ" src="img/icons/messagebroker.svg"> ' + brokerName + '</a>';
+                    if (version && profile) {
+                        var brokerLink = Fabric.brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName);
+                        if (brokerLink) {
+                            brokerHtml += ' <a title="configuration settings" target="brokerConfig" href="' + brokerLink + '"><i class="fa fa-tasks"></i></a>';
+                        }
+                    }
+                    var html = $compile(brokerHtml)($scope);
+                    brokerProperty = { key: "Broker", value: html };
+                    if (!isBroker) {
+                        properties.splice(0, 0, brokerProperty);
+                    }
+                }
+                if (containerId) {
+                    //var containerModel = "selectedNode" + (selectedNode['brokerContainer'] ? ".brokerContainer" : "");
+                    properties.splice(0, 0, { key: "Container", value: $compile('<div fabric-container-link="' + selectedNode['container'] + '"></div>')($scope) });
+                }
+                var destinationName = value["DestinationName"] || selectedNode["destinationName"];
+                if (destinationName && (nodeType !== "queue" && nodeType !== "topic")) {
+                    var destinationTypeName = getDestinationTypeName(value);
+                    var html = createDestinationLink(destinationName, destinationTypeName);
+                    properties.splice(0, 0, { key: destinationTypeName, value: html });
+                }
+                var typeLabel = selectedNode["typeLabel"];
+                var name = selectedNode["name"] || selectedNode["id"] || selectedNode['objectName'];
+                if (typeLabel) {
+                    var html = name;
+                    if (nodeType === "queue" || nodeType === "topic") {
+                        html = createDestinationLink(name, nodeType);
+                    }
+                    var typeProperty = { key: typeLabel, value: html };
+                    if (isBroker && brokerProperty) {
+                        typeProperty = brokerProperty;
+                    }
+                    properties.splice(0, 0, typeProperty);
+                }
+            }
+            $scope.selectedNodeProperties = properties;
+            Core.$apply($scope);
+        }
+        /**
+         * Generates the HTML for a link to the destination
+         */
+        function createDestinationLink(destinationName, destinationType) {
+            if (destinationType === void 0) { destinationType = "queue"; }
+            return $compile('<a target="destination" title="' + destinationName + '" ng-click="connectToDestination()">' + destinationName + '</a>')($scope);
+        }
+        $scope.$watch("searchFilter", function (newValue, oldValue) {
+            redrawGraph();
+        });
+        if (isFmc) {
+            Fabric.loadBrokerStatus(onBrokerData);
+        }
+        else {
+            // lets just use the current stuff from the workspace
+            $scope.$watch('workspace.tree', function () {
+                redrawGraph();
+            });
+            $scope.$on('jmxTreeUpdated', function () {
+                redrawGraph();
+            });
+        }
+        function onBrokerData(response) {
+            if (response) {
+                var responseJson = angular.toJson(response.value);
+                if ($scope.responseJson === responseJson) {
+                    return;
+                }
+                $scope.responseJson = responseJson;
+                $scope.brokers = response.value;
+                doRedrawGraph();
+            }
+        }
+        function redrawFabricBrokers() {
+            var containersToDelete = $scope.activeContainers || {};
+            $scope.activeContainers = {};
+            angular.forEach($scope.brokers, function (brokerStatus) {
+                // only query master brokers which are provisioned correctly
+                brokerStatus.validContainer = brokerStatus.alive && brokerStatus.master && brokerStatus.provisionStatus === "success";
+                // don't use type field so we can use it for the node types..
+                renameTypeProperty(brokerStatus);
+                //log.info("Broker status: " + angular.toJson(brokerStatus, true));
+                var groupId = brokerStatus.group;
+                var profileId = brokerStatus.profile;
+                var brokerId = brokerStatus.brokerName;
+                var containerId = brokerStatus.container;
+                var versionId = brokerStatus.version || "1.0";
+                var group = getOrAddNode("group", groupId, brokerStatus, function () {
+                    return {
+                        /*
+                         navUrl: ,
+                         image: {
+                         url: "/hawtio/img/icons/osgi/bundle.png",
+                         width: 32,
+                         height:32
+                         },
+                         */
+                        typeLabel: "Broker Group",
+                        popup: {
+                            title: "Broker Group: " + groupId,
+                            content: "<p>" + groupId + "</p>"
+                        }
+                    };
+                });
+                var profile = getOrAddNode("profile", profileId, brokerStatus, function () {
+                    return {
+                        typeLabel: "Profile",
+                        popup: {
+                            title: "Profile: " + profileId,
+                            content: "<p>" + profileId + "</p>"
+                        }
+                    };
+                });
+                // TODO do we need to create a physical broker node per container and logical broker maybe?
+                var container = null;
+                if (containerId) {
+                    container = getOrAddNode("container", containerId, brokerStatus, function () {
+                        return {
+                            containerId: containerId,
+                            typeLabel: "Container",
+                            popup: {
+                                title: "Container: " + containerId,
+                                content: "<p>" + containerId + " version: " + versionId + "</p>"
+                            }
+                        };
+                    });
+                }
+                var master = brokerStatus.master;
+                var broker = getOrAddBroker(master, brokerId, groupId, containerId, container, brokerStatus);
+                if (container && container.validContainer) {
+                    var key = container.containerId;
+                    $scope.activeContainers[key] = container;
+                    delete containersToDelete[key];
+                }
+                // add the links...
+                if ($scope.viewSettings.group) {
+                    if ($scope.viewSettings.profile) {
+                        addLink(group, profile, "group");
+                        addLink(profile, broker, "broker");
+                    }
+                    else {
+                        addLink(group, broker, "group");
+                    }
+                }
+                else {
+                    if ($scope.viewSettings.profile) {
+                        addLink(profile, broker, "broker");
+                    }
+                }
+                if (container) {
+                    if ((master || $scope.viewSettings.slave) && $scope.viewSettings.container) {
+                        addLink(broker, container, "container");
+                        container.destinationLinkNode = container;
+                    }
+                    else {
+                        container.destinationLinkNode = broker;
+                    }
+                }
+            });
+            redrawActiveContainers();
+        }
+        function redrawLocalBroker() {
+            var container = {
+                jolokia: jolokia
+            };
+            var containerId = "local";
+            $scope.activeContainers = {
+                containerId: container
+            };
+            if ($scope.viewSettings.broker) {
+                jolokia.search("org.apache.activemq:type=Broker,brokerName=*", Core.onSuccess(function (response) {
+                    angular.forEach(response, function (objectName) {
+                        var details = Core.parseMBean(objectName);
+                        if (details) {
+                            var properties = details['attributes'];
+                            ActiveMQ.log.info("Got broker: " + objectName + " on container: " + containerId + " properties: " + angular.toJson(properties, true));
+                            if (properties) {
+                                var master = true;
+                                var brokerId = properties["brokerName"] || "unknown";
+                                var groupId = "";
+                                var broker = getOrAddBroker(master, brokerId, groupId, containerId, container, properties);
+                            }
+                        }
+                    });
+                    redrawActiveContainers();
+                }));
+            }
+            else {
+                redrawActiveContainers();
+            }
+        }
+        function redrawActiveContainers() {
+            // TODO delete any nodes from dead containers in containersToDelete
+            angular.forEach($scope.activeContainers, function (container, id) {
+                var containerJolokia = container.jolokia;
+                if (containerJolokia) {
+                    onContainerJolokia(containerJolokia, container, id);
+                }
+                else {
+                    Fabric.containerJolokia(jolokia, id, function (containerJolokia) { return onContainerJolokia(containerJolokia, container, id); });
+                }
+            });
+            $scope.graph = graphBuilder.buildGraph();
+            Core.$apply($scope);
+        }
+        function doRedrawGraph() {
+            graphBuilder = new ForceGraph.GraphBuilder();
+            if (isFmc) {
+                redrawFabricBrokers();
+            }
+            else {
+                redrawLocalBroker();
+            }
+        }
+        function brokerNameMarkup(brokerName) {
+            return brokerName ? "<p></p>broker: " + brokerName + "</p>" : "";
+        }
+        function matchesDestinationName(destinationName, typeName) {
+            if (destinationName) {
+                var selection = workspace.selection;
+                if (selection && selection.domain === ActiveMQ.jmxDomain) {
+                    var type = selection.entries["destinationType"];
+                    if (type) {
+                        if ((type === "Queue" && typeName === "topic") || (type === "Topic" && typeName === "queue")) {
+                            return false;
+                        }
+                    }
+                    var destName = selection.entries["destinationName"];
+                    if (destName) {
+                        if (destName !== destinationName)
+                            return false;
+                    }
+                }
+                ActiveMQ.log.info("selection: " + selection);
+                // TODO if the current selection is a destination...
+                return !$scope.searchFilter || destinationName.indexOf($scope.searchFilter) >= 0;
+            }
+            return false;
+        }
+        function onContainerJolokia(containerJolokia, container, id) {
+            if (containerJolokia) {
+                container.jolokia = containerJolokia;
+                function getOrAddDestination(properties) {
+                    var typeName = properties.destType;
+                    var brokerName = properties.brokerName;
+                    var destinationName = properties.destinationName;
+                    if (!matchesDestinationName(destinationName, typeName)) {
+                        return null;
+                    }
+                    // should we be filtering this destination out
+                    var hideFlag = "topic" === typeName ? $scope.viewSettings.topic : $scope.viewSettings.queue;
+                    if (!hideFlag) {
+                        return null;
+                    }
+                    var destination = getOrAddNode(typeName, destinationName, properties, function () {
+                        var destinationTypeName = properties.destinationType || "Queue";
+                        var objectName = "";
+                        if (brokerName) {
+                            // lets ignore temp topic stuff as there's no mbean for these
+                            if (!destinationName.startsWith("ActiveMQ.Advisory.TempQueue_ActiveMQ.Advisory.TempTopic")) {
+                                objectName = "org.apache.activemq:type=Broker,brokerName=" + brokerName + ",destinationType=" + destinationTypeName + ",destinationName=" + destinationName;
+                            }
+                        }
+                        var answer = {
+                            typeLabel: destinationTypeName,
+                            brokerContainer: container,
+                            objectName: objectName,
+                            jolokia: containerJolokia,
+                            popup: {
+                                title: destinationTypeName + ": " + destinationName,
+                                content: brokerNameMarkup(properties.brokerName)
+                            }
+                        };
+                        if (!brokerName) {
+                            containerJolokia.search("org.apache.activemq:destinationType=" + destinationTypeName + ",destinationName=" + destinationName + ",*", Core.onSuccess(function (response) {
+                                ActiveMQ.log.info("Found destination mbean: " + response);
+                                if (response && response.length) {
+                                    answer.objectName = response[0];
+                                }
+                            }));
+                        }
+                        return answer;
+                    });
+                    if (destination && $scope.viewSettings.broker && brokerName) {
+                        addLinkIds(brokerNodeId(brokerName), destination["id"], "destination");
+                    }
+                    return destination;
+                }
+                // find networks
+                var brokerId = container.brokerName;
+                if (brokerId && $scope.viewSettings.network && $scope.viewSettings.broker) {
+                    containerJolokia.request({ type: "read", mbean: "org.apache.activemq:connector=networkConnectors,*" }, Core.onSuccess(function (response) {
+                        angular.forEach(response.value, function (properties, objectName) {
+                            var details = Core.parseMBean(objectName);
+                            var attributes = details['attributes'];
+                            if (properties) {
+                                configureDestinationProperties(properties);
+                                var remoteBrokerId = properties.RemoteBrokerName;
+                                if (remoteBrokerId) {
+                                    addLinkIds(brokerNodeId(brokerId), brokerNodeId(remoteBrokerId), "network");
+                                }
+                            }
+                        });
+                        graphModelUpdated();
+                    }));
+                }
+                // find consumers
+                if ($scope.viewSettings.consumer) {
+                    containerJolokia.search("org.apache.activemq:endpoint=Consumer,*", Core.onSuccess(function (response) {
+                        angular.forEach(response, function (objectName) {
+                            //log.info("Got consumer: " + objectName + " on container: " + id);
+                            var details = Core.parseMBean(objectName);
+                            if (details) {
+                                var properties = details['attributes'];
+                                if (properties) {
+                                    configureDestinationProperties(properties);
+                                    var consumerId = properties.consumerId;
+                                    if (consumerId) {
+                                        var destination = getOrAddDestination(properties);
+                                        if (destination) {
+                                            addLink(container.destinationLinkNode, destination, "destination");
+                                            var consumer = getOrAddNode("consumer", consumerId, properties, function () {
+                                                return {
+                                                    typeLabel: "Consumer",
+                                                    brokerContainer: container,
+                                                    objectName: objectName,
+                                                    jolokia: containerJolokia,
+                                                    popup: {
+                                                        title: "Consumer: " + consumerId,
+                                                        content: "<p>client: " + (properties.clientId || "") + "</p> " + brokerNameMarkup(properties.brokerName)
+                                                    }
+                                                };
+                                            });
+                                            addLink(destination, consumer, "consumer");
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        graphModelUpdated();
+                    }));
+                }
+                // find producers
+                if ($scope.viewSettings.producer) {
+                    containerJolokia.search("org.apache.activemq:endpoint=Producer,*", Core.onSuccess(function (response) {
+                        angular.forEach(response, function (objectName) {
+                            var details = Core.parseMBean(objectName);
+                            if (details) {
+                                var properties = details['attributes'];
+                                if (properties) {
+                                    configureDestinationProperties(properties);
+                                    var producerId = properties.producerId;
+                                    if (producerId) {
+                                        var destination = getOrAddDestination(properties);
+                                        if (destination) {
+                                            addLink(container.destinationLinkNode, destination, "destination");
+                                            var producer = getOrAddNode("producer", producerId, properties, function () {
+                                                return {
+                                                    typeLabel: "Producer",
+                                                    brokerContainer: container,
+                                                    objectName: objectName,
+                                                    jolokia: containerJolokia,
+                                                    popup: {
+                                                        title: "Producer: " + producerId,
+                                                        content: "<p>client: " + (properties.clientId || "") + "</p> " + brokerNameMarkup(properties.brokerName)
+                                                    }
+                                                };
+                                            });
+                                            addLink(producer, destination, "producer");
+                                        }
+                                        graphModelUpdated();
+                                    }
+                                }
+                            }
+                        });
+                        graphModelUpdated();
+                    }));
+                }
+                // find dynamic producers
+                if ($scope.viewSettings.producer) {
+                    containerJolokia.request({ type: "read", mbean: "org.apache.activemq:endpoint=dynamicProducer,*" }, Core.onSuccess(function (response) {
+                        angular.forEach(response.value, function (mbeanValues, objectName) {
+                            var details = Core.parseMBean(objectName);
+                            var attributes = details['attributes'];
+                            var properties = {};
+                            angular.forEach(attributes, function (value, key) {
+                                properties[key] = value;
+                            });
+                            angular.forEach(mbeanValues, function (value, key) {
+                                properties[key] = value;
+                            });
+                            configureDestinationProperties(properties);
+                            properties['destinationName'] = properties['DestinationName'];
+                            var producerId = properties["producerId"] || properties["ProducerId"];
+                            if (properties["DestinationTemporary"] || properties["DestinationTopc"]) {
+                                properties["destType"] = "topic";
+                            }
+                            var destination = getOrAddDestination(properties);
+                            if (producerId && destination) {
+                                addLink(container.destinationLinkNode, destination, "destination");
+                                var producer = getOrAddNode("producer", producerId, properties, function () {
+                                    return {
+                                        typeLabel: "Producer (Dynamic)",
+                                        brokerContainer: container,
+                                        objectName: objectName,
+                                        jolokia: containerJolokia,
+                                        popup: {
+                                            title: "Producer (Dynamic): " + producerId,
+                                            content: "<p>client: " + (properties['ClientId'] || "") + "</p> " + brokerNameMarkup(properties['brokerName'])
+                                        }
+                                    };
+                                });
+                                addLink(producer, destination, "producer");
+                            }
+                        });
+                        graphModelUpdated();
+                    }));
+                }
+            }
+        }
+        function graphModelUpdated() {
+            $scope.graph = graphBuilder.buildGraph();
+            Core.$apply($scope);
+        }
+        function getOrAddBroker(master, brokerId, groupId, containerId, container, brokerStatus) {
+            var broker = null;
+            var brokerFlag = master ? $scope.viewSettings.broker : $scope.viewSettings.slave;
+            if (brokerFlag) {
+                broker = getOrAddNode("broker", brokerId + (master ? "" : ":slave"), brokerStatus, function () {
+                    return {
+                        type: master ? "broker" : "brokerSlave",
+                        typeLabel: master ? "Broker" : "Slave Broker",
+                        popup: {
+                            title: (master ? "Master" : "Slave") + " Broker: " + brokerId,
+                            content: "<p>Container: " + containerId + "</p> <p>Group: " + groupId + "</p>"
+                        }
+                    };
+                });
+                if (master) {
+                    if (!broker['objectName']) {
+                        // lets try guess the mbean name
+                        broker['objectName'] = "org.apache.activemq:type=Broker,brokerName=" + brokerId;
+                        ActiveMQ.log.info("Guessed broker mbean: " + broker['objectName']);
+                    }
+                    if (!broker['brokerContainer'] && container) {
+                        broker['brokerContainer'] = container;
+                    }
+                }
+            }
+            return broker;
+        }
+        function getOrAddNode(typeName, id, properties, createFn) {
+            var node = null;
+            if (id) {
+                var nodeId = typeName + ":" + id;
+                node = graphBuilder.getNode(nodeId);
+                if (!node) {
+                    var nodeValues = createFn();
+                    node = angular.copy(properties);
+                    angular.forEach(nodeValues, function (value, key) { return node[key] = value; });
+                    node['id'] = nodeId;
+                    if (!node['type']) {
+                        node['type'] = typeName;
+                    }
+                    if (!node['name']) {
+                        node['name'] = id;
+                    }
+                    if (node) {
+                        var size = $scope.shapeSize[typeName];
+                        if (size && !node['size']) {
+                            node['size'] = size;
+                        }
+                        if (!node['summary']) {
+                            node['summary'] = node['popup'] || "";
+                        }
+                        if (!$scope.viewSettings.popup) {
+                            delete node['popup'];
+                        }
+                        if (!$scope.viewSettings.label) {
+                            delete node['name'];
+                        }
+                        // lets not add nodes which are defined as being disabled
+                        var enabled = $scope.viewSettings[typeName];
+                        if (enabled || !angular.isDefined(enabled)) {
+                            //log.info("Adding node " + nodeId + " of type + " + typeName);
+                            graphBuilder.addNode(node);
+                        }
+                        else {
+                        }
+                    }
+                }
+            }
+            return node;
+        }
+        function addLink(object1, object2, linkType) {
+            if (object1 && object2) {
+                addLinkIds(object1.id, object2.id, linkType);
+            }
+        }
+        function addLinkIds(id1, id2, linkType) {
+            if (id1 && id2) {
+                graphBuilder.addLink(id1, id2, linkType);
+            }
+        }
+        function brokerNodeId(brokerId) {
+            return brokerId ? "broker:" + brokerId : null;
+        }
+        /**
+           * Avoid the JMX type property clashing with the ForceGraph type property; used for associating css classes with nodes on the graph
+           *
+           * @param properties
+           */
+        function renameTypeProperty(properties) {
+            properties.mbeanType = properties['type'];
+            delete properties['type'];
+        }
+        function configureDestinationProperties(properties) {
+            renameTypeProperty(properties);
+            var destinationType = properties.destinationType || "Queue";
+            var typeName = destinationType.toLowerCase();
+            properties.isQueue = !typeName.startsWith("t");
+            properties['destType'] = typeName;
+        }
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ.BrowseQueueController = ActiveMQ._module.controller("ActiveMQ.BrowseQueueController", ["$scope", "workspace", "jolokia", "localStorage", '$location', "activeMQMessage", "$timeout", function ($scope, workspace, jolokia, localStorage, location, activeMQMessage, $timeout) {
+        $scope.searchText = '';
+        $scope.allMessages = [];
+        $scope.messages = [];
+        $scope.headers = {};
+        $scope.mode = 'text';
+        $scope.deleteDialog = false;
+        $scope.moveDialog = false;
+        $scope.gridOptions = {
+            selectedItems: [],
+            data: 'messages',
+            displayFooter: false,
+            showFilter: false,
+            showColumnMenu: true,
+            enableColumnResize: true,
+            enableColumnReordering: true,
+            enableHighlighting: true,
+            filterOptions: {
+                filterText: '',
+                useExternalFilter: true
+            },
+            selectWithCheckboxOnly: true,
+            showSelectionCheckbox: true,
+            maintainColumnRatios: false,
+            columnDefs: [
+                {
+                    field: 'JMSMessageID',
+                    displayName: 'Message ID',
+                    cellTemplate: '<div class="ngCellText"><a ng-click="openMessageDialog(row)">{{row.entity.JMSMessageID}}</a></div>',
+                    // for ng-grid
+                    width: '34%'
+                },
+                {
+                    field: 'JMSType',
+                    displayName: 'Type',
+                    width: '10%'
+                },
+                {
+                    field: 'JMSPriority',
+                    displayName: 'Priority',
+                    width: '7%'
+                },
+                {
+                    field: 'JMSTimestamp',
+                    displayName: 'Timestamp',
+                    width: '19%'
+                },
+                {
+                    field: 'JMSExpiration',
+                    displayName: 'Expires',
+                    width: '10%'
+                },
+                {
+                    field: 'JMSReplyTo',
+                    displayName: 'Reply To',
+                    width: '10%'
+                },
+                {
+                    field: 'JMSCorrelationID',
+                    displayName: 'Correlation ID',
+                    width: '10%'
+                }
+            ]
+        };
+        $scope.showMessageDetails = false;
+        var ignoreColumns = ["PropertiesText", "BodyPreview", "Text"];
+        var flattenColumns = ["BooleanProperties", "ByteProperties", "ShortProperties", "IntProperties", "LongProperties", "FloatProperties", "DoubleProperties", "StringProperties"];
+        $scope.$watch('workspace.selection', function () {
+            if (workspace.moveIfViewInvalid()) {
+                return;
+            }
+            // lets defer execution as we may not have the selection just yet
+            setTimeout(loadTable, 50);
+        });
+        $scope.$watch('gridOptions.filterOptions.filterText', function (filterText) {
+            filterMessages(filterText);
+        });
+        $scope.openMessageDialog = function (message) {
+            ActiveMQ.selectCurrentMessage(message, "JMSMessageID", $scope);
+            if ($scope.row) {
+                $scope.mode = CodeEditor.detectTextFormat($scope.row.Text);
+                $scope.showMessageDetails = true;
+            }
+        };
+        $scope.refresh = loadTable;
+        ActiveMQ.decorate($scope);
+        $scope.moveMessages = function () {
+            var selection = workspace.selection;
+            var mbean = selection.objectName;
+            if (mbean && selection) {
+                var selectedItems = $scope.gridOptions.selectedItems;
+                $scope.message = "Moved " + Core.maybePlural(selectedItems.length, "message" + " to " + $scope.queueName);
+                var operation = "moveMessageTo(java.lang.String, java.lang.String)";
+                angular.forEach(selectedItems, function (item, idx) {
+                    var id = item.JMSMessageID;
+                    if (id) {
+                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : moveSuccess;
+                        jolokia.execute(mbean, operation, id, $scope.queueName, Core.onSuccess(callback));
+                    }
+                });
+            }
+        };
+        $scope.resendMessage = function () {
+            var selection = workspace.selection;
+            var mbean = selection.objectName;
+            if (mbean && selection) {
+                var selectedItems = $scope.gridOptions.selectedItems;
+                //always assume a single message
+                activeMQMessage.message = selectedItems[0];
+                location.path('activemq/sendMessage');
+            }
+        };
+        $scope.deleteMessages = function () {
+            var selection = workspace.selection;
+            var mbean = selection.objectName;
+            if (mbean && selection) {
+                var selectedItems = $scope.gridOptions.selectedItems;
+                $scope.message = "Deleted " + Core.maybePlural(selectedItems.length, "message");
+                var operation = "removeMessage(java.lang.String)";
+                angular.forEach(selectedItems, function (item, idx) {
+                    var id = item.JMSMessageID;
+                    if (id) {
+                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
+                        jolokia.execute(mbean, operation, id, Core.onSuccess(callback));
+                    }
+                });
+            }
+        };
+        $scope.retryMessages = function () {
+            var selection = workspace.selection;
+            var mbean = selection.objectName;
+            if (mbean && selection) {
+                var selectedItems = $scope.gridOptions.selectedItems;
+                $scope.message = "Retry " + Core.maybePlural(selectedItems.length, "message");
+                var operation = "retryMessage(java.lang.String)";
+                angular.forEach(selectedItems, function (item, idx) {
+                    var id = item.JMSMessageID;
+                    if (id) {
+                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
+                        jolokia.execute(mbean, operation, id, Core.onSuccess(callback));
+                    }
+                });
+            }
+        };
+        $scope.queueNames = function (completionText) {
+            var queuesFolder = ActiveMQ.getSelectionQueuesFolder(workspace);
+            return (queuesFolder) ? queuesFolder.children.map(function (n) { return n.title; }) : [];
+        };
+        function populateTable(response) {
+            var data = response.value;
+            if (!angular.isArray(data)) {
+                $scope.allMessages = [];
+                angular.forEach(data, function (value, idx) {
+                    $scope.allMessages.push(value);
+                });
+            }
+            else {
+                $scope.allMessages = data;
+            }
+            angular.forEach($scope.allMessages, function (message) {
+                message.headerHtml = createHeaderHtml(message);
+                message.bodyText = createBodyText(message);
+            });
+            Core.$apply($scope);
+            filterMessages($scope.gridOptions.filterOptions.filterText);
+        }
+        /*
+         * For some reason using ng-repeat in the modal dialog doesn't work so lets
+         * just create the HTML in code :)
+         */
+        function createBodyText(message) {
+            if (message.Text) {
+                var body = message.Text;
+                var lenTxt = "" + body.length;
+                message.textMode = "text (" + lenTxt + " chars)";
+                return body;
+            }
+            else if (message.BodyPreview) {
+                var code = Core.parseIntValue(localStorage["activemqBrowseBytesMessages"] || "1", "browse bytes messages");
+                var body;
+                message.textMode = "bytes (turned off)";
+                if (code != 99) {
+                    var bytesArr = [];
+                    var textArr = [];
+                    message.BodyPreview.forEach(function (b) {
+                        if (code === 1 || code === 2) {
+                            // text
+                            textArr.push(String.fromCharCode(b));
+                        }
+                        if (code === 1 || code === 4) {
+                            // hex and must be 2 digit so they space out evenly
+                            var s = b.toString(16);
+                            if (s.length === 1) {
+                                s = "0" + s;
+                            }
+                            bytesArr.push(s);
+                        }
+                        else {
+                            // just show as is without spacing out, as that is usually more used for hex than decimal
+                            var s = b.toString(10);
+                            bytesArr.push(s);
+                        }
+                    });
+                    var bytesData = bytesArr.join(" ");
+                    var textData = textArr.join("");
+                    if (code === 1 || code === 2) {
+                        // bytes and text
+                        var len = message.BodyPreview.length;
+                        var lenTxt = "" + textArr.length;
+                        body = "bytes:\n" + bytesData + "\n\ntext:\n" + textData;
+                        message.textMode = "bytes (" + len + " bytes) and text (" + lenTxt + " chars)";
+                    }
+                    else {
+                        // bytes only
+                        var len = message.BodyPreview.length;
+                        body = bytesData;
+                        message.textMode = "bytes (" + len + " bytes)";
+                    }
+                }
+                return body;
+            }
+            else {
+                message.textMode = "unsupported";
+                return "Unsupported message body type which cannot be displayed by hawtio";
+            }
+        }
+        /*
+         * For some reason using ng-repeat in the modal dialog doesn't work so lets
+         * just create the HTML in code :)
+         */
+        function createHeaderHtml(message) {
+            var headers = createHeaders(message);
+            var properties = createProperties(message);
+            var headerKeys = _.keys(headers);
+            function sort(a, b) {
+                if (a > b)
+                    return 1;
+                if (a < b)
+                    return -1;
+                return 0;
+            }
+            var propertiesKeys = _.keys(properties).sort(sort);
+            var jmsHeaders = headerKeys.filter(function (key) {
+                return key.startsWith("JMS");
+            }).sort(sort);
+            var remaining = headerKeys.subtract(jmsHeaders.concat(propertiesKeys)).sort(sort);
+            var buffer = [];
+            function appendHeader(key) {
+                var value = headers[key];
+                if (value === null) {
+                    value = '';
+                }
+                buffer.push('<tr><td class="propertyName"><span class="green">Header</span> - ' + key + '</td><td class="property-value">' + value + '</td></tr>');
+            }
+            function appendProperty(key) {
+                var value = properties[key];
+                if (value === null) {
+                    value = '';
+                }
+                buffer.push('<tr><td class="propertyName">' + key + '</td><td class="property-value">' + value + '</td></tr>');
+            }
+            jmsHeaders.forEach(appendHeader);
+            remaining.forEach(appendHeader);
+            propertiesKeys.forEach(appendProperty);
+            return buffer.join("\n");
+        }
+        function createHeaders(row) {
+            ActiveMQ.log.debug("headers: ", row);
+            var answer = {};
+            angular.forEach(row, function (value, key) {
+                if (!ignoreColumns.any(key) && !flattenColumns.any(key)) {
+                    answer[Core.escapeHtml(key)] = Core.escapeHtml(value);
+                }
+            });
+            return answer;
+        }
+        function createProperties(row) {
+            ActiveMQ.log.debug("properties: ", row);
+            var answer = {};
+            angular.forEach(row, function (value, key) {
+                if (!ignoreColumns.any(key) && flattenColumns.any(key)) {
+                    angular.forEach(value, function (v2, k2) {
+                        answer['<span class="green">' + key.replace('Properties', ' Property') + '</span> - ' + Core.escapeHtml(k2)] = Core.escapeHtml(v2);
+                    });
+                }
+            });
+            return answer;
+        }
+        function loadTable() {
+            var objName;
+            if (workspace.selection) {
+                objName = workspace.selection.objectName;
+            }
+            else {
+                // in case of refresh
+                var key = location.search()['nid'];
+                var node = workspace.keyToNodeMap[key];
+                objName = node.objectName;
+            }
+            if (objName) {
+                $scope.dlq = false;
+                jolokia.getAttribute(objName, "DLQ", Core.onSuccess(onDlq, { silent: true }));
+                jolokia.request({ type: 'exec', mbean: objName, operation: 'browse()' }, Core.onSuccess(populateTable));
+            }
+        }
+        function onDlq(response) {
+            $scope.dlq = response;
+            Core.$apply($scope);
+        }
+        function intermediateResult() {
+        }
+        function operationSuccess() {
+            $scope.messageDialog = false;
+            $scope.gridOptions.selectedItems.splice(0);
+            Core.notification("success", $scope.message);
+            setTimeout(loadTable, 50);
+        }
+        function moveSuccess() {
+            operationSuccess();
+            workspace.loadTree();
+        }
+        function filterMessages(filter) {
+            var searchConditions = buildSearchConditions(filter);
+            evalFilter(searchConditions);
+        }
+        function evalFilter(searchConditions) {
+            if (!searchConditions || searchConditions.length === 0) {
+                $scope.messages = $scope.allMessages;
+            }
+            else {
+                ActiveMQ.log.debug("Filtering conditions:", searchConditions);
+                $scope.messages = $scope.allMessages.filter(function (message) {
+                    ActiveMQ.log.debug("Message:", message);
+                    var matched = true;
+                    $.each(searchConditions, function (index, condition) {
+                        if (!condition.column) {
+                            matched = matched && evalMessage(message, condition.regex);
+                        }
+                        else {
+                            matched = matched && (message[condition.column] && condition.regex.test(message[condition.column])) || (message.StringProperties && message.StringProperties[condition.column] && condition.regex.test(message.StringProperties[condition.column]));
+                        }
+                    });
+                    return matched;
+                });
+            }
+        }
+        function evalMessage(message, regex) {
+            var jmsHeaders = ['JMSDestination', 'JMSDeliveryMode', 'JMSExpiration', 'JMSPriority', 'JMSMessageID', 'JMSTimestamp', 'JMSCorrelationID', 'JMSReplyTo', 'JMSType', 'JMSRedelivered'];
+            for (var i = 0; i < jmsHeaders.length; i++) {
+                var header = jmsHeaders[i];
+                if (message[header] && regex.test(message[header])) {
+                    return true;
+                }
+            }
+            if (message.StringProperties) {
+                for (var property in message.StringProperties) {
+                    if (regex.test(message.StringProperties[property])) {
+                        return true;
+                    }
+                }
+            }
+            if (message.bodyText && regex.test(message.bodyText)) {
+                return true;
+            }
+            return false;
+        }
+        function getRegExp(str, modifiers) {
+            try {
+                return new RegExp(str, modifiers);
+            }
+            catch (err) {
+                return new RegExp(str.replace(/(\^|\$|\(|\)|<|>|\[|\]|\{|\}|\\|\||\.|\*|\+|\?)/g, '\\$1'));
+            }
+        }
+        function buildSearchConditions(filterText) {
+            var searchConditions = [];
+            var qStr;
+            if (!(qStr = $.trim(filterText))) {
+                return;
+            }
+            var columnFilters = qStr.split(";");
+            for (var i = 0; i < columnFilters.length; i++) {
+                var args = columnFilters[i].split(':');
+                if (args.length > 1) {
+                    var columnName = $.trim(args[0]);
+                    var columnValue = $.trim(args[1]);
+                    if (columnName && columnValue) {
+                        searchConditions.push({
+                            column: columnName,
+                            columnDisplay: columnName.replace(/\s+/g, '').toLowerCase(),
+                            regex: getRegExp(columnValue, 'i')
+                        });
+                    }
+                }
+                else {
+                    var val = $.trim(args[0]);
+                    if (val) {
+                        searchConditions.push({
+                            column: '',
+                            regex: getRegExp(val, 'i')
+                        });
+                    }
+                }
+            }
+            return searchConditions;
+        }
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module.controller("ActiveMQ.DestinationController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
+        $scope.workspace = workspace;
+        $scope.message = "";
+        $scope.queueType = 'true';
+        $scope.deleteDialog = false;
+        $scope.purgeDialog = false;
+        updateQueueType();
+        function updateQueueType() {
+            $scope.destinationTypeName = $scope.queueType ? "Queue" : "Topic";
+        }
+        $scope.$watch('queueType', function () {
+            updateQueueType();
+        });
+        $scope.$watch('workspace.selection', function () {
+            workspace.moveIfViewInvalid();
+        });
+        function operationSuccess() {
+            $scope.destinationName = "";
+            $scope.workspace.operationCounter += 1;
+            Core.$apply($scope);
+            Core.notification("success", $scope.message);
+            $scope.workspace.loadTree();
+        }
+        function deleteSuccess() {
+            // lets set the selection to the parent
+            workspace.removeAndSelectParentNode();
+            $scope.workspace.operationCounter += 1;
+            Core.$apply($scope);
+            Core.notification("success", $scope.message);
+            $scope.workspace.loadTree();
+        }
+        function getBrokerMBean(jolokia) {
+            var mbean = null;
+            var selection = workspace.selection;
+            if (selection && ActiveMQ.isBroker(workspace) && selection.objectName) {
+                return selection.objectName;
+            }
+            var folderNames = selection.folderNames;
+            //if (selection && jolokia && folderNames && folderNames.length > 1) {
+            var parent = selection ? selection.parent : null;
+            if (selection && parent && jolokia && folderNames && folderNames.length > 1) {
+                mbean = parent.objectName;
+                // we might be a destination, so lets try one more parent
+                if (!mbean && parent) {
+                    mbean = parent.parent.objectName;
+                }
+                if (!mbean) {
+                    mbean = "" + folderNames[0] + ":BrokerName=" + folderNames[1] + ",Type=Broker";
+                }
+            }
+            return mbean;
+        }
+        $scope.createDestination = function (name, isQueue) {
+            var mbean = getBrokerMBean(jolokia);
+            if (mbean) {
+                var operation;
+                if (isQueue) {
+                    operation = "addQueue(java.lang.String)";
+                    $scope.message = "Created queue " + name;
+                }
+                else {
+                    operation = "addTopic(java.lang.String)";
+                    $scope.message = "Created topic " + name;
+                }
+                if (mbean) {
+                    jolokia.execute(mbean, operation, name, Core.onSuccess(operationSuccess));
+                }
+                else {
+                    Core.notification("error", "Could not find the Broker MBean!");
+                }
+            }
+        };
+        $scope.deleteDestination = function () {
+            var mbean = getBrokerMBean(jolokia);
+            var selection = workspace.selection;
+            var entries = selection.entries;
+            if (mbean && selection && jolokia && entries) {
+                var domain = selection.domain;
+                var name = entries["Destination"] || entries["destinationName"] || selection.title;
+                name = name.unescapeHTML();
+                var isQueue = "Topic" !== (entries["Type"] || entries["destinationType"]);
+                var operation;
+                if (isQueue) {
+                    operation = "removeQueue(java.lang.String)";
+                    $scope.message = "Deleted queue " + name;
+                }
+                else {
+                    operation = "removeTopic(java.lang.String)";
+                    $scope.message = "Deleted topic " + name;
+                }
+                jolokia.execute(mbean, operation, name, Core.onSuccess(deleteSuccess));
+            }
+        };
+        $scope.purgeDestination = function () {
+            var mbean = workspace.getSelectedMBeanName();
+            var selection = workspace.selection;
+            var entries = selection.entries;
+            if (mbean && selection && jolokia && entries) {
+                var name = entries["Destination"] || entries["destinationName"] || selection.title;
+                name = name.unescapeHTML();
+                var operation = "purge()";
+                $scope.message = "Purged queue " + name;
+                jolokia.execute(mbean, operation, Core.onSuccess(operationSuccess));
+            }
+        };
+        $scope.name = function () {
+            var selection = workspace.selection;
+            if (selection) {
+                return selection.title;
+            }
+            return null;
+        };
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module.controller("ActiveMQ.DurableSubscriberController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
+        $scope.refresh = loadTable;
+        $scope.durableSubscribers = [];
+        $scope.tempData = [];
+        $scope.createSubscriberDialog = new UI.Dialog();
+        $scope.deleteSubscriberDialog = new UI.Dialog();
+        $scope.showSubscriberDialog = new UI.Dialog();
+        $scope.topicName = '';
+        $scope.clientId = '';
+        $scope.subscriberName = '';
+        $scope.subSelector = '';
+        $scope.gridOptions = {
+            selectedItems: [],
+            data: 'durableSubscribers',
+            displayFooter: false,
+            showFilter: false,
+            showColumnMenu: true,
+            enableCellSelection: false,
+            enableColumnResize: true,
+            enableColumnReordering: true,
+            selectWithCheckboxOnly: false,
+            showSelectionCheckbox: false,
+            multiSelect: false,
+            displaySelectionCheckbox: false,
+            filterOptions: {
+                filterText: ''
+            },
+            maintainColumnRatios: false,
+            columnDefs: [
+                {
+                    field: 'destinationName',
+                    displayName: 'Topic',
+                    width: '30%'
+                },
+                {
+                    field: 'clientId',
+                    displayName: 'Client ID',
+                    width: '30%'
+                },
+                {
+                    field: 'consumerId',
+                    displayName: 'Consumer ID',
+                    cellTemplate: '<div class="ngCellText"><span ng-hide="row.entity.status != \'Offline\'">{{row.entity.consumerId}}</span><a ng-show="row.entity.status != \'Offline\'" ng-click="openSubscriberDialog(row)">{{row.entity.consumerId}}</a></div>',
+                    width: '30%'
+                },
+                {
+                    field: 'status',
+                    displayName: 'Status',
+                    width: '10%'
+                }
+            ]
+        };
+        $scope.doCreateSubscriber = function (clientId, subscriberName, topicName, subSelector) {
+            $scope.createSubscriberDialog.close();
+            $scope.clientId = clientId;
+            $scope.subscriberName = subscriberName;
+            $scope.topicName = topicName;
+            $scope.subSelector = subSelector;
+            if (Core.isBlank($scope.subSelector)) {
+                $scope.subSelector = null;
+            }
+            var mbean = getBrokerMBean(jolokia);
+            if (mbean) {
+                jolokia.execute(mbean, "createDurableSubscriber(java.lang.String, java.lang.String, java.lang.String, java.lang.String)", $scope.clientId, $scope.subscriberName, $scope.topicName, $scope.subSelector, Core.onSuccess(function () {
+                    Core.notification('success', "Created durable subscriber " + clientId);
+                    $scope.clientId = '';
+                    $scope.subscriberName = '';
+                    $scope.topicName = '';
+                    $scope.subSelector = '';
+                    loadTable();
+                }));
+            }
+            else {
+                Core.notification("error", "Could not find the Broker MBean!");
+            }
+        };
+        $scope.deleteSubscribers = function () {
+            var mbean = $scope.gridOptions.selectedItems[0]._id;
+            jolokia.execute(mbean, "destroy()", Core.onSuccess(function () {
+                $scope.showSubscriberDialog.close();
+                Core.notification('success', "Deleted durable subscriber");
+                loadTable();
+                $scope.gridOptions.selectedItems = [];
+            }));
+        };
+        $scope.openSubscriberDialog = function (subscriber) {
+            jolokia.request({ type: "read", mbean: subscriber.entity._id }, Core.onSuccess(function (response) {
+                $scope.showSubscriberDialog.subscriber = response.value;
+                $scope.showSubscriberDialog.subscriber.Status = subscriber.entity.status;
+                console.log("Subscriber is now " + $scope.showSubscriberDialog.subscriber);
+                Core.$apply($scope);
+                // now lets start opening the dialog
+                setTimeout(function () {
+                    $scope.showSubscriberDialog.open();
+                    Core.$apply($scope);
+                }, 100);
+            }));
+        };
+        $scope.topicNames = function (completionText) {
+            var topicsFolder = ActiveMQ.getSelectionTopicsFolder(workspace);
+            return (topicsFolder) ? topicsFolder.children.map(function (n) { return n.title; }) : [];
+        };
+        $scope.$watch('workspace.selection', function () {
+            if (workspace.moveIfViewInvalid())
+                return;
+            // lets defer execution as we may not have the selection just yet
+            setTimeout(loadTable, 50);
+        });
+        function loadTable() {
+            var mbean = getBrokerMBean(jolokia);
+            if (mbean) {
+                $scope.durableSubscribers = [];
+                jolokia.request({ type: "read", mbean: mbean, attribute: ["DurableTopicSubscribers"] }, Core.onSuccess(function (response) { return populateTable(response, "DurableTopicSubscribers", "Active"); }));
+                jolokia.request({ type: "read", mbean: mbean, attribute: ["InactiveDurableTopicSubscribers"] }, Core.onSuccess(function (response) { return populateTable(response, "InactiveDurableTopicSubscribers", "Offline"); }));
+            }
+        }
+        function populateTable(response, attr, status) {
+            var data = response.value;
+            ActiveMQ.log.debug("Got data: ", data);
+            $scope.durableSubscribers.push.apply($scope.durableSubscribers, data[attr].map(function (o) {
+                var objectName = o["objectName"];
+                var entries = Core.objectNameProperties(objectName);
+                if (!('objectName' in o)) {
+                    if ('canonicalName' in o) {
+                        objectName = o['canonicalName'];
+                    }
+                    entries = _.cloneDeep(o['keyPropertyList']);
+                }
+                entries["_id"] = objectName;
+                entries["status"] = status;
+                return entries;
+            }));
+            Core.$apply($scope);
+        }
+        function getBrokerMBean(jolokia) {
+            var mbean = null;
+            var selection = workspace.selection;
+            if (selection && ActiveMQ.isBroker(workspace) && selection.objectName) {
+                return selection.objectName;
+            }
+            var folderNames = selection.folderNames;
+            //if (selection && jolokia && folderNames && folderNames.length > 1) {
+            var parent = selection ? selection.parent : null;
+            if (selection && parent && jolokia && folderNames && folderNames.length > 1) {
+                mbean = parent.objectName;
+                // we might be a destination, so lets try one more parent
+                if (!mbean && parent) {
+                    mbean = parent.parent.objectName;
+                }
+                if (!mbean) {
+                    mbean = "" + folderNames[0] + ":BrokerName=" + folderNames[1] + ",Type=Broker";
+                }
+            }
+            return mbean;
+        }
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module.controller("ActiveMQ.JobSchedulerController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
+        $scope.refresh = loadTable;
+        $scope.jobs = [];
+        $scope.deleteJobsDialog = new UI.Dialog();
+        $scope.gridOptions = {
+            selectedItems: [],
+            data: 'jobs',
+            displayFooter: false,
+            showFilter: false,
+            showColumnMenu: true,
+            enableColumnResize: true,
+            enableColumnReordering: true,
+            filterOptions: {
+                filterText: ''
+            },
+            selectWithCheckboxOnly: true,
+            showSelectionCheckbox: true,
+            maintainColumnRatios: false,
+            columnDefs: [
+                {
+                    field: 'jobId',
+                    displayName: 'Job ID',
+                    width: '25%'
+                },
+                {
+                    field: 'cronEntry',
+                    displayName: 'Cron Entry',
+                    width: '10%'
+                },
+                {
+                    field: 'delay',
+                    displayName: 'Delay',
+                    width: '5%'
+                },
+                {
+                    field: 'repeat',
+                    displayName: 'repeat',
+                    width: '5%'
+                },
+                {
+                    field: 'period',
+                    displayName: 'period',
+                    width: '5%'
+                },
+                {
+                    field: 'start',
+                    displayName: 'Start',
+                    width: '25%'
+                },
+                {
+                    field: 'next',
+                    displayName: 'Next',
+                    width: '25%'
+                }
+            ]
+        };
+        $scope.$watch('workspace.selection', function () {
+            if (workspace.moveIfViewInvalid())
+                return;
+            // lets defer execution as we may not have the selection just yet
+            setTimeout(loadTable, 50);
+        });
+        function loadTable() {
+            var selection = workspace.selection;
+            if (selection) {
+                var mbean = selection.objectName;
+                if (mbean) {
+                    jolokia.request({ type: 'read', mbean: mbean, attribute: "AllJobs" }, Core.onSuccess(populateTable));
+                }
+            }
+            Core.$apply($scope);
+        }
+        function populateTable(response) {
+            var data = response.value;
+            if (!angular.isArray(data)) {
+                $scope.jobs = [];
+                angular.forEach(data, function (value, idx) {
+                    $scope.jobs.push(value);
+                });
+            }
+            else {
+                $scope.jobs = data;
+            }
+            Core.$apply($scope);
+        }
+        $scope.deleteJobs = function () {
+            var selection = workspace.selection;
+            var mbean = selection.objectName;
+            if (mbean && selection) {
+                var selectedItems = $scope.gridOptions.selectedItems;
+                $scope.message = "Deleted " + Core.maybePlural(selectedItems.length, "job");
+                var operation = "removeJob(java.lang.String)";
+                angular.forEach(selectedItems, function (item, idx) {
+                    var id = item.jobId;
+                    if (id) {
+                        var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
+                        jolokia.execute(mbean, operation, id, Core.onSuccess(callback));
+                    }
+                });
+            }
+        };
+        function intermediateResult() {
+        }
+        function operationSuccess() {
+            $scope.gridOptions.selectedItems.splice(0);
+            Core.notification("success", $scope.message);
+            setTimeout(loadTable, 50);
+        }
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+/**
+ * @module ActiveMQ
+ */
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module.controller("ActiveMQ.PreferencesController", ["$scope", "localStorage", "userDetails", "$rootScope", function ($scope, localStorage, userDetails, $rootScope) {
+        Core.initPreferenceScope($scope, localStorage, {
+            'activemqUserName': {
+                'value': userDetails.username,
+            },
+            'activemqPassword': {
+                'value': userDetails.password
+            },
+            'activemqBrowseBytesMessages': {
+                'value': 1,
+                'converter': parseInt,
+                'formatter': function (value) {
+                    return "" + value;
+                }
+            },
+            'activemqFilterAdvisoryTopics': {
+                'value': false,
+                'converter': Core.parseBooleanValue,
+                'post': function (newValue) {
+                    $rootScope.$broadcast('jmxTreeUpdated');
+                }
+            }
+        });
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="activemqHelpers.ts"/>
+/// <reference path="activemqPlugin.ts"/>
+var ActiveMQ;
+(function (ActiveMQ) {
+    ActiveMQ._module.controller("ActiveMQ.TreeHeaderController", ["$scope", function ($scope) {
+        $scope.expandAll = function () {
+            Tree.expandAll("#activemqtree");
+        };
+        $scope.contractAll = function () {
+            Tree.contractAll("#activemqtree");
+        };
+    }]);
+    ActiveMQ._module.controller("ActiveMQ.TreeController", ["$scope", "$location", "workspace", "localStorage", function ($scope, $location, workspace, localStorage) {
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            // lets do this asynchronously to avoid Error: $digest already in progress
+            setTimeout(updateSelectionFromURL, 50);
+        });
+        $scope.$watch('workspace.tree', function () {
+            reloadTree();
+        });
+        $scope.$on('jmxTreeUpdated', function () {
+            reloadTree();
+        });
+        function reloadTree() {
+            ActiveMQ.log.debug("workspace tree has changed, lets reload the activemq tree");
+            var children = [];
+            var tree = workspace.tree;
+            if (tree) {
+                var domainName = "org.apache.activemq";
+                var folder = tree.get(domainName);
+                if (folder) {
+                    children = folder.children;
+                }
+                if (children.length) {
+                    var firstChild = children[0];
+                    // the children could be AMQ 5.7 style broker name folder with the actual MBean in the children
+                    // along with folders for the Queues etc...
+                    if (!firstChild.typeName && firstChild.children.length < 4) {
+                        // lets avoid the top level folder
+                        var answer = [];
+                        angular.forEach(children, function (child) {
+                            answer = answer.concat(child.children);
+                        });
+                        children = answer;
+                    }
+                }
+                // filter out advisory topics
+                children.forEach(function (broker) {
+                    var grandChildren = broker.children;
+                    if (grandChildren) {
+                        Tree.sanitize(grandChildren);
+                        var idx = grandChildren.findIndex(function (n) { return n.title === "Topic"; });
+                        if (idx > 0) {
+                            var old = grandChildren[idx];
+                            // we need to store all topics the first time on the workspace
+                            // so we have access to them later if the user changes the filter in the preferences
+                            var key = "ActiveMQ-allTopics-" + broker.title;
+                            var allTopics = old.children.clone();
+                            workspace.mapData[key] = allTopics;
+                            var filter = Core.parseBooleanValue(localStorage["activemqFilterAdvisoryTopics"]);
+                            if (filter) {
+                                if (old && old.children) {
+                                    var filteredTopics = old.children.filter(function (c) { return !c.title.startsWith("ActiveMQ.Advisory"); });
+                                    old.children = filteredTopics;
+                                }
+                            }
+                            else if (allTopics) {
+                                old.children = allTopics;
+                            }
+                        }
+                    }
+                });
+                var treeElement = $("#activemqtree");
+                Jmx.enableTree($scope, $location, workspace, treeElement, children, true);
+                // lets do this asynchronously to avoid Error: $digest already in progress
+                setTimeout(updateSelectionFromURL, 50);
+            }
+        }
+        function updateSelectionFromURL() {
+            Jmx.updateTreeSelectionFromURLAndAutoSelect($location, $("#activemqtree"), function (first) {
+                // use function to auto select the queue folder on the 1st broker
+                var queues = first.getChildren()[0];
+                if (queues && queues.data.title === 'Queue') {
+                    first = queues;
+                    first.expand(true);
+                    return first;
+                }
+                return null;
+            }, true);
+        }
+    }]);
+})(ActiveMQ || (ActiveMQ = {}));
 
 /// <reference path="../../includes.ts"/>
 
@@ -17613,8 +17613,8 @@ var Wiki;
     }]);
 })(Wiki || (Wiki = {}));
 
-angular.module("hawtio-wiki-templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("plugins/activemq/html/brokerDiagram.html","<style type=\"text/css\">\n\n.col-md-4.node-panel {\n  margin-top: 10px;\n  margin-left: 10px;\n  width: 33%;\n}\n.node-attributes dl {\n  margin-top: 5px;\n  margin-bottom: 10px;\n}\n.node-attributes dt {\n  width: 150px;\n}\n.node-attributes dd {\n  margin-left: 160px;\n}\n.node-attributes dd a {\n  /** lets make the destination links wrap */\n  -ms-word-break: break-all;\n  word-break: break-all;\n  -webkit-hyphens: auto;\n  -moz-hyphens: auto;\n  hyphens: auto;\n}\n\nul.viewMenu li {\n  padding-left: 10px;\n  padding-top: 2px;\n  padding-bottom: 2px;\n}\n\ndiv#pop-up {\n  display: none;\n  position: absolute;\n  color: white;\n  font-size: 14px;\n  background: rgba(0, 0, 0, 0.6);\n  padding: 5px 10px 5px 10px;\n  -moz-border-radius: 8px 8px;\n  border-radius: 8px 8px;\n}\n\ndiv#pop-up-title {\n  font-size: 15px;\n  margin-bottom: 4px;\n  font-weight: bolder;\n}\n\ndiv#pop-up-content {\n  font-size: 12px;\n}\n\nrect.graphbox {\n  fill: #FFF;\n}\n\nrect.graphbox.frame {\n  stroke: #222;\n  stroke-width: 2px\n}\n\n/* only things directly related to the network graph should be here */\n\npath.link {\n  fill: none;\n  stroke: #666;\n  stroke-width: 1.5px;  b\n}\n\nmarker.broker {\n  stroke: red;\n  fill: red;\n  stroke-width: 1.5px;\n}\n\ncircle.broker {\n  fill: #0c0;\n}\n\ncircle.brokerSlave {\n  fill: #c00;\n}\n\ncircle.notActive {\n  fill: #c00;\n}\n\npath.link.group {\n  stroke: #ccc;\n}\n\nmarker#group {\n  stroke: #ccc;\n  fill: #ccc;\n}\n\ncircle.group {\n  fill: #eee;\n  stroke: #ccc;\n}\n\ncircle.destination {\n  fill: #bbb;\n  stroke: #ccc;\n}\n\ncircle.pinned {\n  stroke-width: 4.5px;\n}\n\npath.link.profile {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\nmarker#container {\n}\n\ncircle.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\npath.link.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\ncircle {\n  fill: #ccc;\n  stroke: #333;\n  stroke-width: 1.5px;\n  cursor: pointer;\n}\n\ncircle.closeMode {\n  cursor: crosshair;\n}\n\npath.link.destination {\n  stroke: #ccc;\n}\n\ncircle.topic {\n  fill: #c0c;\n}\n\ncircle.queue {\n  fill: #00c;\n}\n\ncircle.consumer {\n  fill: #cfc;\n}\n\ncircle.producer {\n  fill: #ccf;\n}\n\npath.link.producer {\n  stroke: #ccc;\n}\n\npath.link.consumer {\n  stroke: #ccc;\n}\n\npath.link.network {\n  stroke: #ccc;\n}\n\ncircle.selected {\n  stroke-width: 3px;\n}\n\n.selected {\n  stroke-width: 3px;\n}\n\ntext {\n  font: 10px sans-serif;\n  pointer-events: none;\n}\n\ntext.shadow {\n  stroke: #fff;\n  stroke-width: 3px;\n  stroke-opacity: .8;\n}\n</style>\n\n\n<div class=\"row mq-page\" ng-controller=\"ActiveMQ.BrokerDiagramController\">\n\n  <div ng-hide=\"inDashboard\" class=\"col-md-12 page-padded\">\n    <div class=\"section-header\">\n\n      <div class=\"section-filter\">\n        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"searchFilter\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"searchFilter = \'\'\"></i>\n      </div>\n\n      <div class=\"section-controls\">\n        <a href=\"#\"\n           class=\"dropdown-toggle\"\n           data-toggle=\"dropdown\">\n          View &nbsp;<i class=\"icon-caret-down\"></i>\n        </a>\n\n        <ul class=\"dropdown-menu viewMenu\">\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.consumer\"> Consumers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.producer\"> Producers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.queue\"> Queues\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.topic\"> Topics\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.group\"> Broker groups\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.profile\"> Profiles\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.broker\"> Brokers\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.slave\"> Slave brokers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.network\"> Networks\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.container\"> Containers\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li title=\"Should we show the details panel on the left\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.panel\"> Details panel\n            </label>\n          </li>\n          <li title=\"Show the summary popup as you hover over nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.popup\"> Hover text\n            </label>\n          </li>\n          <li title=\"Show the labels next to nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.label\"> Label\n            </label>\n          </li>\n        </ul>\n\n        <a ng-show=\"isFmc\" ng-href=\"#/fabric/mq/brokers{{hash}}\" title=\"View the broker and container diagram\">\n          <i class=\"fa fa-edit\"></i> Configuration\n        </a>\n      </div>\n    </div>\n  </div>\n\n\n  <div id=\"pop-up\">\n    <div id=\"pop-up-title\"></div>\n    <div id=\"pop-up-content\"></div>\n  </div>\n\n  <div class=\"row\">\n    <div class=\"{{viewSettings.panel ? \'col-md-8\' : \'col-md-12\'}} canvas broker-canvas\">\n      <div hawtio-force-graph graph=\"graph\" selected-model=\"selectedNode\" link-distance=\"150\" charge=\"-600\" nodesize=\"10\" marker-kind=\"marker-end\"\n           style=\"min-height: 800px\">\n      </div>\n    </div>\n    <div ng-show=\"viewSettings.panel\" class=\"col-md-4 node-panel\">\n      <div ng-show=\"selectedNode\" class=\"node-attributes\">\n        <dl ng-repeat=\"property in selectedNodeProperties\" class=\"dl-horizontal\">\n          <dt title=\"{{property.key}}\">{{property.key}}:</dt>\n          <dd ng-bind-html-unsafe=\"property.value\"></dd>\n        </dl>\n      </div>\n    </div>\n  </div>\n\n  <!--\n  <div ng-include=\"\'plugins/fabric/html/connectToContainerDialog.html\'\"></div>\n  -->\n\n</div>\n\n\n");
-$templateCache.put("plugins/activemq/html/browseQueue.html","<div ng-controller=\"ActiveMQ.BrowseQueueController\">\n  <div class=\"row\">\n    <div class=\"col-md-6\">\n      <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n             placeholder=\"Filter messages\">\n    </div>\n    <div class=\"col-md-6\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline\">\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-show=\"dlq\" ng-click=\"retryMessages()\"\n                  title=\"Moves the dead letter queue message back to its original destination so it can be retried\" data-placement=\"bottom\">\n            <i class=\"fa fa-reply\"></i> Retry\n          </button>\n          <button class=\"btn\" ng-disabled=\"gridOptions.selectedItems.length !== 1\" ng-click=\"resendMessage()\"\n                    title=\"Edit the message to resend it\" data-placement=\"bottom\">\n           <i class=\"icon-share-alt\"></i> Resend\n          </button>\n\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                  title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n            <i class=\"icon-share-alt\"></i> Move\n          </button>\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                  ng-click=\"deleteDialog = true\"\n                  title=\"Delete the selected messages\">\n            <i class=\"fa fa-remove\"></i> Delete\n          </button>\n          <button class=\"btn\" ng-click=\"refresh()\"\n                  title=\"Refreshes the list of messages\">\n            <i class=\"fa fa-refresh\"></i>\n          </button>\n        </form>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row\">\n    <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n  </div>\n\n  <div hawtio-slideout=\"showMessageDetails\" title=\"{{row.JMSMessageID}}\">\n    <div class=\"dialog-body\">\n\n      <div class=\"row\">\n        <div class=\"pull-right\">\n          <form class=\"form-horizontal no-bottom-margin\">\n\n            <div class=\"btn-group\"\n                 hawtio-pager=\"messages\"\n                 on-index-change=\"selectRowIndex\"\n                 row-index=\"rowIndex\"></div>\n\n            <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                    title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n              <i class=\"icon-share-alt\"></i> Move\n            </button>\n\n            <button class=\"btn btn-danger\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                    ng-click=\"deleteDialog = true\"\n                    title=\"Delete the selected messages\">\n              <i class=\"fa fa-remove\"></i> Delete\n            </button>\n\n            <button class=\"btn\" ng-click=\"showMessageDetails = !showMessageDetails\" title=\"Close this dialog\">\n              <i class=\"fa fa-remove\"></i> Close\n            </button>\n\n          </form>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div class=\"expandable closed\">\n          <div title=\"Headers\" class=\"title\">\n            <i class=\"expandable-indicator\"></i> Headers & Properties\n          </div>\n          <div class=\"expandable-body well\">\n            <table class=\"table table-condensed table-striped\">\n              <thead>\n              <tr>\n                <th>Header</th>\n                <th>Value</th>\n              </tr>\n              </thead>\n              <tbody ng-bind-html-unsafe=\"row.headerHtml\">\n              </tbody>\n              <!--\n                            <tr ng-repeat=\"(key, value) in row.headers\">\n                              <td class=\"property-name\">{{key}}</td>\n                              <td class=\"property-value\">{{value}}</td>\n                            </tr>\n              -->\n            </table>\n          </div>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div>Displaying body as <span ng-bind=\"row.textMode\"></span></div>\n        <div hawtio-editor=\"row.bodyText\" read-only=\"true\" mode=\'mode\'></div>\n      </div>\n\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"deleteDialog\"\n       ok-button-text=\"Delete\"\n       on-ok=\"deleteMessages()\">\n    <div class=\"dialog-body\">\n      <p>You are about to delete\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'a message!\', \'other\': \'{} messages!\'}\">\n        </ng-pluralize>\n      </p>\n      <p>This operation cannot be undone so please be careful.</p>\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"moveDialog\"\n       ok-button-text=\"Move\"\n       on-ok=\"moveMessages()\">\n    <div class=\"dialog-body\">\n      <p>Move\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'{} messages\'}\"></ng-pluralize>\n        to: <input type=\"text\" ng-model=\"queueName\" placeholder=\"Queue name\"\n                   typeahead=\"title.unescapeHTML() for title in queueNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'></p>\n      <p>\n        You cannot undo this operation.<br>\n        Though after the move you can always move the\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'messages\'}\"></ng-pluralize>\n        back again.\n      </p>\n    </div>\n  </div>\n\n</div>\n\n");
+angular.module("hawtio-wiki-templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("plugins/activemq/html/brokerDiagram.html","<style type=\"text/css\">\n\n.col-md-4.node-panel {\n  margin-top: 10px;\n  margin-left: 10px;\n  width: 33%;\n}\n.node-attributes dl {\n  margin-top: 5px;\n  margin-bottom: 10px;\n}\n.node-attributes dt {\n  width: 150px;\n}\n.node-attributes dd {\n  margin-left: 160px;\n}\n.node-attributes dd a {\n  /** lets make the destination links wrap */\n  -ms-word-break: break-all;\n  word-break: break-all;\n  -webkit-hyphens: auto;\n  -moz-hyphens: auto;\n  hyphens: auto;\n}\n\nul.viewMenu li {\n  padding-left: 10px;\n  padding-top: 2px;\n  padding-bottom: 2px;\n}\n\ndiv#pop-up {\n  display: none;\n  position: absolute;\n  color: white;\n  font-size: 14px;\n  background: rgba(0, 0, 0, 0.6);\n  padding: 5px 10px 5px 10px;\n  -moz-border-radius: 8px 8px;\n  border-radius: 8px 8px;\n}\n\ndiv#pop-up-title {\n  font-size: 15px;\n  margin-bottom: 4px;\n  font-weight: bolder;\n}\n\ndiv#pop-up-content {\n  font-size: 12px;\n}\n\nrect.graphbox {\n  fill: #FFF;\n}\n\nrect.graphbox.frame {\n  stroke: #222;\n  stroke-width: 2px\n}\n\n/* only things directly related to the network graph should be here */\n\npath.link {\n  fill: none;\n  stroke: #666;\n  stroke-width: 1.5px;  b\n}\n\nmarker.broker {\n  stroke: red;\n  fill: red;\n  stroke-width: 1.5px;\n}\n\ncircle.broker {\n  fill: #0c0;\n}\n\ncircle.brokerSlave {\n  fill: #c00;\n}\n\ncircle.notActive {\n  fill: #c00;\n}\n\npath.link.group {\n  stroke: #ccc;\n}\n\nmarker#group {\n  stroke: #ccc;\n  fill: #ccc;\n}\n\ncircle.group {\n  fill: #eee;\n  stroke: #ccc;\n}\n\ncircle.destination {\n  fill: #bbb;\n  stroke: #ccc;\n}\n\ncircle.pinned {\n  stroke-width: 4.5px;\n}\n\npath.link.profile {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\nmarker#container {\n}\n\ncircle.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\npath.link.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\ncircle {\n  fill: #ccc;\n  stroke: #333;\n  stroke-width: 1.5px;\n  cursor: pointer;\n}\n\ncircle.closeMode {\n  cursor: crosshair;\n}\n\npath.link.destination {\n  stroke: #ccc;\n}\n\ncircle.topic {\n  fill: #c0c;\n}\n\ncircle.queue {\n  fill: #00c;\n}\n\ncircle.consumer {\n  fill: #cfc;\n}\n\ncircle.producer {\n  fill: #ccf;\n}\n\npath.link.producer {\n  stroke: #ccc;\n}\n\npath.link.consumer {\n  stroke: #ccc;\n}\n\npath.link.network {\n  stroke: #ccc;\n}\n\ncircle.selected {\n  stroke-width: 3px;\n}\n\n.selected {\n  stroke-width: 3px;\n}\n\ntext {\n  font: 10px sans-serif;\n  pointer-events: none;\n}\n\ntext.shadow {\n  stroke: #fff;\n  stroke-width: 3px;\n  stroke-opacity: .8;\n}\n</style>\n\n\n<div class=\"row mq-page\" ng-controller=\"ActiveMQ.BrokerDiagramController\">\n\n  <div ng-hide=\"inDashboard\" class=\"col-md-12 page-padded\">\n    <div class=\"section-header\">\n\n      <div class=\"section-filter\">\n        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"searchFilter\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"searchFilter = \'\'\"></i>\n      </div>\n\n      <div class=\"section-controls\">\n        <a href=\"#\"\n           class=\"dropdown-toggle\"\n           data-toggle=\"dropdown\">\n          View &nbsp;<i class=\"fa fa-caret-down\"></i>\n        </a>\n\n        <ul class=\"dropdown-menu viewMenu\">\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.consumer\"> Consumers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.producer\"> Producers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.queue\"> Queues\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.topic\"> Topics\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.group\"> Broker groups\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.profile\"> Profiles\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.broker\"> Brokers\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.slave\"> Slave brokers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.network\"> Networks\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.container\"> Containers\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li title=\"Should we show the details panel on the left\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.panel\"> Details panel\n            </label>\n          </li>\n          <li title=\"Show the summary popup as you hover over nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.popup\"> Hover text\n            </label>\n          </li>\n          <li title=\"Show the labels next to nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.label\"> Label\n            </label>\n          </li>\n        </ul>\n\n        <a ng-show=\"isFmc\" ng-href=\"#/fabric/mq/brokers{{hash}}\" title=\"View the broker and container diagram\">\n          <i class=\"fa fa-edit\"></i> Configuration\n        </a>\n      </div>\n    </div>\n  </div>\n\n\n  <div id=\"pop-up\">\n    <div id=\"pop-up-title\"></div>\n    <div id=\"pop-up-content\"></div>\n  </div>\n\n  <div class=\"row\">\n    <div class=\"{{viewSettings.panel ? \'col-md-8\' : \'col-md-12\'}} canvas broker-canvas\">\n      <div hawtio-force-graph graph=\"graph\" selected-model=\"selectedNode\" link-distance=\"150\" charge=\"-600\" nodesize=\"10\" marker-kind=\"marker-end\"\n           style=\"min-height: 800px\">\n      </div>\n    </div>\n    <div ng-show=\"viewSettings.panel\" class=\"col-md-4 node-panel\">\n      <div ng-show=\"selectedNode\" class=\"node-attributes\">\n        <dl ng-repeat=\"property in selectedNodeProperties\" class=\"dl-horizontal\">\n          <dt title=\"{{property.key}}\">{{property.key}}:</dt>\n          <dd ng-bind-html-unsafe=\"property.value\"></dd>\n        </dl>\n      </div>\n    </div>\n  </div>\n\n  <!--\n  <div ng-include=\"\'plugins/fabric/html/connectToContainerDialog.html\'\"></div>\n  -->\n\n</div>\n\n\n");
+$templateCache.put("plugins/activemq/html/browseQueue.html","<div ng-controller=\"ActiveMQ.BrowseQueueController\">\n  <div class=\"row\">\n    <div class=\"col-md-6\">\n      <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n             placeholder=\"Filter messages\">\n    </div>\n    <div class=\"col-md-6\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline\">\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-show=\"dlq\" ng-click=\"retryMessages()\"\n                  title=\"Moves the dead letter queue message back to its original destination so it can be retried\" data-placement=\"bottom\">\n            <i class=\"fa fa-reply\"></i> Retry\n          </button>\n          <button class=\"btn\" ng-disabled=\"gridOptions.selectedItems.length !== 1\" ng-click=\"resendMessage()\"\n                    title=\"Edit the message to resend it\" data-placement=\"bottom\">\n           <i class=\"fa fa-share-alt\"></i> Resend\n          </button>\n\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                  title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n            <i class=\"fa fa-share-alt\"></i> Move\n          </button>\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                  ng-click=\"deleteDialog = true\"\n                  title=\"Delete the selected messages\">\n            <i class=\"fa fa-remove\"></i> Delete\n          </button>\n          <button class=\"btn\" ng-click=\"refresh()\"\n                  title=\"Refreshes the list of messages\">\n            <i class=\"fa fa-refresh\"></i>\n          </button>\n        </form>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row\">\n    <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n  </div>\n\n  <div hawtio-slideout=\"showMessageDetails\" title=\"{{row.JMSMessageID}}\">\n    <div class=\"dialog-body\">\n\n      <div class=\"row\">\n        <div class=\"pull-right\">\n          <form class=\"form-horizontal no-bottom-margin\">\n\n            <div class=\"btn-group\"\n                 hawtio-pager=\"messages\"\n                 on-index-change=\"selectRowIndex\"\n                 row-index=\"rowIndex\"></div>\n\n            <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                    title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n              <i class=\"fa fa-share-alt\"></i> Move\n            </button>\n\n            <button class=\"btn btn-danger\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                    ng-click=\"deleteDialog = true\"\n                    title=\"Delete the selected messages\">\n              <i class=\"fa fa-remove\"></i> Delete\n            </button>\n\n            <button class=\"btn\" ng-click=\"showMessageDetails = !showMessageDetails\" title=\"Close this dialog\">\n              <i class=\"fa fa-remove\"></i> Close\n            </button>\n\n          </form>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div class=\"expandable closed\">\n          <div title=\"Headers\" class=\"title\">\n            <i class=\"expandable-indicator\"></i> Headers & Properties\n          </div>\n          <div class=\"expandable-body well\">\n            <table class=\"table table-condensed table-striped\">\n              <thead>\n              <tr>\n                <th>Header</th>\n                <th>Value</th>\n              </tr>\n              </thead>\n              <tbody ng-bind-html-unsafe=\"row.headerHtml\">\n              </tbody>\n              <!--\n                            <tr ng-repeat=\"(key, value) in row.headers\">\n                              <td class=\"property-name\">{{key}}</td>\n                              <td class=\"property-value\">{{value}}</td>\n                            </tr>\n              -->\n            </table>\n          </div>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div>Displaying body as <span ng-bind=\"row.textMode\"></span></div>\n        <div hawtio-editor=\"row.bodyText\" read-only=\"true\" mode=\'mode\'></div>\n      </div>\n\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"deleteDialog\"\n       ok-button-text=\"Delete\"\n       on-ok=\"deleteMessages()\">\n    <div class=\"dialog-body\">\n      <p>You are about to delete\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'a message!\', \'other\': \'{} messages!\'}\">\n        </ng-pluralize>\n      </p>\n      <p>This operation cannot be undone so please be careful.</p>\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"moveDialog\"\n       ok-button-text=\"Move\"\n       on-ok=\"moveMessages()\">\n    <div class=\"dialog-body\">\n      <p>Move\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'{} messages\'}\"></ng-pluralize>\n        to: <input type=\"text\" ng-model=\"queueName\" placeholder=\"Queue name\"\n                   typeahead=\"title.unescapeHTML() for title in queueNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'></p>\n      <p>\n        You cannot undo this operation.<br>\n        Though after the move you can always move the\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'messages\'}\"></ng-pluralize>\n        back again.\n      </p>\n    </div>\n  </div>\n\n</div>\n\n");
 $templateCache.put("plugins/activemq/html/createDestination.html","<form class=\"form-horizontal\" ng-controller=\"ActiveMQ.DestinationController\">\n  <fieldset>\n    <div class=\"control-group\">\n      <label class=\"pull-left\" style=\"margin-top:5px;\"> {{destinationTypeName}} name:</label>\n      <input class=\"col-md-10 pull-left\"  type=\"text\" size=\"60\" style=\"margin-left:15px;\" maxlength=\"300\" name=\"destinationName\" ng-model=\"destinationName\" placeholder=\"{{destinationTypeName}} name\"/>\n    </div>\n    <div class=\"alert alert-warning\">\n        The JMS API does not define a standard address syntax. Although a standard address syntax was considered, it was decided that the differences in address semantics between existing message-oriented middleware (MOM) products were too wide to bridge with a single syntax.\n    </div>\n\n    <div class=\"control-group\">\n      <label class=\"checkbox\">\n        <input type=\"radio\" ng-model=\"queueType\" value=\"true\"> Queue\n      </label>\n      <label class=\"checkbox\">\n        <input type=\"radio\" ng-model=\"queueType\" value=\"\"> Topic\n      </label>\n    </div>\n\n    <div class=\"control-group\">\n      <button type=\"submit\" class=\"btn btn-info\" ng-click=\"createDestination(destinationName, queueType)\"\n              ng-disabled=\"!destinationName\">Create {{destinationTypeName}}\n      </button>\n    </div>\n  </fieldset>\n</form>\n");
 $templateCache.put("plugins/activemq/html/createQueue.html","<form class=\"form-horizontal\" ng-controller=\"ActiveMQ.DestinationController\">\n    <div class=\"control-group\">\n        <label class=\"pull-left\" style=\"margin-top:5px;\"> Queue name:</label>\n        <input class=\"col-md-10 pull-left\"  type=\"text\" size=\"60\" style=\"margin-left:15px;\" maxlength=\"300\" name=\"destinationName\" ng-model=\"destinationName\" placeholder=\"Queue name\"/>\n    </div>\n    <div class=\"alert alert-warning\">\n        The JMS API does not define a standard address syntax. Although a standard address syntax was considered, it was decided that the differences in address semantics between existing message-oriented middleware (MOM) products were too wide to bridge with a single syntax.\n    </div>\n\n    <div class=\"control-group\">\n        <button type=\"submit\" class=\"btn btn-info\" ng-click=\"createDestination(destinationName, true)\" ng-disabled=\"!destinationName\">Create queue</button>\n    </div>\n</form>\n");
 $templateCache.put("plugins/activemq/html/createTopic.html","<form class=\"form-horizontal\" ng-controller=\"ActiveMQ.DestinationController\">\n    <div class=\"control-group\">\n        <label class=\"pull-left\" style=\"margin-top:5px;\"> Topic name:</label>\n        <input class=\"col-md-10 pull-left\"  type=\"text\" size=\"60\" style=\"margin-left:15px;\" maxlength=\"300\" name=\"destinationName\" ng-model=\"destinationName\" placeholder=\"Topic name\"/>\n    </div>\n    <div class=\"alert alert-warning\">\n        The JMS API does not define a standard address syntax. Although a standard address syntax was considered, it was decided that the differences in address semantics between existing message-oriented middleware (MOM) products were too wide to bridge with a single syntax.\n    </div>\n\n    <div class=\"control-group\">\n        <button type=\"submit\" class=\"btn btn-info\" ng-click=\"createDestination(destinationName, false)\" ng-disabled=\"!destinationName\">Create topic</button>\n    </div>\n</form>\n");
@@ -17624,9 +17624,9 @@ $templateCache.put("plugins/activemq/html/durableSubscribers.html","<div ng-cont
 $templateCache.put("plugins/activemq/html/jobs.html","<div ng-controller=\"ActiveMQ.JobSchedulerController\">\n\n    <div class=\"row\">\n      <div class=\"col-md-12\">\n        <div class=\"pull-right\">\n            <form class=\"form-inline\">\n                <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                        hawtio-show object-name=\"{{workspace.selection.objectName}}\" method-name=\"removeJob\"\n                        ng-click=\"deleteJobsDialog.open()\"\n                        title=\"Delete the selected jobs\">\n                  <i class=\"fa fa-remove\"></i> Delete\n                </button>\n                <button class=\"btn\" ng-click=\"refresh()\"\n                        title=\"Refreshes the list of subscribers\">\n                    <i class=\"fa fa-refresh\"></i>\n                </button>\n            </form>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"row\">\n      <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n    </div>\n\n    <div hawtio-confirm-dialog=\"deleteJobsDialog.show\" ok-button-text=\"Yes\" cancel-button-text=\"No\" on-ok=\"deleteJobs()\">\n      <div class=\"dialog-body\">\n        <p>Are you sure you want to delete the jobs</p>\n      </div>\n    </div>\n\n</div>");
 $templateCache.put("plugins/activemq/html/layoutActiveMQTree.html","<script type=\"text/ng-template\" id=\"header\">\n  <div class=\"tree-header\" ng-controller=\"ActiveMQ.TreeHeaderController\">\n    <div class=\"left\">\n    </div>\n    <div class=\"right\">\n      <i class=\"fa fa-chevron-down clickable\"\n         title=\"Expand all nodes\"\n         ng-click=\"expandAll()\"></i>\n      <i class=\"fa fa-chevron-up clickable\"\n         title=\"Unexpand all nodes\"\n         ng-click=\"contractAll()\"></i>\n    </div>\n  </div>\n</script>\n\n<hawtio-pane position=\"left\" width=\"300\" header=\"header\">\n  <div id=\"tree-container\"\n       ng-controller=\"Jmx.MBeansController\">\n    <div id=\"activemqtree\"\n         ng-controller=\"ActiveMQ.TreeController\"></div>\n  </div>\n</hawtio-pane>\n<div class=\"row\">\n  <!--\n  <ng-include src=\"\'plugins/jmx/html/subLevelTabs.html\'\"></ng-include>\n  -->\n  <div id=\"properties\" ng-view></div>\n</div>\n");
 $templateCache.put("plugins/activemq/html/preferences.html","<div ng-controller=\"ActiveMQ.PreferencesController\">\n  <form class=\"form-horizontal\">\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"activemqUserName\"\n             title=\"The user name to be used when connecting to the broker\">User name</label>\n\n      <div class=\"controls\">\n        <input id=\"activemqUserName\" type=\"text\" placeholder=\"username\" ng-model=\"activemqUserName\" autofill/>\n      </div>\n    </div>\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"activemqPassword\" title=\"Password to be used when connecting to the broker\">Password</label>\n\n      <div class=\"controls\">\n        <input id=\"activemqPassword\" type=\"password\" placeholder=\"password\" ng-model=\"activemqPassword\" autofill/>\n      </div>\n    </div>\n\n    <div class=\"control-group\">\n      <label class=\"control-label\">Filter advisory topics</label>\n\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"activemqFilterAdvisoryTopics\">\n        <span class=\"help-block\">Whether to exclude advisory topics in tree/table</span>\n      </div>\n\n    </div>\n\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"byteMessages\">Browse byte messages</label>\n\n      <div class=\"controls\">\n        <select id=\"byteMessages\" ng-model=\"activemqBrowseBytesMessages\">\n          <option value=\'99\'>Off</option>\n          <option value=\'8\'>Decimal</option>\n          <option value=\'4\'>Hex</option>\n          <option value=\'2\'>Decimal and text</option>\n          <option value=\'1\'>Hex and text</option>\n        </select>\n        <span class=\"help-block\">Browsing byte messages should display the message body as</span>\n      </div>\n    </div>\n\n  </form>\n</div>\n");
-$templateCache.put("plugins/camel/html/attributeToolBarContext.html","<div class=\"row\">\n  <div class=\"col-md-6\" ng-controller=\"Camel.AttributesToolBarController\">\n    <div class=\"control-group\">\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'stop\', \'suspend\'])\" ng-click=\"start()\"><i\n              class=\"icon-play-circle\"></i> Start\n      </button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState(\'start\')\" ng-click=\"pause()\"><i class=\"fa fa-pause\"></i>\n        Pause\n      </button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'start\', \'suspend\'])\" ng-click=\"deleteDialog = true\"><i\n              class=\"fa fa-remove\"></i> Destroy\n      </button>\n    </div>\n\n    <div hawtio-confirm-dialog=\"deleteDialog\"\n         ok-button-text=\"Delete\"\n         on-ok=\"stop()\">\n      <div class=\"dialog-body\">\n        <p>You are about to delete this Camel Context.</p>\n        <p>This operation cannot be undone so please be careful.</p>\n      </div>\n    </div>\n\n  </div>\n  <div class=\"col-md-6\">\n    <div class=\"control-group\">\n      <input class=\"col-md-12 search-query\" type=\"text\" ng-model=\"$parent.gridOptions.filterOptions.filterText\" placeholder=\"Filter...\">\n    </div>\n  </div>\n</div>\n");
-$templateCache.put("plugins/camel/html/attributeToolBarRoutes.html","<div class=\"row\">\n  <div class=\"col-md-6\">\n    <div class=\"control-group\"  ng-controller=\"Camel.AttributesToolBarController\">\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'stop\', \'suspend\'])\" ng-click=\"start()\"><i class=\"icon-play-circle\"></i> Start</button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState(\'start\')\" ng-click=\"pause()\"><i class=\"fa fa-pause\"></i> Pause</button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'start\', \'suspend\'])\" ng-click=\"stop()\"><i class=\"fa fa-off\"></i> Stop</button>\n      <button class=\"btn\" ng-disabled=\"!everySelectionHasState(\'stop\')\" ng-click=\"delete()\"><i class=\"fa fa-remove\"></i> Delete</button>\n    </div>\n  </div>\n  <div class=\"col-md-6\">\n    <div class=\"control-group\">\n      <input type=\"text\" class=\"col-md-12 search-query\" ng-model=\"$parent.gridOptions.filterOptions.filterText\" placeholder=\"Filter...\">\n    </div>\n  </div>\n</div>\n");
-$templateCache.put("plugins/camel/html/breadcrumbBar.html","<div ng-hide=\"inDashboard\" class=\"logbar logbar-wiki\" ng-controller=\"Camel.BreadcrumbBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs\">\n      <li class=\"\" >\n        <a class=\"breadcrumb-link\">\n          <span class=\"contained c-medium\">Camel Contexts</span>\n        </a>\n      </li>\n        <li class=\"dropdown\" ng-repeat=\"breadcrumb in breadcrumbs\">\n          <a ng-show=\"breadcrumb.items.length > 0\" href=\"#\" class=\"breadcrumb-link dropdown-toggle\" data-toggle=\"dropdown\"\n             data-placement=\"bottom\" title=\"{{breadcrumb.tooltip}}\">\n            {{breadcrumb.name}}\n            <span class=\"caret\"></span>\n          </a>\n          <ul class=\"dropdown-menu\">\n            <li ng-repeat=\"item in breadcrumb.items\">\n              <a ng-href=\"{{item.link}}{{hash}}\"\n                 title=\"Switch to {{item.name}} \"\n                 data-placement=\"bottom\">\n                {{item.name}}</a>\n            </li>\n          </ul>\n        </li>\n      <li class=\"pull-right\" ng-show=\"treeViewLink\" title=\"Switch to the tree based explorer view\">\n        <a href=\"{{treeViewLink}}\"><i class=\"icon-resize-full\"></i></a>\n      </li>\n      </ul>\n  </div>\n</div>\n");
+$templateCache.put("plugins/camel/html/attributeToolBarContext.html","<div class=\"row\">\n  <div class=\"col-md-6\" ng-controller=\"Camel.AttributesToolBarController\">\n    <div class=\"control-group\">\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'stop\', \'suspend\'])\" ng-click=\"start()\"><i\n              class=\"fa fa-play-circle\"></i> Start\n      </button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState(\'start\')\" ng-click=\"pause()\"><i class=\"fa fa-pause\"></i>\n        Pause\n      </button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'start\', \'suspend\'])\" ng-click=\"deleteDialog = true\"><i\n              class=\"fa fa-remove\"></i> Destroy\n      </button>\n    </div>\n\n    <div hawtio-confirm-dialog=\"deleteDialog\"\n         ok-button-text=\"Delete\"\n         on-ok=\"stop()\">\n      <div class=\"dialog-body\">\n        <p>You are about to delete this Camel Context.</p>\n        <p>This operation cannot be undone so please be careful.</p>\n      </div>\n    </div>\n\n  </div>\n  <div class=\"col-md-6\">\n    <div class=\"control-group\">\n      <input class=\"col-md-12 search-query\" type=\"text\" ng-model=\"$parent.gridOptions.filterOptions.filterText\" placeholder=\"Filter...\">\n    </div>\n  </div>\n</div>\n");
+$templateCache.put("plugins/camel/html/attributeToolBarRoutes.html","<div class=\"row\">\n  <div class=\"col-md-6\">\n    <div class=\"control-group\"  ng-controller=\"Camel.AttributesToolBarController\">\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'stop\', \'suspend\'])\" ng-click=\"start()\"><i class=\"fa fa-play-circle\"></i> Start</button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState(\'start\')\" ng-click=\"pause()\"><i class=\"fa fa-pause\"></i> Pause</button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'start\', \'suspend\'])\" ng-click=\"stop()\"><i class=\"fa fa-off\"></i> Stop</button>\n      <button class=\"btn\" ng-disabled=\"!everySelectionHasState(\'stop\')\" ng-click=\"delete()\"><i class=\"fa fa-remove\"></i> Delete</button>\n    </div>\n  </div>\n  <div class=\"col-md-6\">\n    <div class=\"control-group\">\n      <input type=\"text\" class=\"col-md-12 search-query\" ng-model=\"$parent.gridOptions.filterOptions.filterText\" placeholder=\"Filter...\">\n    </div>\n  </div>\n</div>\n");
+$templateCache.put("plugins/camel/html/breadcrumbBar.html","<div ng-hide=\"inDashboard\" class=\"logbar logbar-wiki\" ng-controller=\"Camel.BreadcrumbBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs\">\n      <li class=\"\" >\n        <a class=\"breadcrumb-link\">\n          <span class=\"contained c-medium\">Camel Contexts</span>\n        </a>\n      </li>\n        <li class=\"dropdown\" ng-repeat=\"breadcrumb in breadcrumbs\">\n          <a ng-show=\"breadcrumb.items.length > 0\" href=\"#\" class=\"breadcrumb-link dropdown-toggle\" data-toggle=\"dropdown\"\n             data-placement=\"bottom\" title=\"{{breadcrumb.tooltip}}\">\n            {{breadcrumb.name}}\n            <span class=\"caret\"></span>\n          </a>\n          <ul class=\"dropdown-menu\">\n            <li ng-repeat=\"item in breadcrumb.items\">\n              <a ng-href=\"{{item.link}}{{hash}}\"\n                 title=\"Switch to {{item.name}} \"\n                 data-placement=\"bottom\">\n                {{item.name}}</a>\n            </li>\n          </ul>\n        </li>\n      <li class=\"pull-right\" ng-show=\"treeViewLink\" title=\"Switch to the tree based explorer view\">\n        <a href=\"{{treeViewLink}}\"><i class=\"fa fa-resize-full\"></i></a>\n      </li>\n      </ul>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/browseEndpoint.html","<div ng-controller=\"Camel.BrowseEndpointController\">\n  <div ng-hide=\"isJmxTab\">\n    <ng-include src=\"\'plugins/camel/html/breadcrumbBar.html\'\"></ng-include>\n  </div>\n  <div ng-class=\"{\'wiki-fixed\' : !isJmxTab}\">\n    <div class=\"row\">\n      <div class=\"col-md-6\">\n        <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n               placeholder=\"Filter messages\">\n      </div>\n      <div class=\"col-md-6\">\n        <div class=\"pull-right\">\n          <form class=\"form-inline\">\n            <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"forwardDialog.open()\"\n                    hawtio-show object-name=\"{{workspace.selection.objectName}}\" method-name=\"sendBodyAndHeaders\"\n                    title=\"Forward the selected messages to another endpoint\" data-placement=\"bottom\">\n              <i class=\"fa fa-forward\"></i> Forward\n            </button>\n            <button class=\"btn\" ng-click=\"refresh()\"\n                    title=\"Refreshes the list of messages\">\n              <i class=\"fa fa-refresh\"></i>\n            </button>\n          </form>\n        </div>\n      </div>\n    </div>\n\n\n    <div class=\"row\">\n      <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n    </div>\n\n    <div hawtio-slideout=\"showMessageDetails\" title=\"{{row.id}}\">\n      <div class=\"dialog-body\">\n\n        <div class=\"row\">\n          <div class=\"pull-right\">\n            <form class=\"form-horizontal no-bottom-margin\">\n              <div class=\"btn-group\" hawtio-pager=\"messages\" on-index-change=\"selectRowIndex\"\n                   row-index=\"rowIndex\"></div>\n              <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"forwardDialog.open()\"\n                      hawtio-show object-name=\"{{workspace.selection.objectName}}\" method-name=\"sendBodyAndHeaders\"\n                      title=\"Forward the selected messages to another endpoint\" data-placement=\"bottom\">\n                <i class=\"fa fa-forward\"></i> Forward\n              </button>\n              <button class=\"btn\" ng-click=\"showMessageDetails = !showMessageDetails\" title=\"Close this dialog\">\n                <i class=\"fa fa-remove\"></i> Close\n              </button>\n            </form>\n          </div>\n        </div>\n\n        <div class=\"row\">\n          <div class=\"expandable closed\">\n            <div title=\"Headers\" class=\"title\">\n              <i class=\"expandable-indicator\"></i> Headers\n            </div>\n            <div class=\"expandable-body well\">\n              <table class=\"table table-condensed table-striped\">\n                <thead>\n                <tr>\n                  <th>Header</th>\n                  <th>Value</th>\n                </tr>\n                </thead>\n                <tbody ng-bind-html-unsafe=\"row.headerHtml\">\n                </tbody>\n              </table>\n            </div>\n          </div>\n\n          <div class=\"row\">\n            <div hawtio-editor=\"row.body\" read-only=\"true\" mode=\"mode\"></div>\n          </div>\n\n        </div>\n\n      </div>\n    </div>\n  </div>\n\n  <div modal=\"forwardDialog.show\" close=\"forwardDialog.close()\" options=\"forwardDialog.options\">\n    <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"forwardDialog.close()\">\n      <div class=\"modal-header\">\n        <h4>Forward\n          <ng-pluralize count=\"selectedItems.length\"\n                        when=\"{\'1\': \'a message\', \'other\': \'messages\'}\"></ng-pluralize>\n        </h4>\n      </div>\n      <div class=\"modal-body\">\n        <p>Forward\n          <ng-pluralize count=\"selectedItems.length\"\n                        when=\"{\'1\': \'a message\', \'other\': \'{} messages\'}\"></ng-pluralize>\n          to: <input type=\"text\" style=\"width: 100%\" ng-model=\"endpointUri\" placeholder=\"Endpoint URI\"\n                     typeahead=\"title for title in endpointUris() | filter:$viewValue\" typeahead-editable=\'true\'></p>\n      </div>\n      <div class=\"modal-footer\">\n        <input id=\"submit\" class=\"btn btn-primary add\" type=\"submit\" ng-click=\"forwardMessagesAndCloseForwardDialog()\"\n               value=\"Forward\">\n        <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"forwardDialog.close()\">Cancel</button>\n      </div>\n    </form>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/browseMessages.html","<div ng-switch=\"messageDialog.show\">\n  <div ng-switch-when=\"false\">\n    <div class=\"row\">\n      <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n      <!--\n          <div class=\"gridStyle\" hawtio-datatable=\"gridOptions\"></div>\n      -->\n    </div>\n  </div>\n  <div ng-switch-when=\"true\">\n    <div class=\"row\">\n      <div class=\"col-md-8\">\n        <h4>{{row.id}}</h4>\n      </div>\n      <div class=\"pull-right\">\n        <form class=\"form-horizontal no-bottom-margin\">\n          <div class=\"btn-group\" hawtio-pager=\"messages\" on-index-change=\"selectRowIndex\" row-index=\"rowIndex\"></div>\n          <button class=\"btn\" ng-click=\"messageDialog.close()\" title=\"Closes the message detail view\">\n            <i class=\"fa fa-eject\"></i></button>\n        </form>\n      </div>\n    </div>\n    <div class=\"row\">\n      <div class=\"expandable closed\">\n        <div title=\"Headers\" class=\"title\">\n          <i class=\"expandable-indicator\"></i> Headers\n        </div>\n        <div class=\"expandable-body well\">\n          <table class=\"table table-condensed table-striped\">\n            <thead>\n            <tr>\n              <th>Header</th>\n              <th>Type</th>\n              <th>Value</th>\n            </tr>\n            </thead>\n            <tbody ng-bind-html-unsafe=\"row.headerHtml\">\n            </tbody>\n          </table>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div title=\"Body\" class=\"title\">\n          Body (type: {{row.bodyType}})\n        </div>\n        <div hawtio-editor=\"row.body\" read-only=\"true\" mode=\"mode\" text-title=\"row.bodyType\"></div>\n      </div>\n\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/browseRoute.html","<ng-include src=\"\'plugins/camel/html/browseMessageTemplate.html\'\"></ng-include>\n\n<div class=\"row\">\n  <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n  <!--\n      <div class=\"gridStyle\" hawtio-datatable=\"gridOptions\"></div>\n  -->\n</div>");
@@ -17634,7 +17634,7 @@ $templateCache.put("plugins/camel/html/createEndpoint.html","<div ng-controller=
 $templateCache.put("plugins/camel/html/createEndpointURL.html","<form class=\"form-horizontal\">\n  <div class=\"control-group\">\n    <input class=\"col-md-12\" type=\"text\" size=\"255\" ng-model=\"endpointName\" placeholder=\"Endpoint URI\"/>\n  </div>\n  <div class=\"control-group\">\n    <button type=\"submit\" class=\"btn btn-info\" ng-click=\"createEndpoint(endpointName)\"\n            ng-disabled=\"!endpointName\">\n      Create endpoint\n    </button>\n  </div>\n</form>\n");
 $templateCache.put("plugins/camel/html/createEndpointWizard.html","<div ng-controller=\"Camel.EndpointController\">\n  <form class=\"form-horizontal\">\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"componentName\">Component</label>\n\n      <div class=\"controls\">\n        <select id=\"componentName\" ng-model=\"selectedComponentName\"\n                ng-options=\"componentName for componentName in componentNames\"></select>\n      </div>\n    </div>\n    <div ng-show=\"selectedComponentName\">\n      <div class=\"control-group\">\n        <label class=\"control-label\" for=\"endpointPath\">Endpoint</label>\n\n        <div class=\"controls\">\n          <input id=\"endpointPath\" class=\"col-md-10\" type=\"text\" ng-model=\"endpointPath\" placeholder=\"name\"\n                 typeahead=\"title for title in endpointCompletions($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'\n                 min-length=\"1\">\n        </div>\n      </div>\n\n      <div simple-form name=\"formEditor\" entity=\'endpointParameters\' data=\'endpointSchema\' schema=\"schema\"></div>\n\n      <div class=\"control-group\">\n        <div class=\"controls\">\n          <button type=\"submit\" class=\"btn btn-info\" ng-click=\"createEndpointFromData()\"\n                  ng-disabled=\"!endpointPath || !selectedComponentName\">\n            Create endpoint\n          </button>\n        </div>\n      </div>\n    </div>\n  </form>\n</div>\n");
 $templateCache.put("plugins/camel/html/debug.html","<div ng-controller=\"Camel.DebugRouteController\" ng-switch=\"debugging\">\n  <div ng-switch-when=\"true\">\n    <div class=\"row\">\n      <div class=\"col-md-10\">\n        <div ng-include src=\"graphView\">\n        </div>\n      </div>\n      <div class=\"col-md-2\">\n        <div class=\"btn-toolbar pull-right\">\n          <div class=\"btn-group\">\n            <div ng-switch=\"hasBreakpoint\">\n              <button ng-switch-when=\"true\" class=\"btn\" ng-disabled=\"!selectedDiagramNodeId\"\n                      ng-click=\"removeBreakpoint()\" title=\"Remove the breakpoint on the selected node\"><i\n                      class=\"fa fa-remove\"></i>\n              </button>\n              <button ng-switch-default=\"false\" class=\"btn\" ng-disabled=\"!selectedDiagramNodeId\"\n                      ng-click=\"addBreakpoint()\" title=\"Add a breakpoint on the selected node\"><i class=\"fa fa-plus\"></i>\n              </button>\n            </div>\n          </div>\n          <div class=\"btn-group\">\n            <button class=\"btn\" type=\"submit\" ng-click=\"stopDebugging()\" title=\"Stops the debugger\">Close\n            </button>\n          </div>\n        </div>\n        <div class=\"btn-toolbar pull-right\">\n          <div class=\"btn-group\">\n            <button class=\"btn\" ng-click=\"step()\" ng-disabled=\"!stopped\" title=\"Step into the next node\"><img\n                    ng-src=\"plugins/camel/doc/img/debug/step.gif\"></button>\n            <button class=\"btn\" ng-click=\"resume()\" ng-disabled=\"!stopped\" title=\"Resume running\"><img\n                    ng-src=\"plugins/camel/doc/img/debug/resume.gif\"></button>\n            <button class=\"btn\" ng-click=\"suspend()\" ng-disabled=\"stopped\"\n                    title=\"Suspend all threads in this route\"><img ng-src=\"plugins/camel/doc/img/debug/suspend.gif\"></button>\n          </div>\n        </div>\n        <div class=\"col-md-12 well\">\n          <form>\n            <div class=\"table-header\">Breakpoints:</div>\n            <ul>\n              <li class=\"table-row\" ng-repeat=\"b in breakpoints\">\n                {{b}}\n              </li>\n            </ul>\n            <div class=\"table-row\">Suspended:</div>\n            <ul>\n              <li class=\"table-row\" ng-repeat=\"b in suspendedBreakpoints\">\n                {{b}}\n              </li>\n            </ul>\n          </form>\n        </div>\n      </div>\n    </div>\n\n    <div ng-include src=\"tableView\">\n    </div>\n  </div>\n  <div class=\"col-md-12 well\" ng-switch-default=\"false\">\n    <form>\n      <p>Debugging allows you to step through camel routes to diagnose issues</p>\n\n      <button class=\"btn btn-info\" type=\"submit\" ng-click=\"startDebugging()\">Start debugging</button>\n    </form>\n  </div>\n</div>");
-$templateCache.put("plugins/camel/html/fabricDiagram.html","<style type=\"text/css\">\n\n  .col-md-5.node-panel {\n    margin-top: 5px;\n    margin-left: 5px;\n  }\n\n  .node-attributes dl {\n    margin-top: 5px;\n    margin-bottom: 10px;\n  }\n\n  .node-attributes dt {\n    width: 270px;\n  }\n\n  .node-attributes dd {\n    margin-left: 280px;\n  }\n\n  .node-attributes dd a {\n    /** lets make the destination links wrap */\n    -ms-word-break: break-all;\n    word-break: break-all;\n    -webkit-hyphens: auto;\n    -moz-hyphens: auto;\n    hyphens: auto;\n  }\n\n  ul.viewMenu li {\n    padding-left: 10px;\n    padding-top: 2px;\n    padding-bottom: 2px;\n  }\n\n  div#pop-up {\n    display: none;\n    position: absolute;\n    color: white;\n    font-size: 14px;\n    background: rgba(0, 0, 0, 0.6);\n    padding: 5px 10px 5px 10px;\n    -moz-border-radius: 8px 8px;\n    border-radius: 8px 8px;\n  }\n\n  div#pop-up-title {\n    font-size: 15px;\n    margin-bottom: 4px;\n    font-weight: bolder;\n  }\n\n  div#pop-up-content {\n    font-size: 12px;\n  }\n\n  rect.graphbox {\n    fill: #FFF;\n  }\n\n  rect.graphbox.frame {\n    stroke: #222;\n    stroke-width: 2px\n  }\n\n  /* only things directly related to the network graph should be here */\n\n  path.link {\n    fill: none;\n    stroke: #666;\n    stroke-width: 1.5px;\n  }\n\n  marker.context {\n    stroke: red;\n    fill: red;\n    stroke-width: 1.5px;\n  }\n\n  circle.context {\n    fill: #0c0;\n  }\n\n  circle.route {\n    fill: #c0c;\n    stroke-width: 1.3px;\n  }\n\n  circle.notActive {\n    fill: #c00;\n  }\n\n  path.link.group {\n    stroke: #ccc;\n  }\n\n  marker#group {\n    stroke: #ccc;\n    fill: #ccc;\n  }\n\n  circle.group {\n    fill: #eee;\n    stroke: #ccc;\n  }\n\n  circle.destination {\n    fill: #bbb;\n    stroke: #ccc;\n  }\n\n  circle.pinned {\n    stroke-width: 4.5px;\n  }\n\n  path.link.profile {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  marker#container {\n  }\n\n  circle.container {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  path.link.container {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  circle {\n    fill: #ccc;\n    stroke: #333;\n    stroke-width: 1.5px;\n    cursor: pointer;\n  }\n\n  circle.closeMode {\n    cursor: crosshair;\n  }\n\n  path.link.destination {\n    stroke: #ccc;\n  }\n\n  circle.topic {\n    fill: #c0c;\n  }\n\n  circle.endpoint, circle.endpoints {\n    fill: #00c;\n  }\n\n  circle.selected {\n    stroke-width: 3px;\n  }\n\n  .selected {\n    stroke-width: 3px;\n  }\n\n  text {\n    font: 10px sans-serif;\n    pointer-events: none;\n  }\n\n  text.shadow {\n    stroke: #fff;\n    stroke-width: 3px;\n    stroke-opacity: .8;\n  }\n</style>\n\n\n<div class=\"row mq-page\" ng-controller=\"Camel.FabricDiagramController\">\n\n  <div ng-hide=\"inDashboard\" class=\"col-md-12 page-padded\">\n    <div class=\"section-header\">\n\n      <div class=\"section-filter\">\n        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"searchFilter\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"searchFilter = \'\'\"></i>\n      </div>\n\n      <div class=\"section-controls\">\n        <a href=\"#\"\n           class=\"dropdown-toggle\"\n           data-toggle=\"dropdown\">\n          View &nbsp;<i class=\"icon-caret-down\"></i>\n        </a>\n\n        <ul class=\"dropdown-menu viewMenu\">\n          <!--\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.consumer\"> Consumers\n                      </label>\n                    </li>\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.producer\"> Producers\n                      </label>\n                    </li>\n          -->\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.endpoint\"> Endpoint\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.route\"> Route\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.context\"> Context\n            </label>\n          </li>\n          <!--\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.profile\"> Profiles\n                      </label>\n                    </li>\n          -->\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.container\"> Containers\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li title=\"Should we show the details panel on the left\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.panel\"> Details panel\n            </label>\n          </li>\n          <li title=\"Show the summary popup as you hover over nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.popup\"> Hover text\n            </label>\n          </li>\n          <li title=\"Show the labels next to nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.label\"> Label\n            </label>\n          </li>\n        </ul>\n\n        <!--\n                <a ng-href=\"#/fabric/mq/contexts{{hash}}\" title=\"View the context and container diagram\">\n                  <i class=\"fa fa-edit\"></i> Configuration\n                </a>\n        -->\n      </div>\n    </div>\n  </div>\n\n\n  <div id=\"pop-up\">\n    <div id=\"pop-up-title\"></div>\n    <div id=\"pop-up-content\"></div>\n  </div>\n\n  <div class=\"row\">\n    <div ng-show=\"containerCount\">\n      <div class=\"{{viewSettings.panel ? \'col-md-7\' : \'col-md-12\'}} canvas context-canvas\">\n        <div hawtio-force-graph graph=\"graph\" selected-model=\"selectedNode\" link-distance=\"150\" charge=\"-600\"\n             nodesize=\"10\" marker-kind=\"marker-end\"\n             style=\"min-height: 800px\">\n        </div>\n      </div>\n      <div ng-show=\"viewSettings.panel\" class=\"col-md-5 node-panel\">\n        <div ng-show=\"selectedNode\" class=\"node-attributes\">\n          <dl ng-repeat=\"property in selectedNodeProperties\" class=\"dl-horizontal\">\n            <dt title=\"{{property.key}}\">{{property.key}}:</dt>\n            <dd ng-bind-html-unsafe=\"property.value\"></dd>\n          </dl>\n        </div>\n      </div>\n    </div>\n    <div class=\"jumbotron\" ng-show=\"containerCount === 0 && isFmc\">\n      <p>There are currently no Camel routes running in this fabric</p>\n\n      <p>To try out the EIP browser try create one of the example <a\n              href=\"#/wiki/branch/{{versionId}}/view/fabric/profiles/example/quickstarts\">quickstarts</a></p>\n\n      <p>e.g. Try creating a container for:\n        <a class=\"btn btn-primary\"\n           href=\"#/fabric/containers/createContainer?profileIds=example-quickstarts-cbr&versionId={{versionId}}\">\n          Content Based Router Quickstart\n        </a>\n        <a class=\"btn btn-primary\"\n           href=\"#/fabric/containers/createContainer?profileIds=example-quickstarts-eip&versionId={{versionId}}\">\n          EIP Quickstart\n        </a>\n      </p>\n    </div>\n    <div class=\"jumbotron\" ng-show=\"containerCount === 0 && !isFmc\">\n      <p>There are currently no Camel routes running in this JVM</p>\n\n      <p>To try out the Camel diagram try create one more Camel routes</p>\n    </div>\n  </div>\n\n  <div ng-include=\"\'plugins/fabric/html/connectToContainerDialog.html\'\"></div>\n\n</div>\n\n\n");
+$templateCache.put("plugins/camel/html/fabricDiagram.html","<style type=\"text/css\">\n\n  .col-md-5.node-panel {\n    margin-top: 5px;\n    margin-left: 5px;\n  }\n\n  .node-attributes dl {\n    margin-top: 5px;\n    margin-bottom: 10px;\n  }\n\n  .node-attributes dt {\n    width: 270px;\n  }\n\n  .node-attributes dd {\n    margin-left: 280px;\n  }\n\n  .node-attributes dd a {\n    /** lets make the destination links wrap */\n    -ms-word-break: break-all;\n    word-break: break-all;\n    -webkit-hyphens: auto;\n    -moz-hyphens: auto;\n    hyphens: auto;\n  }\n\n  ul.viewMenu li {\n    padding-left: 10px;\n    padding-top: 2px;\n    padding-bottom: 2px;\n  }\n\n  div#pop-up {\n    display: none;\n    position: absolute;\n    color: white;\n    font-size: 14px;\n    background: rgba(0, 0, 0, 0.6);\n    padding: 5px 10px 5px 10px;\n    -moz-border-radius: 8px 8px;\n    border-radius: 8px 8px;\n  }\n\n  div#pop-up-title {\n    font-size: 15px;\n    margin-bottom: 4px;\n    font-weight: bolder;\n  }\n\n  div#pop-up-content {\n    font-size: 12px;\n  }\n\n  rect.graphbox {\n    fill: #FFF;\n  }\n\n  rect.graphbox.frame {\n    stroke: #222;\n    stroke-width: 2px\n  }\n\n  /* only things directly related to the network graph should be here */\n\n  path.link {\n    fill: none;\n    stroke: #666;\n    stroke-width: 1.5px;\n  }\n\n  marker.context {\n    stroke: red;\n    fill: red;\n    stroke-width: 1.5px;\n  }\n\n  circle.context {\n    fill: #0c0;\n  }\n\n  circle.route {\n    fill: #c0c;\n    stroke-width: 1.3px;\n  }\n\n  circle.notActive {\n    fill: #c00;\n  }\n\n  path.link.group {\n    stroke: #ccc;\n  }\n\n  marker#group {\n    stroke: #ccc;\n    fill: #ccc;\n  }\n\n  circle.group {\n    fill: #eee;\n    stroke: #ccc;\n  }\n\n  circle.destination {\n    fill: #bbb;\n    stroke: #ccc;\n  }\n\n  circle.pinned {\n    stroke-width: 4.5px;\n  }\n\n  path.link.profile {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  marker#container {\n  }\n\n  circle.container {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  path.link.container {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  circle {\n    fill: #ccc;\n    stroke: #333;\n    stroke-width: 1.5px;\n    cursor: pointer;\n  }\n\n  circle.closeMode {\n    cursor: crosshair;\n  }\n\n  path.link.destination {\n    stroke: #ccc;\n  }\n\n  circle.topic {\n    fill: #c0c;\n  }\n\n  circle.endpoint, circle.endpoints {\n    fill: #00c;\n  }\n\n  circle.selected {\n    stroke-width: 3px;\n  }\n\n  .selected {\n    stroke-width: 3px;\n  }\n\n  text {\n    font: 10px sans-serif;\n    pointer-events: none;\n  }\n\n  text.shadow {\n    stroke: #fff;\n    stroke-width: 3px;\n    stroke-opacity: .8;\n  }\n</style>\n\n\n<div class=\"row mq-page\" ng-controller=\"Camel.FabricDiagramController\">\n\n  <div ng-hide=\"inDashboard\" class=\"col-md-12 page-padded\">\n    <div class=\"section-header\">\n\n      <div class=\"section-filter\">\n        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"searchFilter\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"searchFilter = \'\'\"></i>\n      </div>\n\n      <div class=\"section-controls\">\n        <a href=\"#\"\n           class=\"dropdown-toggle\"\n           data-toggle=\"dropdown\">\n          View &nbsp;<i class=\"fa fa-caret-down\"></i>\n        </a>\n\n        <ul class=\"dropdown-menu viewMenu\">\n          <!--\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.consumer\"> Consumers\n                      </label>\n                    </li>\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.producer\"> Producers\n                      </label>\n                    </li>\n          -->\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.endpoint\"> Endpoint\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.route\"> Route\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.context\"> Context\n            </label>\n          </li>\n          <!--\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.profile\"> Profiles\n                      </label>\n                    </li>\n          -->\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.container\"> Containers\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li title=\"Should we show the details panel on the left\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.panel\"> Details panel\n            </label>\n          </li>\n          <li title=\"Show the summary popup as you hover over nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.popup\"> Hover text\n            </label>\n          </li>\n          <li title=\"Show the labels next to nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.label\"> Label\n            </label>\n          </li>\n        </ul>\n\n        <!--\n                <a ng-href=\"#/fabric/mq/contexts{{hash}}\" title=\"View the context and container diagram\">\n                  <i class=\"fa fa-edit\"></i> Configuration\n                </a>\n        -->\n      </div>\n    </div>\n  </div>\n\n\n  <div id=\"pop-up\">\n    <div id=\"pop-up-title\"></div>\n    <div id=\"pop-up-content\"></div>\n  </div>\n\n  <div class=\"row\">\n    <div ng-show=\"containerCount\">\n      <div class=\"{{viewSettings.panel ? \'col-md-7\' : \'col-md-12\'}} canvas context-canvas\">\n        <div hawtio-force-graph graph=\"graph\" selected-model=\"selectedNode\" link-distance=\"150\" charge=\"-600\"\n             nodesize=\"10\" marker-kind=\"marker-end\"\n             style=\"min-height: 800px\">\n        </div>\n      </div>\n      <div ng-show=\"viewSettings.panel\" class=\"col-md-5 node-panel\">\n        <div ng-show=\"selectedNode\" class=\"node-attributes\">\n          <dl ng-repeat=\"property in selectedNodeProperties\" class=\"dl-horizontal\">\n            <dt title=\"{{property.key}}\">{{property.key}}:</dt>\n            <dd ng-bind-html-unsafe=\"property.value\"></dd>\n          </dl>\n        </div>\n      </div>\n    </div>\n    <div class=\"jumbotron\" ng-show=\"containerCount === 0 && isFmc\">\n      <p>There are currently no Camel routes running in this fabric</p>\n\n      <p>To try out the EIP browser try create one of the example <a\n              href=\"#/wiki/branch/{{versionId}}/view/fabric/profiles/example/quickstarts\">quickstarts</a></p>\n\n      <p>e.g. Try creating a container for:\n        <a class=\"btn btn-primary\"\n           href=\"#/fabric/containers/createContainer?profileIds=example-quickstarts-cbr&versionId={{versionId}}\">\n          Content Based Router Quickstart\n        </a>\n        <a class=\"btn btn-primary\"\n           href=\"#/fabric/containers/createContainer?profileIds=example-quickstarts-eip&versionId={{versionId}}\">\n          EIP Quickstart\n        </a>\n      </p>\n    </div>\n    <div class=\"jumbotron\" ng-show=\"containerCount === 0 && !isFmc\">\n      <p>There are currently no Camel routes running in this JVM</p>\n\n      <p>To try out the Camel diagram try create one more Camel routes</p>\n    </div>\n  </div>\n\n  <div ng-include=\"\'plugins/fabric/html/connectToContainerDialog.html\'\"></div>\n\n</div>\n\n\n");
 $templateCache.put("plugins/camel/html/layoutCamelTree.html","\n<script type=\"text/ng-template\" id=\"header\">\n  <div class=\"camel tree-header\" ng-controller=\"Camel.TreeHeaderController\">\n    <div class=\"left\">\n      <div class=\"section-filter\">\n        <input id=\"camelContextIdFilter\"\n               class=\"search-query\"\n               type=\"text\"\n               ng-model=\"contextFilterText\"\n               title=\"filter camel context IDs\"\n               placeholder=\"Filter...\">\n        <i class=\"fa fa-remove clickable\"\n           title=\"Clear filter\"\n           ng-click=\"contextFilterText = \'\'\"></i>\n      </div>\n    </div>\n    <div class=\"right\">\n      <i class=\"fa fa-chevron-down clickable\"\n         title=\"Expand all nodes\"\n         ng-click=\"expandAll()\"></i>\n      <i class=\"fa fa-chevron-up clickable\"\n         title=\"Unexpand all nodes\"\n         ng-click=\"contractAll()\"></i>\n    </div>\n  </div>\n</script>\n\n<hawtio-pane position=\"left\" width=\"300\" header=\"header\">\n  <div id=\"tree-container\"\n       ng-controller=\"Jmx.MBeansController\">\n    <div class=\"camel-tree\"\n         ng-controller=\"Camel.TreeController\">\n      <div id=\"cameltree\"></div>\n    </div>\n  </div>\n</hawtio-pane>\n<div class=\"row\">\n  <!--\n  <ng-include src=\"\'plugins/jmx/html/subLevelTabs.html\'\"></ng-include>\n  -->\n  <div id=\"properties\" ng-view></div>\n</div>\n");
 $templateCache.put("plugins/camel/html/nodePropertiesEdit.html","<div simple-form name=\"formEditor\" entity=\'nodeData\' data=\'model\' schema=\"schema\"></div>\n");
 $templateCache.put("plugins/camel/html/nodePropertiesView.html","<div simple-form name=\"formViewer\" mode=\'view\' entity=\'nodeData\' data=\'model\' schema=\"schema\"></div>\n");
@@ -17647,15 +17647,15 @@ $templateCache.put("plugins/camel/html/routes.html","<style>\n\n  #node-CLOSED r
 $templateCache.put("plugins/camel/html/sendMessage.html","<div ng-controller=\"Camel.SendMessageController\">\n\n  <div class=\"tabbable\" ng-model=\"tab\">\n\n    <div value=\"compose\" class=\"tab-pane\" title=\"Compose\">\n      <!--\n         title=\"Compose a new message to send\"\n      -->\n\n      <div class=\"row\">\n        <span ng-show=\"noCredentials\" class=\"alert\">\n          No credentials set for endpoint!  Please set your username and password in the <a\n                href=\"\" ng-click=\"openPrefs()\">Preferences</a> page\n        </span>\n\n        <form class=\"form-inline pull-right\">\n          <button class=\"btn\" ng-click=\"addHeader()\" title=\"Add a new message header\"><i\n                  class=\"fa fa-plus\"></i> Header\n          </button>\n          <button type=\"submit\" class=\"btn btn-primary\" ng-click=\"sendMessage()\">Send message</button>\n        </form>\n      </div>\n\n      <form class=\"form-inline bottom-margin\" ng-submit=\"addHeader()\">\n        <ol class=\"zebra-list header-list\">\n          <div class=\"row\">\n            <li ng-repeat=\"header in headers\">\n              <div class=\"col-md-4\">\n                <input type=\"text\" style=\"width: 100%\" class=\"headerName\"\n                       ng-model=\"header.name\"\n                       typeahead=\"completion for completion in defaultHeaderNames() | filter:$viewValue\"\n                       typeahead-editable=\'true\'\n                       placeholder=\"Header name\">\n              </div>\n              <div class=\"col-md-6\">\n                <input type=\"text\" style=\"width: 100%\" ng-model=\"header.value\"\n                       placeholder=\"Value of the message header\">\n              </div>\n              <div class=\"col-md-2\">\n                <button type=\"submit\" class=\"btn\" title=\"Add a new message header\">\n                  <i class=\"fa fa-plus\"></i>\n                </button>\n                <button type=\"button\" ng-click=\"removeHeader(header)\" class=\"btn\" title=\"Removes this message header\">\n                  <i class=\"fa fa-remove\"></i>\n                </button>\n              </div>\n            </li>\n          </div>\n        </ol>\n      </form>\n\n      <div class=\"row\">\n        <form class=\"form-inline\">\n          <div class=\"controls\">\n            <label class=\"control-label\" for=\"sourceFormat\" title=\"The text format to use for the message payload\">Payload\n              format: </label>\n            <select ng-model=\"codeMirrorOptions.mode.name\" id=\"sourceFormat\">\n              <option value=\"javascript\">JSON</option>\n              <option value=\"text\" selected>Plain text</option>\n              <option value=\"properties\">Properties</option>\n              <option value=\"xml\">XML</option>\n            </select>\n\n            <button class=\"btn\" ng-click=\"autoFormat()\"\n                    title=\"Automatically pretty prints the message so its easier to read\">Auto format\n            </button>\n          </div>\n        </form>\n      </div>\n\n      <div class=\"row\">\n        <textarea ui-codemirror=\"codeMirrorOptions\" ng-model=\"message\"></textarea>\n      </div>\n    </div>\n    </tab>\n\n    <div value=\"choose\" class=\"tab-pane\" title=\"Choose\" ng-hide=\"!showChoose\">\n<!--\n         title=\"Choose messages to send from the available files in the Profile configuration for this container\">\n-->\n      <div class=\"row bottom-margin\">\n        <span ng-show=\"noCredentials\" class=\"alert\">\n          No credentials set for endpoint!  Please set your username and password in the <a\n                href=\"#/preferences\">Preferences</a> page\n        </span>\n        <button type=\"submit\" ng-disabled=\"!fileSelection().length\" class=\"btn btn-primary pull-right\"\n                ng-click=\"sendSelectedFiles()\">\n          <ng-pluralize count=\"fileSelection().length\"\n                        when=\"{\'0\': \'No files selected\', \'1\': \'Send the file\',\'other\': \'Send {} files\'}\">\n          </ng-pluralize>\n        </button>\n      </div>\n\n      <p>Choose which files to send from the profile configuration:</p>\n\n      <div class=\"control-group inline-block\">\n          <input class=\"search-query\" type=\"text\" ng-model=\"searchText\" placeholder=\"Filter...\" autofocus>\n      </div>\n\n      <ul>\n        <li ng-repeat=\"fileName in profileFileNames | filter:searchText\">\n         <input type=\"checkbox\" ng-model=\"selectedFiles[fileName]\"> {{fileName}}\n        </li>\n      </ul>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/source.html","<div class=\"form-horizontal\" ng-controller=\"Camel.SourceController\">\n  <div class=\"row\">\n    <div class=\"col-md-12\">\n      <button class=\"pull-right btn btn-primary\"\n              hawtio-show object-name=\"{{getSelectionCamelContextMBean(workspace)}}\" method-name=\"addOrUpdateRoutesFromXml\"\n              ng-click=\"saveRouteXml()\"><i class=\"fa fa-save\"></i> Update</button>\n    </div>\n  </div>\n  <p></p>\n  <div class=\"row\">\n    <div class=\"col-md-12\">\n      <div hawtio-editor=\"source\" mode=\"mode\"></div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/traceRoute.html","<div ng-controller=\"Camel.TraceRouteController\">\n  <div class=\"col-md-12 well\" ng-hide=\"tracing\">\n    <form>\n      <p>Tracing allows you to send messages to a route and then step through and see the messages flow through a route\n        to aid debugging and to help diagnose issues.</p>\n\n      <p>Once you start tracing, you can send messages to the input endpoints, then come back to this page and see the\n        flow of messages through your route.</p>\n\n      <p>As you click on the message table, you can see which node in the flow it came through; moving the selection up and down in the message table lets you see the flow of the message through the diagram.</p>\n\n      <button class=\"btn btn-info\" type=\"submit\" ng-click=\"startTracing()\">Start tracing</button>\n    </form>\n  </div>\n  <div ng-show=\"tracing\">\n\n    <form>\n      <button class=\"btn btn-info pull-right\" type=\"submit\" ng-click=\"stopTracing()\">Stop tracing</button>\n    </form>\n    <div ng-include src=\"graphView\">\n    </div>\n\n    <form>\n      <button class=\"btn btn-info pull-right\" type=\"submit\" ng-click=\"clear()\">Clear messages</button>\n    </form>\n    <div>&nbsp;</div>\n    <div ng-include src=\"tableView\">\n    </div>\n\n  </div>\n</div>");
-$templateCache.put("plugins/camel/html/typeConverter.html","<div class=\"row\" ng-controller=\"Camel.TypeConverterController\">\n\n  <!-- the dl need to be wider so we can see the labels -->\n  <style>\n    .dl-horizontal dt {\n      width: 260px;\n    }\n    .dl-horizontal dd {\n      margin-left: 280px;\n    }\n  </style>\n\n  <div ng-show=\"selectedMBean\">\n\n    <div class=\"row\">\n\n      <div class=\"pull-right\">\n        <form class=\"form-inline no-bottom-margin\">\n          <fieldset>\n            <div class=\"controls control-group inline-block controls-row\">\n              <div class=\"btn-group\">\n                <button\n                    class=\"btn\" ng-click=\"resetStatistics()\" title=\"Reset statistics\">\n                  <i class=\"fa fa-refresh\"></i></button>\n                <button\n                    ng-disabled=\"mbeanAttributes.StatisticsEnabled\"\n                    class=\"btn\" ng-click=\"enableStatistics()\" title=\"Enable statistics\">\n                  <i class=\"icon-play-circle\"></i></button>\n                <button\n                    ng-disabled=\"!mbeanAttributes.StatisticsEnabled\"\n                    class=\"btn\" ng-click=\"disableStatistics()\" title=\"Disable statistics\">\n                  <i class=\"fa fa-off\"></i></button>\n              </div>\n            </div>\n          </fieldset>\n        </form>\n      </div>\n      <div>\n        <dl class=\"dl-horizontal\">\n          <dt>Number of Type Converters</dt>\n          <dd>{{mbeanAttributes.NumberOfTypeConverters}}</dd>\n          <dt># Attempts</dt>\n          <dd>{{mbeanAttributes.AttemptCounter}}</dd>\n          <dt># Hit</dt>\n          <dd>{{mbeanAttributes.HitCounter}}</dd>\n          <dt># Miss</dt>\n          <dd>{{mbeanAttributes.MissCounter}}</dd>\n          <dt># Failed</dt>\n          <dd>{{mbeanAttributes.FailedCounter}}</dd>\n          <dt>Statistics Enabled</dt>\n          <dd>{{mbeanAttributes.StatisticsEnabled}}</dd>\n        </dl>\n      </div>\n\n    </div>\n\n    <div class=\"row\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline no-bottom-margin\">\n          <fieldset>\n            <div class=\"control-group inline-block\">\n              <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\"\n                     ng-model=\"gridOptions.filterOptions.filterText\">\n            </div>\n          </fieldset>\n        </form>\n      </div>\n    </div>\n\n    <div class=\"row\" ng-show=\"data.length > 0\">\n      <table class=\"table table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n    </div>\n    <div class=\"row\" ng-show=\"data.length == 0\">\n      Loading...\n    </div>\n\n  </div>\n\n</div>\n\n");
+$templateCache.put("plugins/camel/html/typeConverter.html","<div class=\"row\" ng-controller=\"Camel.TypeConverterController\">\n\n  <!-- the dl need to be wider so we can see the labels -->\n  <style>\n    .dl-horizontal dt {\n      width: 260px;\n    }\n    .dl-horizontal dd {\n      margin-left: 280px;\n    }\n  </style>\n\n  <div ng-show=\"selectedMBean\">\n\n    <div class=\"row\">\n\n      <div class=\"pull-right\">\n        <form class=\"form-inline no-bottom-margin\">\n          <fieldset>\n            <div class=\"controls control-group inline-block controls-row\">\n              <div class=\"btn-group\">\n                <button\n                    class=\"btn\" ng-click=\"resetStatistics()\" title=\"Reset statistics\">\n                  <i class=\"fa fa-refresh\"></i></button>\n                <button\n                    ng-disabled=\"mbeanAttributes.StatisticsEnabled\"\n                    class=\"btn\" ng-click=\"enableStatistics()\" title=\"Enable statistics\">\n                  <i class=\"fa fa-play-circle\"></i></button>\n                <button\n                    ng-disabled=\"!mbeanAttributes.StatisticsEnabled\"\n                    class=\"btn\" ng-click=\"disableStatistics()\" title=\"Disable statistics\">\n                  <i class=\"fa fa-power-off\"></i></button>\n              </div>\n            </div>\n          </fieldset>\n        </form>\n      </div>\n      <div>\n        <dl class=\"dl-horizontal\">\n          <dt>Number of Type Converters</dt>\n          <dd>{{mbeanAttributes.NumberOfTypeConverters}}</dd>\n          <dt># Attempts</dt>\n          <dd>{{mbeanAttributes.AttemptCounter}}</dd>\n          <dt># Hit</dt>\n          <dd>{{mbeanAttributes.HitCounter}}</dd>\n          <dt># Miss</dt>\n          <dd>{{mbeanAttributes.MissCounter}}</dd>\n          <dt># Failed</dt>\n          <dd>{{mbeanAttributes.FailedCounter}}</dd>\n          <dt>Statistics Enabled</dt>\n          <dd>{{mbeanAttributes.StatisticsEnabled}}</dd>\n        </dl>\n      </div>\n\n    </div>\n\n    <div class=\"row\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline no-bottom-margin\">\n          <fieldset>\n            <div class=\"control-group inline-block\">\n              <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\"\n                     ng-model=\"gridOptions.filterOptions.filterText\">\n            </div>\n          </fieldset>\n        </form>\n      </div>\n    </div>\n\n    <div class=\"row\" ng-show=\"data.length > 0\">\n      <table class=\"table table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n    </div>\n    <div class=\"row\" ng-show=\"data.length == 0\">\n      Loading...\n    </div>\n\n  </div>\n\n</div>\n\n");
 $templateCache.put("plugins/docker-registry/html/layoutDockerRegistry.html","<div class=\"row\" ng-controller=\"DockerRegistry.TopLevel\">\n  <div class=\"col-md-12\">\n    <div ng-view></div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/docker-registry/html/list.html","<div class=\"row\" ng-controller=\"DockerRegistry.ListController\">\n  <script type=\"text/ng-template\" id=\"tagsTemplate.html\">\n    <ul class=\"zebra-list\">\n      <li ng-repeat=\"(name, imageId) in row.entity.tags\" ng-controller=\"DockerRegistry.TagController\">\n        <a href=\"\" ng-click=\"selectImage(imageId)\">{{name}}</a>\n      </li>\n    </ul>\n  </script>\n  <p></p>\n  <div class=\"row\">\n    <div class=\"col-md-12\">\n      <span ng-hide=\"selectedImage\">\n        <hawtio-filter ng-model=\"tableConfig.filterOptions.filterText\"\n                       css-class=\"input-xxlarge\"\n                       placeholder=\"Filter images...\"\n                       save-as=\"docker-registry-image-list-text-filter\"></hawtio-filter>\n      </span>\n      <button class=\"pull-right btn btn-danger\"\n              ng-disabled=\"tableConfig.selectedItems.length == 0\"\n              ng-hide=\"selectedImage\"\n              ng-click=\"deletePrompt(tableConfig.selectedItems)\"><i class=\"fa fa-remove\"></i> Delete</button>\n      <span class=\"pull-right\">&nbsp;</span>\n      <button class=\"pull-right btn btn-primary\" \n              ng-show=\"selectedImage\"\n              ng-click=\"selectedImage = undefined\"><i class=\"fa fa-list\"></i></button>\n    </div>\n  </div>\n  <p></p>\n  <div class=\"row\" ng-show=\"!fetched\">\n    <div class=\"col-md-12\">\n      <p class=\"text-center\"><i class=\"fa fa-spinner icon-spin\"></i></p>\n    </div>\n  </div>\n  <div class=\"row\" ng-show=\"fetched && !selectedImage && imageRepositories.length === 0\">\n    <div class=\"col-md-12\">\n      <p class=\"alert alert-info\">No images are stored in this repository</p>\n    </div>\n  </div>\n  <div class=\"row\" ng-show=\"fetched && !selectedImage && imageRepositories.length\">\n    <div class=\"col-md-12\">\n      <table class=\"table table-condensed table-striped\"\n             hawtio-simple-table=\"tableConfig\"></table>\n    </div>\n  </div>\n  <div class=\"row\" ng-show=\"fetched && selectedImage\">\n    <div class=\"col-md-12\">\n      <div hawtio-object=\"selectedImage\"></div>\n    </div>\n  </div>\n</div>\n\n");
 $templateCache.put("plugins/karaf/html/feature-details.html","<div>\n    <table class=\"overviewSection\">\n        <tr ng-hide=\"hasFabric\">\n            <td></td>\n            <td class=\"less-big\">\n                <div class=\"btn-group\">\n                  <button ng-click=\"uninstall(name,version)\" \n                          class=\"btn\" \n                          title=\"uninstall\" \n                          hawtio-show\n                          object-name=\"{{featuresMBean}\"\n                          method-name=\"uninstallFeature\">\n                    <i class=\"fa fa-off\"></i>\n                  </button>\n                  <button ng-click=\"install(name,version)\" \n                          class=\"btn\" \n                          title=\"install\" \n                          hawtio-show\n                          object-name=\"{{featuresMBean}\"\n                          method-name=\"installFeature\">\n                    <i class=icon-play-circle\"></i>\n                  </button>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>Name:</strong></td>\n            <td class=\"less-big\">{{row.Name}}\n            </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>Version:</strong></td>\n            <td class=\"less-big\">{{row.Version}}\n            </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>Repository:</strong></td>\n            <td class=\"less-big\">{{row.RepositoryName}}\n            </td>\n        </tr>\n        <tr>\n          <td class=\"pull-right\"><strong>Repository URI:</strong></td>\n          <td class=\"less-big\">{{row.RepositoryURI}}\n          </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>State:</strong></td>\n            <td class=\"wrap\">\n                <div ng-switch=\"row.Installed\">\n                    <p style=\"display: inline;\" ng-switch-when=\"true\">Installed</p>\n\n                    <p style=\"display: inline;\" ng-switch-default>Not Installed</p>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td>\n            </td>\n            <td>\n                <div class=\"accordion\" id=\"accordionFeatures\">\n                    <div class=\"accordion-group\">\n                        <div class=\"accordion-heading\">\n                            <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionFeatures\"\n                               href=\"#collapseFeatures\">\n                                Features\n                            </a>\n                        </div>\n                        <div id=\"collapseFeatures\" class=\"accordion-body collapse in\">\n                            <ul class=\"accordion-inner\">\n                                <li ng-repeat=\"feature in row.Dependencies\">\n                                    <a href=\'#/osgi/feature/{{feature.Name}}/{{feature.Version}}?p=container\'>{{feature.Name}}/{{feature.Version}}</a>\n                                </li>\n                            </ul>\n                        </div>\n                    </div>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td>\n            </td>\n            <td>\n                <div class=\"accordion\" id=\"accordionBundles\">\n                    <div class=\"accordion-group\">\n                        <div class=\"accordion-heading\">\n                            <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionBundles\"\n                               href=\"#collapseBundles\">\n                                Bundles\n                            </a>\n                        </div>\n                        <div id=\"collapseBundles\" class=\"accordion-body collapse in\">\n                            <ul class=\"accordion-inner\">\n                                <li ng-repeat=\"bundle in row.BundleDetails\">\n                                    <div ng-switch=\"bundle.Installed\">\n                                        <p style=\"display: inline;\" ng-switch-when=\"true\">\n                                            <a href=\'#/osgi/bundle/{{bundle.Identifier}}?p=container\'>{{bundle.Location}}</a></p>\n\n                                        <p style=\"display: inline;\" ng-switch-default>{{bundle.Location}}</p>\n                                    </div>\n                                </li>\n                            </ul>\n                        </div>\n                    </div>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td>\n            </td>\n            <td>\n                <div class=\"accordion\" id=\"accordionConfigurations\">\n                    <div class=\"accordion-group\">\n                        <div class=\"accordion-heading\">\n                            <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionConfigurations\"\n                               href=\"#collapsConfigurations\">\n                                Configurations\n                            </a>\n                        </div>\n                        <div id=\"collapsConfigurations\" class=\"accordion-body collapse in\">\n                            <table class=\"accordion-inner\">\n                                <tr ng-repeat=\"(pid, value) in row.Configurations\">\n                                    <td>\n                                      <p>{{value.Pid}}</p>\n                                      <div hawtio-editor=\"toProperties(value.Elements)\" mode=\"props\"></div></td>\n                                </tr>\n                            </table>\n                        </div>\n                    </div>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td>\n            </td>\n            <td>\n                <div class=\"accordion\" id=\"accordionConfigurationFiles\">\n                    <div class=\"accordion-group\">\n                        <div class=\"accordion-heading\">\n                            <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionConfigurationFiles\"\n                               href=\"#collapsConfigurationFiles\">\n                                Configuration Files\n                            </a>\n                        </div>\n                        <div id=\"collapsConfigurationFiles\" class=\"accordion-body collapse in\">\n                            <table class=\"accordion-inner\">\n                                <tr ng-repeat=\"file in row.Files\">\n                                    <td>{{file.Files}}</td>\n                                </tr>\n                            </table>\n                        </div>\n                    </div>\n                </div>\n            </td>\n        </tr>\n    </table>\n</div>\n");
 $templateCache.put("plugins/karaf/html/feature.html","<div class=\"controller-section\" ng-controller=\"Karaf.FeatureController\">\n  <div class=\"row\">\n    <div class=\"col-md-4\">\n      <h1>{{row.id}}</h1>\n    </div>\n  </div>\n\n  <div ng-include src=\"\'plugins/karaf/html/feature-details.html\'\"></div>\n\n</div>\n\n");
-$templateCache.put("plugins/karaf/html/features.html","<div class=\"controller-section\" ng-controller=\"Karaf.FeaturesController\">\n\n  <div class=\"row section-filter\">\n    <input type=\"text\" class=\"col-md-12 search-query\" placeholder=\"Filter...\" ng-model=\"filter\">\n    <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"filter = \'\'\"></i>\n  </div>\n\n  <script type=\"text/ng-template\" id=\"popoverTemplate\">\n    <small>\n      <table class=\"table\">\n        <tbody>\n        <tr ng-repeat=\"(k, v) in feature track by $index\" ng-show=\"showRow(k, v)\">\n          <td class=\"property-name\">{{k}}</td>\n          <td class=\"property-value\" ng-bind-html-unsafe=\"showValue(v)\"></td>\n        </tr>\n        </tbody>\n      </table>\n    </small>\n  </script>\n\n  <p></p>\n  <div class=\"row\">\n    <div class=\"col-md-6\">\n      <h3 class=\"centered\">Installed Features</h3>\n      <div ng-show=\"featuresError\" class=\"alert alert-warning\">\n        The feature list returned by the server was null, please check the logs and Karaf console for errors.\n      </div>\n      <div class=\"bundle-list\"\n           hawtio-auto-columns=\".bundle-item\">\n        <div ng-repeat=\"feature in installedFeatures\"\n             class=\"bundle-item\"\n             ng-show=\"filterFeature(feature)\"\n             ng-class=\"inSelectedRepository(feature)\">\n          <a ng-href=\"#/osgi/feature/{{feature.Id}}?p=container\"\n             hawtio-template-popover title=\"Feature details\">\n            <span class=\"badge\" ng-class=\"getStateStyle(feature)\">{{feature.Name}} / {{feature.Version}}</span>\n          </a>\n          <span ng-hide=\"hasFabric\">\n            <a class=\"toggle-action\"\n               href=\"\"\n               ng-show=\"installed(feature.Installed)\"\n               ng-click=\"uninstall(feature)\"\n               hawtio-show\n               object-name=\"{{featuresMBean}\"\n               method-name=\"uninstallFeature\">\n              <i class=\"icon-power-off\"></i>\n            </a>\n            <a class=\"toggle-action\"\n               href=\"\"\n               ng-hide=\"installed(feature.Installed)\"\n               ng-click=\"install(feature)\"\n               hawtio-show\n               object-name=\"{{featuresMBean}\"\n               method-name=\"installFeature\">\n              <i class=\"icon-play-circle\"></i>\n            </a>\n          </span>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"col-md-6\">\n      <h3 class=\"centered\">Available Features</h3>\n      <div class=\"row repository-browser-toolbar centered\">\n        <select id=\"repos\"\n                class=\"input-xlarge\"\n                title=\"Feature repositories\"\n                ng-model=\"selectedRepository\"\n                ng-options=\"r.repository for r in repositories\"></select>\n        <button class=\"btn\"\n                title=\"Remove selected feature repository\"\n                ng-click=\"uninstallRepository()\"\n                ng-hide=\"hasFabric\"\n                hawtio-show\n                object-name=\"{{featuresMBean}}\"\n                method-name=\"removeRepository\"><i class=\"icon-remove-sign\"></i></button>\n        <input type=\"text\"\n               class=\"input-xlarge\"\n               placeholder=\"mvn:foo/bar/1.0/xml/features\"\n               title=\"New feature repository URL\"\n               ng-model=\"newRepositoryURI\"\n               ng-hide=\"hasFabric\"\n               hawtio-show\n               object-name=\"{{featuresMBean}}\"\n               method-name=\"addRepository\">\n        <button class=\"btn\"\n                title=\"Add feature repository URL\"\n                ng-hide=\"hasFabric\"\n                ng-click=\"installRepository()\"\n                ng-disabled=\"isValidRepository()\"\n                hawtio-show\n                object-name=\"{{featuresMBean}}\"\n                method-name=\"addRepository\"><i class=\"fa fa-plus\"></i></button>\n      </div>\n      <div class=\"row\">\n        <div class=\"bundle-list\"\n             hawtio-auto-columns=\".bundle-item\">\n          <div ng-repeat=\"feature in selectedRepository.features\"\n               class=\"bundle-item\"\n               ng-show=\"filterFeature(feature)\"\n               hawtio-template-popover title=\"Feature details\">\n            <a ng-href=\"#/osgi/feature/{{feature.Id}}?p=container\">\n              <span class=\"badge\" ng-class=\"getStateStyle(feature)\">{{feature.Name}} / {{feature.Version}}</span>\n            </a >\n            <span ng-hide=\"hasFabric\">\n              <a class=\"toggle-action\"\n                 href=\"\"\n                 ng-show=\"installed(feature.Installed)\"\n                 ng-click=\"uninstall(feature)\"\n                 hawtio-show\n                 object-name=\"{{featuresMBean}\"\n                 method-name=\"uninstallFeature\">\n                <i class=\"icon-power-off\"></i>\n              </a>\n              <a class=\"toggle-action\"\n                 href=\"\"\n                 ng-hide=\"installed(feature.Installed)\"\n                 ng-click=\"install(feature)\"\n                 hawtio-show\n                 object-name=\"{{featuresMBean}\"\n                 method-name=\"installFeature\">\n                <i class=\"icon-play-circle\"></i>\n              </a>\n            </span>\n          </div>\n        </div>\n      </div>\n    </div>\n\n  </div>\n\n</div>\n");
-$templateCache.put("plugins/karaf/html/scr-component-details.html","<div>\n    <table class=\"overviewSection\">\n        <tr ng-hide=\"hasFabric\">\n            <td></td>\n            <td class=\"less-big\">\n                <div class=\"btn-group\">\n                  <button class=\"btn\" \n                          ng-click=\"activate()\"\n                          hawtio-show\n                          object-name=\"{{scrMBean}}\"\n                          method-name=\"activateComponent\">\n                    <i class=\"icon-play-circle\"></i> Activate\n                  </button>\n                  <button class=\"btn\" \n                          ng-click=\"deactivate()\"\n                          hawtio-show\n                          object-name=\"{{scrMBean}}\"\n                          method-name=\"deactiveateComponent\">\n                    <i class=\"fa fa-off\"></i> Deactivate\n                  </button>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>Id:</strong></td>\n            <td class=\"less-big\">{{row.Id}}\n            </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>Name:</strong></td>\n            <td class=\"less-big\">{{row.Name}}\n            </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>State:</strong></td>\n            <td class=\"less-big\">{{row.State}}\n            </td>\n        </tr>\n        <tr>\n            <td>\n            </td>\n            <td>\n                <div class=\"accordion\" id=\"accordionProperties\">\n                    <div class=\"accordion-group\">\n                        <div class=\"accordion-heading\">\n                            <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionProperties\"\n                               href=\"#collapseProperties\">\n                                Properties\n                            </a>\n                        </div>\n                        <div id=\"collapseProperties\" class=\"accordion-body collapse in\">\n                            <table class=\"accordion-inner\">\n                                <tr ng-repeat=\"(key, value) in row.Properties\">\n                                    <td valign=\"top\">{{key}}</td>\n                                    <td>{{value.Value}}</td>\n                                </tr>\n                            </table>\n                        </div>\n                    </div>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td>\n            </td>\n            <td>\n                <div class=\"accordion\" id=\"accordionReferences\">\n                    <div class=\"accordion-group\">\n                        <div class=\"accordion-heading\">\n                            <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionReferences\"\n                               href=\"#collapseReferences\">\n                                References\n                            </a>\n                        </div>\n                        <div id=\"collapseReferences\" class=\"accordion-body collapse in\">\n                            <table class=\"accordion-inner\">\n                                <thead>\n                                <tr>\n                                    <th>Name</th>\n                                    <th>Availability</th>\n                                    <th>Cardinality</th>\n                                    <th>Policy</th>\n                                    <th>Bound Services</th>\n                                </tr>\n                                </thead>\n                                <tbody>\n                                    <tr ng-repeat=\"(key, value) in row.References\">\n                                        <td valign=\"left\" class=\"less-big\">{{value.Name}}</td>\n                                        <td valign=\"left\" class=\"less-big\">{{value.Availability}}</td>\n                                        <td valign=\"left\" class=\"less-big\">{{value.Cardinality}}</td>\n                                        <td valign=\"left\" class=\"less-big\">{{value.Policy}}</td>\n                                        <td>\n                                            <ul>\n                                                <li ng-repeat=\"id in value[\'Bound Services\']\">\n                                                    <i class=\"fa fa-cog less-big text-info\" id=\"bound.service.{{id}}\">{{id}}</i>\n                                                </li>\n                                            </ul>\n                                        </td>\n                                    </tr>\n                                </tbody>\n                            </table>\n                        </div>\n                    </div>\n                </div>\n            </td>\n        </tr>\n    </table>\n</div>\n");
+$templateCache.put("plugins/karaf/html/features.html","<div class=\"controller-section\" ng-controller=\"Karaf.FeaturesController\">\n\n  <div class=\"row section-filter\">\n    <input type=\"text\" class=\"col-md-12 search-query\" placeholder=\"Filter...\" ng-model=\"filter\">\n    <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"filter = \'\'\"></i>\n  </div>\n\n  <script type=\"text/ng-template\" id=\"popoverTemplate\">\n    <small>\n      <table class=\"table\">\n        <tbody>\n        <tr ng-repeat=\"(k, v) in feature track by $index\" ng-show=\"showRow(k, v)\">\n          <td class=\"property-name\">{{k}}</td>\n          <td class=\"property-value\" ng-bind-html-unsafe=\"showValue(v)\"></td>\n        </tr>\n        </tbody>\n      </table>\n    </small>\n  </script>\n\n  <p></p>\n  <div class=\"row\">\n    <div class=\"col-md-6\">\n      <h3 class=\"centered\">Installed Features</h3>\n      <div ng-show=\"featuresError\" class=\"alert alert-warning\">\n        The feature list returned by the server was null, please check the logs and Karaf console for errors.\n      </div>\n      <div class=\"bundle-list\"\n           hawtio-auto-columns=\".bundle-item\">\n        <div ng-repeat=\"feature in installedFeatures\"\n             class=\"bundle-item\"\n             ng-show=\"filterFeature(feature)\"\n             ng-class=\"inSelectedRepository(feature)\">\n          <a ng-href=\"#/osgi/feature/{{feature.Id}}?p=container\"\n             hawtio-template-popover title=\"Feature details\">\n            <span class=\"badge\" ng-class=\"getStateStyle(feature)\">{{feature.Name}} / {{feature.Version}}</span>\n          </a>\n          <span ng-hide=\"hasFabric\">\n            <a class=\"toggle-action\"\n               href=\"\"\n               ng-show=\"installed(feature.Installed)\"\n               ng-click=\"uninstall(feature)\"\n               hawtio-show\n               object-name=\"{{featuresMBean}\"\n               method-name=\"uninstallFeature\">\n              <i class=\"fa fa-power-off\"></i>\n            </a>\n            <a class=\"toggle-action\"\n               href=\"\"\n               ng-hide=\"installed(feature.Installed)\"\n               ng-click=\"install(feature)\"\n               hawtio-show\n               object-name=\"{{featuresMBean}\"\n               method-name=\"installFeature\">\n              <i class=\"fa fa-play-circle\"></i>\n            </a>\n          </span>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"col-md-6\">\n      <h3 class=\"centered\">Available Features</h3>\n      <div class=\"row repository-browser-toolbar centered\">\n        <select id=\"repos\"\n                class=\"input-xlarge\"\n                title=\"Feature repositories\"\n                ng-model=\"selectedRepository\"\n                ng-options=\"r.repository for r in repositories\"></select>\n        <button class=\"btn\"\n                title=\"Remove selected feature repository\"\n                ng-click=\"uninstallRepository()\"\n                ng-hide=\"hasFabric\"\n                hawtio-show\n                object-name=\"{{featuresMBean}}\"\n                method-name=\"removeRepository\"><i class=\"fa fa-remove-sign\"></i></button>\n        <input type=\"text\"\n               class=\"input-xlarge\"\n               placeholder=\"mvn:foo/bar/1.0/xml/features\"\n               title=\"New feature repository URL\"\n               ng-model=\"newRepositoryURI\"\n               ng-hide=\"hasFabric\"\n               hawtio-show\n               object-name=\"{{featuresMBean}}\"\n               method-name=\"addRepository\">\n        <button class=\"btn\"\n                title=\"Add feature repository URL\"\n                ng-hide=\"hasFabric\"\n                ng-click=\"installRepository()\"\n                ng-disabled=\"isValidRepository()\"\n                hawtio-show\n                object-name=\"{{featuresMBean}}\"\n                method-name=\"addRepository\"><i class=\"fa fa-plus\"></i></button>\n      </div>\n      <div class=\"row\">\n        <div class=\"bundle-list\"\n             hawtio-auto-columns=\".bundle-item\">\n          <div ng-repeat=\"feature in selectedRepository.features\"\n               class=\"bundle-item\"\n               ng-show=\"filterFeature(feature)\"\n               hawtio-template-popover title=\"Feature details\">\n            <a ng-href=\"#/osgi/feature/{{feature.Id}}?p=container\">\n              <span class=\"badge\" ng-class=\"getStateStyle(feature)\">{{feature.Name}} / {{feature.Version}}</span>\n            </a >\n            <span ng-hide=\"hasFabric\">\n              <a class=\"toggle-action\"\n                 href=\"\"\n                 ng-show=\"installed(feature.Installed)\"\n                 ng-click=\"uninstall(feature)\"\n                 hawtio-show\n                 object-name=\"{{featuresMBean}\"\n                 method-name=\"uninstallFeature\">\n                <i class=\"fa fa-power-off\"></i>\n              </a>\n              <a class=\"toggle-action\"\n                 href=\"\"\n                 ng-hide=\"installed(feature.Installed)\"\n                 ng-click=\"install(feature)\"\n                 hawtio-show\n                 object-name=\"{{featuresMBean}\"\n                 method-name=\"installFeature\">\n                <i class=\"fa fa-play-circle\"></i>\n              </a>\n            </span>\n          </div>\n        </div>\n      </div>\n    </div>\n\n  </div>\n\n</div>\n");
+$templateCache.put("plugins/karaf/html/scr-component-details.html","<div>\n    <table class=\"overviewSection\">\n        <tr ng-hide=\"hasFabric\">\n            <td></td>\n            <td class=\"less-big\">\n                <div class=\"btn-group\">\n                  <button class=\"btn\" \n                          ng-click=\"activate()\"\n                          hawtio-show\n                          object-name=\"{{scrMBean}}\"\n                          method-name=\"activateComponent\">\n                    <i class=\"fa fa-play-circle\"></i> Activate\n                  </button>\n                  <button class=\"btn\" \n                          ng-click=\"deactivate()\"\n                          hawtio-show\n                          object-name=\"{{scrMBean}}\"\n                          method-name=\"deactiveateComponent\">\n                    <i class=\"fa fa-off\"></i> Deactivate\n                  </button>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>Id:</strong></td>\n            <td class=\"less-big\">{{row.Id}}\n            </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>Name:</strong></td>\n            <td class=\"less-big\">{{row.Name}}\n            </td>\n        </tr>\n        <tr>\n            <td class=\"pull-right\"><strong>State:</strong></td>\n            <td class=\"less-big\">{{row.State}}\n            </td>\n        </tr>\n        <tr>\n            <td>\n            </td>\n            <td>\n                <div class=\"accordion\" id=\"accordionProperties\">\n                    <div class=\"accordion-group\">\n                        <div class=\"accordion-heading\">\n                            <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionProperties\"\n                               href=\"#collapseProperties\">\n                                Properties\n                            </a>\n                        </div>\n                        <div id=\"collapseProperties\" class=\"accordion-body collapse in\">\n                            <table class=\"accordion-inner\">\n                                <tr ng-repeat=\"(key, value) in row.Properties\">\n                                    <td valign=\"top\">{{key}}</td>\n                                    <td>{{value.Value}}</td>\n                                </tr>\n                            </table>\n                        </div>\n                    </div>\n                </div>\n            </td>\n        </tr>\n        <tr>\n            <td>\n            </td>\n            <td>\n                <div class=\"accordion\" id=\"accordionReferences\">\n                    <div class=\"accordion-group\">\n                        <div class=\"accordion-heading\">\n                            <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionReferences\"\n                               href=\"#collapseReferences\">\n                                References\n                            </a>\n                        </div>\n                        <div id=\"collapseReferences\" class=\"accordion-body collapse in\">\n                            <table class=\"accordion-inner\">\n                                <thead>\n                                <tr>\n                                    <th>Name</th>\n                                    <th>Availability</th>\n                                    <th>Cardinality</th>\n                                    <th>Policy</th>\n                                    <th>Bound Services</th>\n                                </tr>\n                                </thead>\n                                <tbody>\n                                    <tr ng-repeat=\"(key, value) in row.References\">\n                                        <td valign=\"left\" class=\"less-big\">{{value.Name}}</td>\n                                        <td valign=\"left\" class=\"less-big\">{{value.Availability}}</td>\n                                        <td valign=\"left\" class=\"less-big\">{{value.Cardinality}}</td>\n                                        <td valign=\"left\" class=\"less-big\">{{value.Policy}}</td>\n                                        <td>\n                                            <ul>\n                                                <li ng-repeat=\"id in value[\'Bound Services\']\">\n                                                    <i class=\"fa fa-cog less-big text-info\" id=\"bound.service.{{id}}\">{{id}}</i>\n                                                </li>\n                                            </ul>\n                                        </td>\n                                    </tr>\n                                </tbody>\n                            </table>\n                        </div>\n                    </div>\n                </div>\n            </td>\n        </tr>\n    </table>\n</div>\n");
 $templateCache.put("plugins/karaf/html/scr-component.html","<div class=\"controller-section\" ng-controller=\"Karaf.ScrComponentController\">\n    <div class=\"row\">\n        <div class=\"col-md-4\">\n            <h1>{{row.id}}</h1>\n        </div>\n    </div>\n\n    <div ng-include src=\"\'plugins/karaf/html/scr-component-details.html\'\"></div>\n\n</div>\n");
-$templateCache.put("plugins/karaf/html/scr-components.html","<div class=\"controller-section\" ng-controller=\"Karaf.ScrComponentsController\">\n  <div class=\"row\">\n    <div class=\"pull-left\">\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n          <div class=\"control-group inline-block\">\n            <div class=\"btn-group\">\n              <button ng-disabled=\"selectedComponents.length == 0\" \n                      class=\"btn\" \n                      ng-click=\"activate()\"\n                      hawtio-show\n                      object-name=\"{{scrMBean}}\"\n                      method-name=\"activateComponent\"><i\n                      class=\"icon-play-circle\"></i> Activate\n              </button>\n              <button ng-disabled=\"selectedComponents.length == 0\" \n                      class=\"btn\" \n                      ng-click=\"deactivate()\"\n                      hawtio-show\n                      object-name=\"{{scrMBean}}\"\n                      method-name=\"deactiveateComponent\"><i\n                      class=\"fa fa-off\"></i> Deactivate\n              </button>\n            </div>\n          </div>\n        </fieldset>\n      </form>\n    </div>\n\n    <div class=\"pull-right\">\n      <input type=\"text\" class=\"input-text search-query\" placeholder=\"Filter...\" ng-model=\"scrOptions.filterOptions.filterText\">\n    </div>\n  </div>\n\n\n  <div class=\"row\">\n    <div class=\"gridStyle\" ng-grid=\"scrOptions\"></div>\n  </div>\n</div>\n");
+$templateCache.put("plugins/karaf/html/scr-components.html","<div class=\"controller-section\" ng-controller=\"Karaf.ScrComponentsController\">\n  <div class=\"row\">\n    <div class=\"pull-left\">\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n          <div class=\"control-group inline-block\">\n            <div class=\"btn-group\">\n              <button ng-disabled=\"selectedComponents.length == 0\" \n                      class=\"btn\" \n                      ng-click=\"activate()\"\n                      hawtio-show\n                      object-name=\"{{scrMBean}}\"\n                      method-name=\"activateComponent\"><i\n                      class=\"fa fa-play-circle\"></i> Activate\n              </button>\n              <button ng-disabled=\"selectedComponents.length == 0\" \n                      class=\"btn\" \n                      ng-click=\"deactivate()\"\n                      hawtio-show\n                      object-name=\"{{scrMBean}}\"\n                      method-name=\"deactiveateComponent\"><i\n                      class=\"fa fa-off\"></i> Deactivate\n              </button>\n            </div>\n          </div>\n        </fieldset>\n      </form>\n    </div>\n\n    <div class=\"pull-right\">\n      <input type=\"text\" class=\"input-text search-query\" placeholder=\"Filter...\" ng-model=\"scrOptions.filterOptions.filterText\">\n    </div>\n  </div>\n\n\n  <div class=\"row\">\n    <div class=\"gridStyle\" ng-grid=\"scrOptions\"></div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/karaf/html/server.html","<div class=\"controller-section row\" ng-controller=\"Karaf.ServerController\">\n\n  <dl class=\"dl-horizontal\">\n    <dt>Name</dt>\n    <dd>{{data.name}}</dd>\n    <dt>Version</dt>\n    <dd>{{data.version}}</dd>\n    <dt>State</dt>\n    <dd>{{data.state}}</dd>\n    <dt>Is root</dt>\n    <dd>{{data.root}}</dd>\n    <dt>Start Level</dt>\n    <dd>{{data.startLevel}}</dd>\n    <dt>Framework</dt>\n    <dd>{{data.framework}}</dd>\n    <dt>Framework Version</dt>\n    <dd>{{data.frameworkVersion}}</dd>\n    <dt>Location</dt>\n    <dd>{{data.location}}</dd>\n    <dt>SSH Port</dt>\n    <dd>{{data.sshPort}}</dd>\n    <dt>RMI Registry Port</dt>\n    <dd>{{data.rmiRegistryPort}}</dd>\n    <dt>RMI Server Port</dt>\n    <dd>{{data.rmiServerPort}}</dd>\n    <dt>PID</dt>\n    <dd>{{data.pid}}</dd>\n  </dl>\n\n</div>\n\n");
 $templateCache.put("plugins/maven/html/advancedSearch.html","<div ng-controller=\"Maven.SearchController\">\n  <div style=\"height: 8em;\" ng-hide=\"artifacts.length > 0\"></div>\n\n  <div class=\"row\">\n    <div class=\"control-group\">\n      <div class=\"controls inline-block\" style=\"white-space: nowrap;\">\n        <form class=\"form-horizontal\">\n          <div class=\"control-group\">\n            <label class=\"control-label\" for=\"searchGroupId\">Maven coordinates:</label>\n\n            <div class=\"controls\">\n              <input type=\"text\" id=\"searchGroupId\" ng-model=\"form.searchGroup\" placeholder=\"Group ID\">\n              <input type=\"text\" id=\"searchArtifactId\" ng-model=\"form.searchArtifact\" placeholder=\"Artifact ID\">\n              <input type=\"text\" id=\"searchVersion\" ng-model=\"form.searchVersion\" placeholder=\"Version\">\n            </div>\n          </div>\n          <div class=\"control-group\">\n            <label class=\"control-label\" for=\"searchPackaging\">Packaging:</label>\n\n            <div class=\"controls\">\n              <input type=\"text\" id=\"searchPackaging\" ng-model=\"form.searchPackaging\" placeholder=\"Packaging\">\n              <input type=\"text\" id=\"searchClassifier\" ng-model=\"form.searchClassifier\" placeholder=\"Classifier\">\n            </div>\n          </div>\n          <div class=\"control-group\">\n            <label class=\"control-label\" for=\"searchClassName\">Class name:</label>\n\n            <div class=\"controls\">\n              <input type=\"text\" id=\"searchClassName\" class=\"input-xxlarge\" ng-model=\"form.searchClassName\" placeholder=\"Class name\">\n            </div>\n          </div>\n          <div class=\"control-group\">\n            <div class=\"controls\">\n              <button type=\"submit\" class=\"btn\" ng-disabled=\"!hasAdvancedSearch(form)\" ng-click=\"doSearch()\"\n                      title=\"Search the maven repositories for artifacts containing this text\" data-placement=\"bottom\">\n                <i class=\"fa fa-search\"></i> Search\n              </button>\n            </div>\n          </div>\n        </form>\n      </div>\n    </div>\n  </div>\n\n  <ng-include src=\"\'plugins/maven/html/searchResults.html\'\"></ng-include>\n</div>\n");
 $templateCache.put("plugins/maven/html/artifact.html","<div class=\"controller-section\" ng-controller=\"Maven.ArtifactController\">\n  <div class=\"row\">\n    <div class=\"pull-right\">\n      <a class=\"btn\" href=\"{{versionsLink(row)}}\">Versions</a>\n      <a class=\"btn\" href=\"{{dependenciesLink(row)}}\" ng-show=\"{{hasDependencyMBean()}}\">Dependencies</a>\n      <a class=\"btn\" target=\"javadoc\" href=\"{{javadocLink(row)}}\">JavaDoc</a>\n      <a class=\"btn\" target=\"source\" href=\"{{sourceLink(row)}}\">Source</a>\n    </div>\n    <div title=\"Name\" class=\"title\">\n      <p>\n        {{row.name}}\n      </p>\n\n      <p>\n        {{row.description}}\n      </p>\n    </div>\n  </div>\n  <div class=\"row\">\n    <div title=\"Description\" class=\"title\">\n      <i class=\"expandable-indicator\"></i> pom.xml\n    </div>\n    <ng-include src=\"\'plugins/maven/html/pom.html\'\"></ng-include>\n  </div>\n</div>\n</div>\n");
@@ -17667,13 +17667,13 @@ $templateCache.put("plugins/maven/html/searchResults.html","<div ng-show=\"tooMa
 $templateCache.put("plugins/maven/html/test.html","<div ng-controller=\"Maven.TestController\">\n\n  <div class=\"row\">\n\n    <script type=\"text/ng-template\" id=\"mavenCompletionTemplate\">\n      <div>\n        <p>Maven completion</p>\n        <p>Model: {{someUri}}</p>\n        <p>uriParts</p>\n        <ol>\n          <li ng-repeat=\"part in uriParts\">{{part}}</li>\n        </ol>\n        <input class=\"input-xlarge\" type=\"text\" ng-model=\"someUri\" typeahead=\"name for name in doCompletionMaven($viewValue) | filter:$viewValue\" typeahead-wait-ms=\"200\">\n      </div>\n    </script>\n    <div hawtio-editor=\"mavenCompletion\" mode=\"html\"></div>\n    <div compile=\"mavenCompletion\"></div>\n\n    <!--\n    <div class=\"col-md-3\">\n      <p>Fabric completion</p>\n      <p>Model: {{someUri2}}</p>\n      <p>uriParts</p>\n      <ol>\n        <li ng-repeat=\"part in uriParts2\">{{part}}</li>\n      </ol>\n      <input class=\"input-xlarge\" type=\"text\" ng-model=\"someUri2\" typeahead=\"name for name in doCompletionFabric($viewValue) | filter:$viewValue\" typeahead-wait-ms=\"200\">\n    </div>\n    -->\n  </div>\n\n\n</div>\n");
 $templateCache.put("plugins/maven/html/versions.html","<div class=\"controller-section\" ng-controller=\"Maven.VersionsController\">\n  <div class=\"row\">\n    <form class=\"form-horizontal no-bottom-margin\">\n      <fieldset>\n        <div class=\"control-group\">\n          <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"search\"\n                 placeholder=\"Filter versions\">\n        </div>\n      </fieldset>\n    </form>\n  </div>\n  <div class=\"row\">\n    <ng-include src=\"\'plugins/maven/html/searchResults.html\'\"></ng-include>\n  </div>\n</div>\n");
 $templateCache.put("plugins/maven/html/view.html","<div ng-controller=\"Maven.ViewController\">\n\n</div>");
-$templateCache.put("plugins/osgi/html/bundle-details.html","<div>\n  <table>\n    <tr>\n      <td></td>\n      <td class=\"less-big\">\n        <div class=\"btn-group\">\n          <button ng-click=\"stopBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"stopBundle\"\n                  title=\"stop\"><i class=\"fa fa-off\"/></button>\n          <button ng-click=\"startBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"startBundle\"\n                  title=\"start\"><i class=\"icon-play-circle\"/></button>\n          <button ng-click=\"refreshBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"refreshBundle\"\n                  title=\"refresh\"><i class=\"fa fa-refresh\"/></button>\n          <button ng-click=\"updateBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"updateBundle\"\n                  title=\"update\"><i class=\"icon-cloud-download\"/></button>\n          <button ng-click=\"uninstallBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"uninstallBundle\"\n                  title=\"uninstall\"><i class=\"fa fa-eject\"/></button>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td><p/></td>\n      <td/>\n    <tr>\n      <td>\n        <div ng-switch=\"row.Fragment\">\n          <div ng-switch-when=\"true\"><strong>Fragment&nbsp;ID:</strong></div>\n          <div ng-switch-default><strong>Bundle&nbsp;ID:</strong></div>\n        </div>\n      </td>\n      <td class=\"less-big\">{{row.Identifier}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Bundle&nbsp;Name:</strong></td>\n      <td class=\"less-big\">{{row.Headers[\'Bundle-Name\'].Value}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Symbolic&nbsp;Name:</strong></td>\n      <td class=\"less-big label\">\n        <div id=\"bsn\" rel=\"tooltip\">{{row.SymbolicName}}</div>\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Version:</strong></td>\n      <td class=\"less-big\">{{row.Version}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Start&nbsp;Level:</strong></td>\n      <td class=\"less-big\">{{row.StartLevel}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Location:</strong></td>\n      <td class=\"less-big\">\n        <a ng-href=\"{{mavenLink(row)}}\">\n          {{row.Location}}\n        </a>\n      </td>\n    </tr>\n    <tr>\n      <td><strong>State:</strong></td>\n      <td>\n        <div class=\"less-big label\" ng-class=\"row.StateStyle\">{{row.State}}</div>\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Last&nbsp;Modified:</strong></td>\n      <td class=\"less-big\">{{row.LastModified | date:\'medium\'}}\n      </td>\n    </tr>\n    <tr>\n      <td>\n        <div ng-switch=\"row.Fragment\">\n          <div ng-switch-when=\"true\"><strong>Hosts:</strong></div>\n          <div ng-switch-default><strong>Fragments:</strong></div>\n        </div>\n      </td>\n      <td class=\"less-big\">\n        <div ng-switch=\"row.Fragment\">\n          <div ng-switch-when=\"true\" ng-bind-html-unsafe=\"row.Hosts\"/>\n          <div ng-switch-default ng-bind-html-unsafe=\"row.Fragments\"/>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionInspectClassloading\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionInspectClassloading\"\n                 href=\"#collapseInspectClassloading\">\n                Inspect Classloading\n              </a>\n            </div>\n            <div id=\"collapseInspectClassloading\" class=\"accordion-body collapse in\">\n              <form class=\"form-inline\" hawtio-show object-name=\"{{osgiToolsMBean}}\" operation-name=\"getLoadClassOrigin\">\n                <fieldset>\n                  &nbsp;&nbsp;\n                  <input class=\"input-xlarge\" type=\"text\" ng-model=\"classToLoad\" placeHolder=\"Enter Class Name to Load...\">\n                  <button class=\"btn btn-success execute\" ng-click=\"executeLoadClass(classToLoad)\">Load class</button>\n                </fieldset>\n              </form>\n              <form class=\"form-inline\" hawtio-show object-name=\"{{osgiToolsMBean}}\" operation-name=\"getResourceURL\">\n                <fieldset>\n                  &nbsp;&nbsp;\n                  <input class=\"input-xlarge\" type=\"text\" ng-model=\"resourceToLoad\"\n                         placeHolder=\"Enter Resource Name to Find...\">\n                  <button class=\"btn btn-success execute\" ng-click=\"executeFindResource(resourceToLoad)\">Get resource\n                  </button>\n                </fieldset>\n              </form>\n              <div id=\"loadClassResult\"/>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionImportedPackages\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionImportedPackages\"\n                 href=\"#collapseImportedPackages\">\n                Imported Packages\n              </a>\n            </div>\n            <div id=\"collapseImportedPackages\" class=\"accordion-body collapse in\">\n              <table>\n                <tr ng-repeat=\"(package, data) in row.ImportData\">\n                  <td>\n                    <div class=\"less-big badge\" id=\"import.{{package}}\">{{package}}</div>\n                  </td>\n                </tr>\n              </table>\n              <div id=\"unsatisfiedOptionalImports\"/>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionExportedPackages\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionExportedPackages\"\n                 href=\"#collapseExportedPackages\">\n                Exported Packages\n              </a>\n            </div>\n            <div id=\"collapseExportedPackages\" class=\"accordion-body collapse in\">\n              <table>\n                <tr ng-repeat=\"(package, data) in row.ExportData\">\n                  <td>\n                    <div class=\"less-big badge badge-success\" id=\"export.{{package}}\">{{package}}</div>\n                  </td>\n                </tr>\n              </table>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td></td>\n      <td>\n        <div class=\"accordion\" id=\"accordionServices\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionServices\"\n                 href=\"#collapseServices\">\n                Services\n              </a>\n            </div>\n            <div id=\"collapseServices\" class=\"accordion-body collapse in\">\n              Registered Services\n              <table>\n                <tr ng-repeat=\"id in row.RegisteredServices\">\n                  <td><i class=\"fa fa-cog less-big text-success\" id=\"registers.service.{{id}}\">{{id}}</i></td>\n                </tr>\n              </table>\n              <br/>\n              Services used by this Bundle\n              <table>\n                <tr ng-repeat=\"id in row.ServicesInUse\">\n                  <td><i class=\"fa fa-cog less-big text-info\" id=\"uses.service.{{id}}\">{{id}}</i></td>\n                </tr>\n              </table>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionRequiringBundles\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionRequiringBundles\"\n                 href=\"#collapseRequiringBundles\">\n                Other Bundles using this Bundle\n              </a>\n            </div>\n            <div id=\"collapseRequiringBundles\" class=\"accordion-body collapse in\">\n              <div class=\"accordion-inner\">\n                <span ng-bind-html-unsafe=\"row.RequiringBundles\"/>\n              </div>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionHeaders\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionHeaders\"\n                 href=\"#collapsHeaders\">\n                Headers\n              </a>\n            </div>\n            <div id=\"collapsHeaders\" class=\"accordion-body collapse in\">\n              <table class=\"accordion-inner\">\n                <tr ng-repeat=\"(key, value) in row.Headers\" ng-show=\"showValue(key)\">\n                  <td valign=\"top\">{{key}}</td>\n                  <td>{{value.Value}}</td>\n                </tr>\n              </table>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n  </table>\n</div>\n");
+$templateCache.put("plugins/osgi/html/bundle-details.html","<div>\n  <table>\n    <tr>\n      <td></td>\n      <td class=\"less-big\">\n        <div class=\"btn-group\">\n          <button ng-click=\"stopBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"stopBundle\"\n                  title=\"stop\"><i class=\"fa fa-off\"/></button>\n          <button ng-click=\"startBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"startBundle\"\n                  title=\"start\"><i class=\"fa fa-play-circle\"/></button>\n          <button ng-click=\"refreshBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"refreshBundle\"\n                  title=\"refresh\"><i class=\"fa fa-refresh\"/></button>\n          <button ng-click=\"updateBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"updateBundle\"\n                  title=\"update\"><i class=\"fa fa-cloud-download\"/></button>\n          <button ng-click=\"uninstallBundle(bundleId)\" \n                  class=\"btn\" \n                  hawtio-show\n                  object-name=\"{{frameworkMBean}}\"\n                  method-name=\"uninstallBundle\"\n                  title=\"uninstall\"><i class=\"fa fa-eject\"/></button>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td><p/></td>\n      <td/>\n    <tr>\n      <td>\n        <div ng-switch=\"row.Fragment\">\n          <div ng-switch-when=\"true\"><strong>Fragment&nbsp;ID:</strong></div>\n          <div ng-switch-default><strong>Bundle&nbsp;ID:</strong></div>\n        </div>\n      </td>\n      <td class=\"less-big\">{{row.Identifier}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Bundle&nbsp;Name:</strong></td>\n      <td class=\"less-big\">{{row.Headers[\'Bundle-Name\'].Value}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Symbolic&nbsp;Name:</strong></td>\n      <td class=\"less-big label\">\n        <div id=\"bsn\" rel=\"tooltip\">{{row.SymbolicName}}</div>\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Version:</strong></td>\n      <td class=\"less-big\">{{row.Version}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Start&nbsp;Level:</strong></td>\n      <td class=\"less-big\">{{row.StartLevel}}\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Location:</strong></td>\n      <td class=\"less-big\">\n        <a ng-href=\"{{mavenLink(row)}}\">\n          {{row.Location}}\n        </a>\n      </td>\n    </tr>\n    <tr>\n      <td><strong>State:</strong></td>\n      <td>\n        <div class=\"less-big label\" ng-class=\"row.StateStyle\">{{row.State}}</div>\n      </td>\n    </tr>\n    <tr>\n      <td><strong>Last&nbsp;Modified:</strong></td>\n      <td class=\"less-big\">{{row.LastModified | date:\'medium\'}}\n      </td>\n    </tr>\n    <tr>\n      <td>\n        <div ng-switch=\"row.Fragment\">\n          <div ng-switch-when=\"true\"><strong>Hosts:</strong></div>\n          <div ng-switch-default><strong>Fragments:</strong></div>\n        </div>\n      </td>\n      <td class=\"less-big\">\n        <div ng-switch=\"row.Fragment\">\n          <div ng-switch-when=\"true\" ng-bind-html-unsafe=\"row.Hosts\"/>\n          <div ng-switch-default ng-bind-html-unsafe=\"row.Fragments\"/>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionInspectClassloading\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionInspectClassloading\"\n                 href=\"#collapseInspectClassloading\">\n                Inspect Classloading\n              </a>\n            </div>\n            <div id=\"collapseInspectClassloading\" class=\"accordion-body collapse in\">\n              <form class=\"form-inline\" hawtio-show object-name=\"{{osgiToolsMBean}}\" operation-name=\"getLoadClassOrigin\">\n                <fieldset>\n                  &nbsp;&nbsp;\n                  <input class=\"input-xlarge\" type=\"text\" ng-model=\"classToLoad\" placeHolder=\"Enter Class Name to Load...\">\n                  <button class=\"btn btn-success execute\" ng-click=\"executeLoadClass(classToLoad)\">Load class</button>\n                </fieldset>\n              </form>\n              <form class=\"form-inline\" hawtio-show object-name=\"{{osgiToolsMBean}}\" operation-name=\"getResourceURL\">\n                <fieldset>\n                  &nbsp;&nbsp;\n                  <input class=\"input-xlarge\" type=\"text\" ng-model=\"resourceToLoad\"\n                         placeHolder=\"Enter Resource Name to Find...\">\n                  <button class=\"btn btn-success execute\" ng-click=\"executeFindResource(resourceToLoad)\">Get resource\n                  </button>\n                </fieldset>\n              </form>\n              <div id=\"loadClassResult\"/>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionImportedPackages\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionImportedPackages\"\n                 href=\"#collapseImportedPackages\">\n                Imported Packages\n              </a>\n            </div>\n            <div id=\"collapseImportedPackages\" class=\"accordion-body collapse in\">\n              <table>\n                <tr ng-repeat=\"(package, data) in row.ImportData\">\n                  <td>\n                    <div class=\"less-big badge\" id=\"import.{{package}}\">{{package}}</div>\n                  </td>\n                </tr>\n              </table>\n              <div id=\"unsatisfiedOptionalImports\"/>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionExportedPackages\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionExportedPackages\"\n                 href=\"#collapseExportedPackages\">\n                Exported Packages\n              </a>\n            </div>\n            <div id=\"collapseExportedPackages\" class=\"accordion-body collapse in\">\n              <table>\n                <tr ng-repeat=\"(package, data) in row.ExportData\">\n                  <td>\n                    <div class=\"less-big badge badge-success\" id=\"export.{{package}}\">{{package}}</div>\n                  </td>\n                </tr>\n              </table>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td></td>\n      <td>\n        <div class=\"accordion\" id=\"accordionServices\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionServices\"\n                 href=\"#collapseServices\">\n                Services\n              </a>\n            </div>\n            <div id=\"collapseServices\" class=\"accordion-body collapse in\">\n              Registered Services\n              <table>\n                <tr ng-repeat=\"id in row.RegisteredServices\">\n                  <td><i class=\"fa fa-cog less-big text-success\" id=\"registers.service.{{id}}\">{{id}}</i></td>\n                </tr>\n              </table>\n              <br/>\n              Services used by this Bundle\n              <table>\n                <tr ng-repeat=\"id in row.ServicesInUse\">\n                  <td><i class=\"fa fa-cog less-big text-info\" id=\"uses.service.{{id}}\">{{id}}</i></td>\n                </tr>\n              </table>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionRequiringBundles\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionRequiringBundles\"\n                 href=\"#collapseRequiringBundles\">\n                Other Bundles using this Bundle\n              </a>\n            </div>\n            <div id=\"collapseRequiringBundles\" class=\"accordion-body collapse in\">\n              <div class=\"accordion-inner\">\n                <span ng-bind-html-unsafe=\"row.RequiringBundles\"/>\n              </div>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n    <tr>\n      <td>\n      </td>\n      <td>\n        <div class=\"accordion\" id=\"accordionHeaders\">\n          <div class=\"accordion-group\">\n            <div class=\"accordion-heading\">\n              <a class=\"accordion-toggle\" data-toggle=\"collapse\" data-parent=\"#accordionHeaders\"\n                 href=\"#collapsHeaders\">\n                Headers\n              </a>\n            </div>\n            <div id=\"collapsHeaders\" class=\"accordion-body collapse in\">\n              <table class=\"accordion-inner\">\n                <tr ng-repeat=\"(key, value) in row.Headers\" ng-show=\"showValue(key)\">\n                  <td valign=\"top\">{{key}}</td>\n                  <td>{{value.Value}}</td>\n                </tr>\n              </table>\n            </div>\n          </div>\n        </div>\n      </td>\n    </tr>\n  </table>\n</div>\n");
 $templateCache.put("plugins/osgi/html/bundle-list.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundleListController\">\n  <div class=\"row bundle-list-toolbar\">\n\n    <div class=\"pull-left\">\n      <div class=\"btn-group\">\n        <a ng-href=\"#/osgi/bundle-list?p=container\"\n                type=\"button\"\n                class=\"btn active\"\n                title=\"List view\">\n          <i class=\"fa fa-list\"></i>\n        </a>\n        <a ng-href=\"#/osgi/bundles?p=container\"\n                type=\"button\"\n                class=\"btn\"\n                title=\"Table view\">\n          <i class=\"fa fa-table\"></i>\n        </a>\n      </div>\n\n      <div class=\"input-group\" hawtio-show object-name=\"{{frameworkMBean}}\" method-name=\"installBundle\">\n        <input class=\"input-xxlarge\"\n               type=\"text\"\n               placeholder=\"Install Bundle...\"\n               ng-model=\"bundleUrl\">\n        <button ng-disabled=\"installDisabled()\"\n                class=\"btn\"\n                ng-click=\"install()\"\n                title=\"Install\">\n          <i class=\"fa fa-ok\"></i>\n        </button>\n      </div>\n\n    </div>\n\n\n    <div class=\"pull-right\">\n      <strong>Show bundles: </strong>\n      &nbsp;\n      <label for=\"showActiveMQBundles\">ActiveMQ</label>\n      <input id=\"showActiveMQBundles\" type=\"checkbox\" ng-model=\"display.showActiveMQBundles\">\n      &nbsp;\n      &nbsp;\n      <label for=\"showCamelBundles\">Camel</label>\n      <input id=\"showCamelBundles\" type=\"checkbox\" ng-model=\"display.showCamelBundles\">\n      &nbsp;\n      &nbsp;\n      <label for=\"showCxfBundles\">CXF</label>\n      <input id=\"showCxfBundles\" type=\"checkbox\" ng-model=\"display.showCxfBundles\">\n      &nbsp;\n      &nbsp;\n      <label for=\"showPlatformBundles\">Platform</label>\n      <input id=\"showPlatformBundles\" type=\"checkbox\" ng-model=\"display.showPlatformBundles\">\n      &nbsp;\n      &nbsp;\n      &nbsp;\n      <select class=\"input-lg\" ng-model=\"display.sortField\" id=\"sortField\">\n        <option value=\"Identifier\">Sort by ID</option>\n        <option value=\"Name\">Sort by Name</option>\n        <option value=\"SymbolicName\">Sort by Symbolic Name</option>\n      </select>\n      <select class=\"input-lg\" ng-model=\"display.bundleField\" id=\"bundleField\">\n        <option value=\"Name\">Display Name</option>\n        <option value=\"SymbolicName\">Display Symbolic Name</option>\n      </select>\n      <input class=\"input-sm search-query\" type=\"number\" min=\"0\"\n             ng-model=\"display.startLevelFilter\"\n             placeholder=\"Start Level...\"/>\n      <hawtio-filter ng-model=\"display.bundleFilter\" placeholder=\"Filter...\" save-as=\"osgi-bundle-list-text-filter\"></hawtio-filter>\n    </div>\n\n  </div>\n\n  <div class=\"row\" id=\"bundleTableHolder\">\n    <!-- Just create a bit of space between the form and the controls -->\n    <p></p>\n\n    <script type=\"text/ng-template\" id=\"popoverTemplate\">\n<small>\n  <table class=\"table\">\n    <tbody>\n    <tr ng-repeat=\"(k, v) in bundle track by $index\">\n      <td class=\"property-name\">{{k}}</td>\n      <td class=\"property-value\">{{v}}</td>\n    </tr>\n    </tbody>\n  </table>\n</small>\n    </script>\n\n    <div class=\"bundle-list centered\"\n         hawtio-auto-columns=\".bundle-item\">\n      <div ng-repeat=\"bundle in bundles\"\n           class=\"bundle-item\"\n           ng-show=\"filterBundle(bundle)\"\n           hawtio-template-popover title=\"Bundle details\">\n        <a id=\"{{bundle.Identifier}}\"\n           ng-href=\"#/osgi/bundle/{{bundle.Identifier}}?p=container\">\n          <span class=\"badge\" ng-class=\"getStateStyle(bundle.State)\">{{getLabel(bundle)}}</span>\n        </a>\n      </div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/osgi/html/bundle.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundleController\">\n  <div ng-include src=\"\'plugins/osgi/html/bundle-details.html\'\"></div>\n</div>\n");
-$templateCache.put("plugins/osgi/html/bundles.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundlesController\">\n  <div class=\"row\">\n    <div class=\"pull-left\">\n\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n\n          <div class=\"btn-group inline-block\">\n            <a ng-href=\"#/osgi/bundle-list?p=container\"\n                    type=\"button\"\n                    class=\"btn\"\n                    title=\"List view\">\n              <i class=\"fa fa-list\"></i>\n            </a>\n            <a ng-href=\"#/osgi/bundles?p=container\"\n                    type=\"button\"\n                    class=\"btn active\"\n                    title=\"Table view\">\n              <i class=\"fa fa-table\"></i>\n            </a>\n          </div>\n\n          <div class=\"controls control-group inline-block controls-row\">\n            <div class=\"btn-group\">\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"stop()\" title=\"Stop\"><i class=\"fa fa-off\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"start()\" title=\"Start\"><i class=\"icon-play-circle\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"refresh()\" title=\"Refresh\"><i class=\"fa fa-refresh\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"update()\" title=\"Update\"><i class=\"icon-cloud-download\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"uninstall()\" title=\"Uninstall\"><i class=\"fa fa-eject\"></i></button>\n            </div>\n            <div class=\"input-group\">\n              <input class=\"input-xlarge\" type=\"text\" placeholder=\"Install Bundle...\" ng-model=\"bundleUrl\">\n              <button ng-disabled=\"installDisabled()\" class=\"btn\" ng-click=\"install()\" title=\"Install\"><i class=\"fa fa-ok\"></i></button>\n            </div>\n          </div>\n        </fieldset>\n      </form>\n      \n    </div>\n\n    <div class=\"pull-right\">\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n          <div class=\"control-group inline-block\">\n            <input type=\"text\"\n                   class=\"input-lg search-query\"\n                   placeholder=\"Filter...\"\n                   ng-model=\"gridOptions.filterOptions.filterText\">\n          </div>\n        </fieldset>\n      </form>\n\n    </div>\n  </div>\n  \n  \n  <div class=\"row\">\n    <div ng-hide=\"loading\" class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n    <div ng-show=\"loading\">\n      Please wait, loading...\n    </div>\n  </div>\n</div>\n");
+$templateCache.put("plugins/osgi/html/bundles.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundlesController\">\n  <div class=\"row\">\n    <div class=\"pull-left\">\n\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n\n          <div class=\"btn-group inline-block\">\n            <a ng-href=\"#/osgi/bundle-list?p=container\"\n                    type=\"button\"\n                    class=\"btn\"\n                    title=\"List view\">\n              <i class=\"fa fa-list\"></i>\n            </a>\n            <a ng-href=\"#/osgi/bundles?p=container\"\n                    type=\"button\"\n                    class=\"btn active\"\n                    title=\"Table view\">\n              <i class=\"fa fa-table\"></i>\n            </a>\n          </div>\n\n          <div class=\"controls control-group inline-block controls-row\">\n            <div class=\"btn-group\">\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"stop()\" title=\"Stop\"><i class=\"fa fa-off\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"start()\" title=\"Start\"><i class=\"fa fa-play-circle\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"refresh()\" title=\"Refresh\"><i class=\"fa fa-refresh\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"update()\" title=\"Update\"><i class=\"fa fa-cloud-download\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"uninstall()\" title=\"Uninstall\"><i class=\"fa fa-eject\"></i></button>\n            </div>\n            <div class=\"input-group\">\n              <input class=\"input-xlarge\" type=\"text\" placeholder=\"Install Bundle...\" ng-model=\"bundleUrl\">\n              <button ng-disabled=\"installDisabled()\" class=\"btn\" ng-click=\"install()\" title=\"Install\"><i class=\"fa fa-ok\"></i></button>\n            </div>\n          </div>\n        </fieldset>\n      </form>\n      \n    </div>\n\n    <div class=\"pull-right\">\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n          <div class=\"control-group inline-block\">\n            <input type=\"text\"\n                   class=\"input-lg search-query\"\n                   placeholder=\"Filter...\"\n                   ng-model=\"gridOptions.filterOptions.filterText\">\n          </div>\n        </fieldset>\n      </form>\n\n    </div>\n  </div>\n  \n  \n  <div class=\"row\">\n    <div ng-hide=\"loading\" class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n    <div ng-show=\"loading\">\n      Please wait, loading...\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/osgi/html/configurations.html","<style type=\"text/css\">\n  .configuration-header {\n    margin: 20px 20px;\n  }\n\n  ul.configurations,\n  ul.configurations li {\n    list-style: none;\n  }\n\n  ul.configurations {\n    margin: 0px 20px;\n  }\n\n  ul.configurations .bundle-item {\n    display: list-item;\n    margin-bottom: 4px;\n  }\n\n  ul.configurations li.bundle-item a {\n    /*\n      TODO it\'d be nice to use the natural widgth here,\n      but then it might be nice to use multiple columns?\n    */\n    width: 450px;\n  }\n</style>\n\n<div class=\"controller-section\" ng-controller=\"Osgi.ConfigurationsController\">\n  <div class=\"row\">\n    <div class=\"configuration-header\">\n      <div class=\"configuration-filter\">\n        <input type=\"text\" class=\"col-md-8 search-query\" placeholder=\"Filter...\" ng-model=\"filterText\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"filterText = \'\'\"></i>\n        <button class=\"btn pull-right\" ng-click=\"addPidDialog.open()\" title=\"Add a new configuration\" hawtio-show object-name=\"{{hawtioConfigAdminMBean}}\" method-name=\"configAdminUpdate\"><i\n                class=\"fa fa-plus\"></i> Configuration\n        </button>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row centered\" ng-hide=\"configurations.length\">\n    <i class=\"fa fa-spinner icon-spin\"></i>\n  </div>\n\n  <ul class=\"configurations\">\n    <li ng-repeat=\'config in configurations | filter:filterText\' class=\'{{config.class}} bundle-item\'>\n      <a ng-href=\"{{config.pidLink}}\" title=\"{{config.description}}\">\n        <span class=\"{{config.kind.class}}\">{{config.name}}</span>\n      </a>\n      <ul ng-show=\"config.isFactory\">\n        <li ng-repeat=\"child in config.children\" class=\'{{child.class}} bundle-item\'>\n          <a ng-href=\"{{child.pidLink}}\" title=\"{{child.description}}\">\n            <span class=\"{{child.kind.class}}\">{{child.name}}</span>\n          </a>\n        </li>\n      </ul>\n    </li>\n  </ul>\n\n  <div modal=\"addPidDialog.show\" close=\"addPidDialog.close()\" options=\"addPidDialog.options\">\n    <form name=\"addPidDialogForm\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"addPid(newPid)\">\n      <div class=\"modal-header\"><h4>Add New Configuration</h4></div>\n      <div class=\"modal-body\">\n        <div class=\"control-group\">\n          <label class=\"control-label\" for=\"newPid\">New configuration ID</label>\n\n          <div class=\"controls\">\n            <input class=\"input-xlarge\" type=\"text\" id=\"newPid\" ng-model=\"newPid\"/>\n          </div>\n        </div>\n      </div>\n      <div class=\"modal-footer\">\n        <input class=\"btn btn-success\" ng-disabled=\"!(newPid !== \'\' && newPid !== undefined)\" type=\"submit\" value=\"Add\">\n        <input class=\"btn btn-primary\" ng-click=\"addPidDialog.close()\" type=\"button\" value=\"Cancel\">\n      </div>\n    </form>\n  </div>\n</div>\n\n");
 $templateCache.put("plugins/osgi/html/framework.html","<div class=\"container\" ng-controller=\"Osgi.FrameworkController\">\n    <h3>Framework Configuration</h3>\n    <div class=\"col-md-11\">\n    <table>\n        <tr>\n            <td><strong>Current Framework Start Level:</strong></td>\n            <td class=\"less-big\">{{startLevel}}</td>\n            <td><button class=\"btn btn-primary\" \n                        ng-click=\"edit(\'FrameworkStartLevel\', \'Framework Start Level\')\" \n                        title=\"Edit framework start level\"\n                        hawtio-show\n                        object-name=\"{{frameworkMBean}}\"\n                        method-name=\"setFrameworkStartLevel\">Edit</button></td>\n        </tr>\n        <tr><td><p></p></td></tr>\n        <tr>\n            <td><strong>Initial Bundle Start Level:</strong></td>\n            <td class=\"less-big\">{{initialBundleStartLevel}}</td>\n            <td><button class=\"btn btn-primary\"\n                        ng-click=\"edit(\'InitialBundleStartLevel\', \'Initial Bundle Start Level\')\" \n                        title=\"Edit initial bundle start level\"\n                        hawtio-show\n                        object-name=\"{{frameworkMBean}}\"\n                        method-name=\"setInitialBundleStartLevel\">Edit</button></td>\n        </tr>\n    </table>\n    </div>\n\n    <div modal=\"editDialog.show\" close=\"editDialog.close()\" options=\"editDialog.options\">\n        <form id=\"myForm\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"editDialog.close()\">\n            <div class=\"modal-header\"><h4>Change {{editDisplayName}}</h4></div>\n            <div class=\"modal-body\">\n                <p>New Start Level (0-100): <input ng-model=\"editResult\" type=\"number\" min=\"0\" max=\"100\" required/></p>\n            </div>\n            <div class=\"modal-footer\">\n                <input class=\"btn\" ng-click=\"editDialog.close()\" type=\"submit\" value=\"Cancel\">\n                <input class=\"btn btn-primary\" ng-click=\"edited(editAttr, editDisplayName, editResult)\" type=\"submit\" value=\"OK\">\n            </div>\n        </form>\n    </div>\n</div>\n");
-$templateCache.put("plugins/osgi/html/layoutOsgi.html","<ul class=\"nav nav-tabs\" hawtio-auto-dropdown ng-controller=\"Karaf.NavBarController\">\n  <li ng-class=\'{active : isActive(\"#/osgi/configuration\") || isPrefixActive(\"#/osgi/pid\")}\'>\n      <a ng-href=\"#/osgi/configurations{{hash}}\">Configuration</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/bundle\")}\'>\n      <a ng-href=\"#/osgi/bundle-list{{hash}}\">Bundles</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/features\") || isActive(\"#/osgi/feature\")}\' ng-show=\"isFeaturesEnabled\">\n    <a ng-href=\"#/osgi/features{{hash}}\">Features</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/package\")}\'>\n      <a ng-href=\"#/osgi/packages{{hash}}\">Packages</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/service\")}\'>\n      <a ng-href=\"#/osgi/services{{hash}}\">Services</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/scr-components\")}\' ng-show=\"isScrEnabled\">\n    <a ng-href=\"#/osgi/scr-components{{hash}}\">Declarative Services</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/server\")}\'>\n    <a ng-href=\"#/osgi/server{{hash}}\">Server</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/fwk\")}\'>\n      <a ng-href=\"#/osgi/fwk{{hash}}\">Framework</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/dependencies\")}\'>\n      <a ng-href=\"#/osgi/dependencies{{hash}}\">Dependencies</a>\n  </li>\n\n  <li class=\"dropdown overflow\" style=\"float: right !important; visibility: hidden;\">\n    <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\"><i class=\"icon-chevron-down\"></i></a>\n    <ul class=\"dropdown-menu right\"></ul>\n  </li>\n\n</ul>\n<div class=\"row\" ng-controller=\"Osgi.TopLevelController\">\n    <div ng-view></div>\n</div>\n\n\n");
+$templateCache.put("plugins/osgi/html/layoutOsgi.html","<ul class=\"nav nav-tabs\" hawtio-auto-dropdown ng-controller=\"Karaf.NavBarController\">\n  <li ng-class=\'{active : isActive(\"#/osgi/configuration\") || isPrefixActive(\"#/osgi/pid\")}\'>\n      <a ng-href=\"#/osgi/configurations{{hash}}\">Configuration</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/bundle\")}\'>\n      <a ng-href=\"#/osgi/bundle-list{{hash}}\">Bundles</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/features\") || isActive(\"#/osgi/feature\")}\' ng-show=\"isFeaturesEnabled\">\n    <a ng-href=\"#/osgi/features{{hash}}\">Features</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/package\")}\'>\n      <a ng-href=\"#/osgi/packages{{hash}}\">Packages</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/service\")}\'>\n      <a ng-href=\"#/osgi/services{{hash}}\">Services</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/scr-components\")}\' ng-show=\"isScrEnabled\">\n    <a ng-href=\"#/osgi/scr-components{{hash}}\">Declarative Services</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/server\")}\'>\n    <a ng-href=\"#/osgi/server{{hash}}\">Server</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/fwk\")}\'>\n      <a ng-href=\"#/osgi/fwk{{hash}}\">Framework</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/dependencies\")}\'>\n      <a ng-href=\"#/osgi/dependencies{{hash}}\">Dependencies</a>\n  </li>\n\n  <li class=\"dropdown overflow\" style=\"float: right !important; visibility: hidden;\">\n    <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\"><i class=\"fa fa-chevron-down\"></i></a>\n    <ul class=\"dropdown-menu right\"></ul>\n  </li>\n\n</ul>\n<div class=\"row\" ng-controller=\"Osgi.TopLevelController\">\n    <div ng-view></div>\n</div>\n\n\n");
 $templateCache.put("plugins/osgi/html/package-details.html","<div>\n    <table class=\"overviewSection\">\n        <tr>\n            <td><strong>Name:</strong></td>\n            <td class=\"less-big\">{{row.Name}}\n            </td>\n        </tr>\n        <tr>\n            <td><strong>Version:</strong></td>\n            <td class=\"less-big\">{{row.Version}}\n            </td>\n        </tr>\n        <tr>\n            <td><strong>Removal Pending:</strong></td>\n            <td class=\"less-big\">{{row.RemovalPending}}\n        </tr>\n        <tr>\n            <td><strong>Exporting Bundles:</strong></td>\n            <td>\n                <ul>\n                    <li ng-repeat=\"name in row.ExportingBundles\">\n                        <a href=\'#/osgi/bundle/{{name}}{{hash}}\'>{{name}}</a>\n                    </li>\n                </ul>\n            </td>\n        </tr>\n        <tr>\n            <td><strong>Importing Bundles:</strong></td>\n            <td>\n                <ul>\n                    <li ng-repeat=\"name in row.ImportingBundles\">\n                        <a href=\'#/osgi/bundle/{{name}}{{hash}}\'>{{name}}</a>\n                    </li>\n                </ul>\n            </td>\n        </tr>\n    </table>\n</div>");
 $templateCache.put("plugins/osgi/html/package.html","<div class=\"controller-section\" ng-controller=\"Osgi.PackageController\">\n\n<h1>{{row.id}}</h1>\n\n<div ng-include src=\"\'plugins/osgi/html/package-details.html\'\"></div>\n</div>\n");
 $templateCache.put("plugins/osgi/html/packages.html","<script type=\"text/ng-template\" id=\"packageBundlesTemplate\">\n  <table>\n    <tr>\n      <th>Exporting Bundles</th>\n      <th>Importing Bundles</th>\n    </tr>\n    <tr>\n      <td>\n        <ul>\n          <li ng-repeat=\"b in row.ExportingBundles\">\n            <a href=\'#/osgi/bundle/{{b.Identifier}}?\'>{{b.SymbolicName}}</a>\n          </li>\n        </ul>\n      </td>\n      <td>\n        <ul>\n          <li ng-repeat=\"b in row.ImportingBundles\">\n            <a href=\'#/osgi/bundle/{{b.Identifier}}?\'>{{b.SymbolicName}}</a>\n          </li>\n        </ul>\n      </td>\n    </tr>\n  </table>\n</script>\n\n<div class=\"controller-section\" ng-controller=\"Osgi.PackagesController\">\n  <table class=\"table table-striped\" hawtio-simple-table=\"mygrid\"></table>\n</div>\n");
@@ -17684,7 +17684,7 @@ $templateCache.put("plugins/osgi/html/svc-dependencies.html","<style type=\"text
 $templateCache.put("plugins/wiki/exemplar/document.html","<h2>This is a title</h2>\n\n<p>Here are some notes</p>");
 $templateCache.put("plugins/wiki/html/camelCanvas.html","<div ng-controller=\"Wiki.CamelController\">\n\n  <div class=\"wiki-fixed\" ng-controller=\"Wiki.CamelCanvasController\">\n    <ng-include src=\"\'plugins/wiki/html/camelNavBar.html\'\"></ng-include>\n\n    <script type=\"text/ng-template\"\n            id=\"nodeTemplate\">\n      <div class=\"component window\"\n           id=\"{{id}}\"\n           title=\"{{node.tooltip}}\">\n        <div class=\"window-inner {{node.type}}\">\n          <img class=\"nodeIcon\"\n               title=\"Click and drag to create a connection\"\n               src=\"{{node.imageUrl}}\">\n          <span class=\"nodeText\"\n                title=\"{{node.label}}\">{{node.label}}</span>\n        </div>\n      </div>\n    </script>\n\n\n    <div class=\"row\">\n      <div class=\"col-md-12\">\n        <ul class=\"nav nav-tabs\">\n          <li ng-class=\"{active : true}\">\n            <a ng-href=\'{{startLink}}/camel/canvas/{{pageId}}\' title=\"Edit the diagram in a draggy droppy way\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-picture\"></i> Canvas</a></li>\n          <li ng-class=\"{active : false}\">\n            <a ng-href=\'{{startLink}}/camel/properties/{{pageId}}\' title=\"Switch to the tree based view\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-sitemap\"></i> Tree</a></li>\n\n          <li class=\"pull-right\">\n            <a href=\'\' title=\"Add new pattern node connecting to this pattern\" ng-click=\"addDialog.open()\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-plus\"></i> Add</a></li>\n\n          <li class=\"pull-right\">\n            <a href=\'\' title=\"Automatically layout the diagram \" ng-click=\"doLayout()\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-magic\"></i> Layout</a></li>\n\n          <li class=\"pull-right\" style=\"margin-top: 0; margin-bottom: 0;\">\n            </li>\n\n          <!--\n          <li class=\"pull-right\">\n            <a href=\'\' title=\"Edit the properties for the selected node\" ng-disabled=\"!selectedFolder\"\n               ng-click=\"propertiesDialog.open()\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-edit\"></i> Properties</a></li>\n              -->\n        </ul>\n\n        <div class=\"modal-large\">\n          <div modal=\"addDialog.show\" close=\"addDialog.close()\" ng-options=\"addDialog.options\">\n            <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"addAndCloseDialog()\">\n              <div class=\"modal-header\"><h4>Add Node</h4></div>\n              <div class=\"modal-body\">\n                <tabset>\n                  <tab heading=\"Patterns\">\n                    <div hawtio-tree=\"paletteTree\" hideRoot=\"true\" onSelect=\"onPaletteSelect\"\n                         activateNodes=\"paletteActivations\"></div>\n                  </tab>\n                  <tab heading=\"Endpoints\">\n                    <div hawtio-tree=\"componentTree\" hideRoot=\"true\" onSelect=\"onComponentSelect\"\n                         activateNodes=\"componentActivations\"></div>\n                  </tab>\n                </tabset>\n              </div>\n              <div class=\"modal-footer\">\n                <input id=\"submit\" class=\"btn btn-primary add\" type=\"submit\" ng-disabled=\"!selectedPaletteNode && !selectedComponentNode\"\n                       value=\"Add\">\n                <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"addDialog.close()\">Cancel</button>\n              </div>\n            </form>\n          </div>\n        </div>\n\n\n        <!--\n        <div modal=\"propertiesDialog.show\" close=\"propertiesDialog.close()\" ng-options=\"propertiesDialog.options\">\n          <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"updatePropertiesAndCloseDialog()\">\n            <div class=\"modal-header\"><h4>Properties</h4></div>\n            <div class=\"modal-body\">\n\n              <div ng-show=\"!selectedEndpoint\"> -->\n                <!-- pattern form --> <!--\n                <div simple-form name=\"formEditor\" entity=\'nodeData\' data=\'nodeModel\' schema=\"schema\"\n                     onsubmit=\"updatePropertiesAndCloseDialog\"></div>\n              </div>\n              <div ng-show=\"selectedEndpoint\"> -->\n                <!-- endpoint form -->\n                <!--\n                <div class=\"control-group\">\n                  <label class=\"control-label\" for=\"endpointPath\">Endpoint</label>\n\n                  <div class=\"controls\">\n                    <input id=\"endpointPath\" class=\"col-md-10\" type=\"text\" ng-model=\"endpointPath\" placeholder=\"name\"\n                           typeahead=\"title for title in endpointCompletions($viewValue) | filter:$viewValue\"\n                           typeahead-editable=\'true\'\n                           min-length=\"1\">\n                  </div>\n                </div>\n                <div simple-form name=\"formEditor\" entity=\'endpointParameters\' data=\'endpointSchema\'\n                     schema=\"schema\"></div>\n              </div>\n\n\n            </div>\n            <div class=\"modal-footer\">\n              <input class=\"btn btn-primary add\" type=\"submit\" ng-click=\"updatePropertiesAndCloseDialog()\" value=\"OK\">\n              <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"propertiesDialog.close()\">Cancel</button>\n            </div>\n          </form>\n        </div>\n        -->\n\n      </div>\n    </div>\n\n    <div class=\"row\">\n    </div>\n\n    <div class=\"panes gridStyle\">\n      <div class=\"left-pane\">\n        <div class=\"camel-viewport camel-canvas\">\n          <div style=\"position: relative;\" class=\"canvas\"></div>\n        </div>\n      </div>\n      <div class=\"right-pane\">\n        <div class=\"camel-props\">\n          <div class=\"button-bar\">\n            <div class=\"centered\">\n              <form class=\"form-inline\">\n                <label>Route: </label>\n                <select ng-model=\"selectedRouteId\" ng-options=\"routeId for routeId in routeIds\"></select>\n              </form>\n              <div class=\"btn-group\">\n                <button class=\"btn\"\n                        title=\"{{getDeleteTitle()}}\"\n                        ng-click=\"removeNode()\"\n                        data-placement=\"bottom\">\n                    <i class=\"fa fa-remove\"></i> Delete {{getDeleteTarget()}}</button>\n                <button class=\"btn\"\n                        title=\"Apply any changes to the endpoint properties\"\n                        ng-disabled=\"!isFormDirty()\"\n                        ng-click=\"updateProperties()\">\n                    <i class=\"fa fa-ok\"></i> Apply</button>\n                <!-- TODO Would be good to have this too\n                <button class=\"btn\"\n                        title=\"Clear any changes to the endpoint properties\"\n                        ng-disabled=\"!isFormDirty()\"\n                        ng-click=\"resetForms()\">\n                  <i class=\"fa fa-remove\"></i> Cancel</button> -->\n              </div>\n            </div>\n          </div>\n          <div class=\"prop-viewport\">\n\n            <div>\n              <!-- pattern form -->\n              <div ng-show=\"!selectedEndpoint\">\n                <div simple-form\n                     name=\"formEditor\"\n                     entity=\'nodeData\'\n                     data=\'nodeModel\'\n                     schema=\"schema\"\n                     onsubmit=\"updateProperties\"></div>\n              </div>\n\n              <!-- endpoint form -->\n              <div class=\"endpoint-props\" ng-show=\"selectedEndpoint\">\n                <p>Endpoint</p>\n                <form name=\"endpointForm\">\n                  <div class=\"control-group\">\n                    <label class=\"control-label\" for=\"endpointPath\">URI:</label>\n\n                    <div class=\"controls\">\n                      <input id=\"endpointPath\" class=\"col-md-10\" type=\"text\" ng-model=\"endpointPath\" placeholder=\"name\"\n                             typeahead=\"title for title in endpointCompletions($viewValue) | filter:$viewValue\"\n                             typeahead-editable=\'true\'\n                             min-length=\"1\">\n                    </div>\n                  </div>\n                </form>\n\n                <div simple-form\n                     name=\"formEditor\"\n                     entity=\'endpointParameters\'\n                     data=\'endpointSchema\'\n                     schema=\"schema\"\n                     onsubmit=\"updateProperties\"></div>\n              </div>\n\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/camelDiagram.html","<div ng-include=\"diagramTemplate\"></div>\n");
-$templateCache.put("plugins/wiki/html/camelNavBar.html","<div class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs connected\">\n      <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href)}\'>\n        <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n      </li>\n\n      <!--\n              <li class=\"pull-right\">\n                <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this camel configuration\"\n                   data-placement=\"bottom\">\n                  <i class=\"fa fa-edit\"></i> Edit</a></li>\n              <li class=\"pull-right\" ng-show=\"sourceLink()\">\n      -->\n      <li class=\"pull-right\">\n        <a href=\"\" id=\"saveButton\" ng-disabled=\"!modified\" ng-click=\"save()\"\n           ng-class=\"{\'nav-primary\' : modified}\"\n           title=\"Saves the Camel document\">\n          <i class=\"fa fa-save\"></i> Save</a>\n      </li>\n      <li class=\"pull-right\">\n        <a href=\"\" id=\"cancelButton\" ng-click=\"cancel()\"\n           title=\"Discards any updates\">\n          <i class=\"fa fa-remove\"></i> Cancel</a>\n      </li>\n\n      <li class=\"pull-right\">\n        <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n           data-placement=\"bottom\">\n          <i class=\"icon-file-alt\"></i> Source</a>\n      </li>\n    </ul>\n  </div>\n</div>\n");
+$templateCache.put("plugins/wiki/html/camelNavBar.html","<div class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs connected\">\n      <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href)}\'>\n        <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n      </li>\n\n      <!--\n              <li class=\"pull-right\">\n                <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this camel configuration\"\n                   data-placement=\"bottom\">\n                  <i class=\"fa fa-edit\"></i> Edit</a></li>\n              <li class=\"pull-right\" ng-show=\"sourceLink()\">\n      -->\n      <li class=\"pull-right\">\n        <a href=\"\" id=\"saveButton\" ng-disabled=\"!modified\" ng-click=\"save()\"\n           ng-class=\"{\'nav-primary\' : modified}\"\n           title=\"Saves the Camel document\">\n          <i class=\"fa fa-save\"></i> Save</a>\n      </li>\n      <li class=\"pull-right\">\n        <a href=\"\" id=\"cancelButton\" ng-click=\"cancel()\"\n           title=\"Discards any updates\">\n          <i class=\"fa fa-remove\"></i> Cancel</a>\n      </li>\n\n      <li class=\"pull-right\">\n        <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n           data-placement=\"bottom\">\n          <i class=\"fa fa-file-alt\"></i> Source</a>\n      </li>\n    </ul>\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/camelProperties.html","<div class=\"row\">\n  <div class=\"wiki-fixed\" ng-controller=\"Wiki.CamelController\">\n\n    <ng-include src=\"\'plugins/wiki/html/camelNavBar.html\'\"></ng-include>\n\n    <div class=\"row\">\n      <div class=\"col-md-12\" ng-include=\"\'plugins/wiki/html/camelSubLevelTabs.html\'\"></div>\n    </div>\n\n    <div class=\"row\">\n      <div id=\"tree-container\" class=\"col-md-3\" ng-controller=\"Camel.TreeController\">\n        <div hawtio-tree=\"camelContextTree\" onselect=\"onNodeSelect\" onDragEnter=\"onNodeDragEnter\" onDrop=\"onNodeDrop\"\n             onRoot=\"onRootTreeNode\"\n             hideRoot=\"true\"></div>\n      </div>\n\n      <div class=\"col-md-9\">\n        <div ng-include=\"propertiesTemplate\"></div>\n      </div>\n    </div>\n  </div>\n</div>\n\n\n");
 $templateCache.put("plugins/wiki/html/camelPropertiesEdit.html","<div simple-form name=\"formEditor\" entity=\'nodeData\' data=\'nodeModel\' schema=\"schema\"></div>\n");
 $templateCache.put("plugins/wiki/html/camelSubLevelTabs.html","<ul class=\"nav nav-tabs\">\n  <li ng-repeat=\"nav in camelSubLevelTabs\" ng-show=\"isValid(nav)\" ng-class=\"{active : isActive(nav)}\">\n    <a ng-href=\"{{nav.href()}}{{hash}}\" title=\"{{nav.title}}\"\n       data-placement=\"bottom\" ng-bind-html-unsafe=\"nav.content\"></a></li>\n\n  <li class=\"pull-right\">\n    <a href=\'\' title=\"Add new pattern node connecting to this pattern\" ng-click=\"addNode()\" data-placement=\"bottom\">\n      <i class=\"fa fa-plus\"></i> Add</a></li>\n  <li class=\"pull-right\">\n    <a href=\'\' title=\"Deletes the selected pattern\" ng-disabled=\"!canDelete()\" ng-click=\"removeNode()\" data-placement=\"bottom\">\n      <i class=\"fa fa-remove\"></i> Delete</a></li>\n</ul>\n\n<div modal=\"addDialog.show\" close=\"addDialog.close()\" ng-options=\"addDialog.options\">\n  <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"addAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Add Node</h4></div>\n    <div class=\"modal-body\">\n      <div hawtio-tree=\"paletteTree\" hideRoot=\"true\" onSelect=\"onPaletteSelect\" activateNodes=\"paletteActivations\"></div>\n    </div>\n    <div class=\"modal-footer\">\n      <input id=\"submit\" class=\"btn btn-primary add\" type=\"submit\" ng-disabled=\"!selectedPaletteNode\" value=\"Add\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"addDialog.close()\">Cancel</button>\n      </div>\n    </form>\n  </div>\n</div>\n");
@@ -17692,22 +17692,22 @@ $templateCache.put("plugins/wiki/html/commit.html","<link rel=\"stylesheet\" hre
 $templateCache.put("plugins/wiki/html/configuration.html","<div ng-hide=\"inDashboard\" class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs\">\n      <li ng-show=\"branches.length || branch\" class=\"dropdown\">\n        <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\"\n           title=\"The branch to view\">\n          {{branch || \'branch\'}}\n          <span class=\"caret\"></span>\n        </a>\n        <ul class=\"dropdown-menu\">\n          <li ng-repeat=\"otherBranch in branches\">\n            <a ng-href=\"{{branchLink(otherBranch)}}{{hash}}\"\n               ng-hide=\"otherBranch === branch\"\n               title=\"Switch to the {{otherBranch}} branch\"\n               data-placement=\"bottom\">\n              {{otherBranch}}</a>\n          </li>\n        </ul>\n      </li>\n      <li ng-repeat=\"link in breadcrumbs\">\n        <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n      </li>\n      <li class=\"ng-scope\">\n        <a ng-href=\"{{startLink}}/configurations/{{pageId}}\">configuration</a>\n      </li>\n      <li class=\"ng-scope active\">\n        <a>pid</a>\n      </li>\n    </ul>\n  </div>\n</div>\n<div class=\"wiki-fixed\">\n  <div class=\"controller-section\" ng-controller=\"Osgi.PidController\">\n    <div ng-include src=\"\'plugins/osgi/html/pid-details.html\'\"></div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/configurations.html","<div ng-hide=\"inDashboard\" class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs\">\n      <li ng-show=\"branches.length || branch\" class=\"dropdown\">\n        <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\"\n           title=\"The branch to view\">\n          {{branch || \'branch\'}}\n          <span class=\"caret\"></span>\n        </a>\n        <ul class=\"dropdown-menu\">\n          <li ng-repeat=\"otherBranch in branches\">\n            <a ng-href=\"{{branchLink(otherBranch)}}{{hash}}\"\n               ng-hide=\"otherBranch === branch\"\n               title=\"Switch to the {{otherBranch}} branch\"\n               data-placement=\"bottom\">\n              {{otherBranch}}</a>\n          </li>\n        </ul>\n      </li>\n      <li ng-repeat=\"link in breadcrumbs\">\n        <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n      </li>\n      <li class=\"ng-scope active\">\n        <a>configuration</a>\n      </li>\n    </ul>\n  </div>\n</div>\n\n<div class=\"wiki-fixed\">\n  <div ng-include src=\"\'plugins/osgi/html/configurations.html\'\"></div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/create.html","<div class=\"row\" ng-controller=\"Wiki.CreateController\">\n  <div class=\"row\">\n    <div class=\"col-md-12\">\n      <form name=\"createForm\"\n            novalidate\n            class=\"form-horizontal no-bottom-margin\"\n            ng-submit=\"addAndCloseDialog(newDocumentName)\">\n        <fieldset>\n\n          <div class=\"row\">\n            <div class=\"col-md-12\">\n              <h4>Create Document</h4>\n            </div>\n          </div>\n\n          <div class=\"row\">\n            <div class=\"col-md-2\">\n            </div>\n            <div class=\"col-md-4\">\n              <div hawtio-tree=\"createDocumentTree\"\n                     hideRoot=\"true\"\n                     onSelect=\"onCreateDocumentSelect\"\n                     activateNodes=\"createDocumentTreeActivations\"></div>\n            </div>\n            <div class=\"col-md-4\">\n              <div class=\"row\">\n                <div class=\"well\">\n                  {{selectedCreateDocumentTemplate.tooltip}}\n                </div>\n              </div>\n              <div class=\"row\">\n                <div ng-show=\"fileExists.exists\" class=\"alert\">\n                  Please choose a different name as <b>{{fileExists.name}}</b> already exists\n                </div>\n                <div ng-show=\"fileExtensionInvalid\" class=\"alert\">\n                  {{fileExtensionInvalid}}\n                </div>\n                <div ng-show=\"!createForm.$valid\" class=\"alert\">\n                  {{selectedCreateDocumentTemplateInvalid}}\n                </div>\n                <div class=\"control-group\">\n                  <label class=\"control-label\" for=\"fileName\">Name: </label>\n                  <div class=\"controls\">\n                    <input name=\"fileName\" id=\"fileName\"\n                           class=\"input-xlarge\"\n                           type=\"text\"\n                           ng-pattern=\"selectedCreateDocumentTemplateRegex\"\n                           ng-model=\"newDocumentName\"\n                           placeholder=\"{{selectedCreateDocumentTemplate.exemplar}}\">\n                  </div>\n                </div>\n              </div>\n              <div class=\"row\">\n                <div simple-form data=\"formSchema\" entity=\"formData\" onSubmit=\"generate()\"></div>\n              </div>\n              <div class=\"row\">\n                <input class=\"btn btn-primary add pull-right\"\n                       type=\"submit\"\n                       ng-disabled=\"!selectedCreateDocumentTemplate.exemplar || !createForm.$valid\"\n                       value=\"Create\">\n                <span class=\"pull-right\">&nbsp;</span>\n                <button class=\"btn btn-warning cancel pull-right\" type=\"button\" ng-click=\"cancel()\">Cancel</button>\n              </div>\n            </div>\n            <div class=\"col-md-2\">\n            </div>\n          </div>\n        </fieldset>\n      </form>\n    </div>\n  </div>\n\n</div>\n");
-$templateCache.put("plugins/wiki/html/createPage.html","<div ng-controller=\"Wiki.EditController\">\n  <div class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n\n    <div class=\"wiki logbar-container\">\n\n      <ul class=\"connected nav nav-tabs\">\n        <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href)}\'>\n          <a ng-href=\"{{link.href}}{{hash}}\">\n            {{link.name}}\n          </a>\n        </li>\n\n        <li class=\"pull-right\">\n\n          <a href=\"\" id=\"cancelButton\" ng-click=\"cancel()\"\n                  class=\"pull-right\"\n                  title=\"Discards any updates\">\n            <i class=\"fa fa-remove\"></i> Cancel\n          </a>\n        </li>\n\n        <li class=\"pull-right\">\n          <a href=\"\" id=\"saveButton\" ng-show=\"isValid()\" ng-click=\"create()\"\n                  class=\"pull-right\"\n                  title=\"Creates this page and saves it in the wiki\">\n            <i class=\"icon-file-alt\"></i> Create\n          </a>\n        </li>\n\n      </ul>\n    </div>\n  </div>\n\n  <div class=\"wiki-fixed form-horizontal\">\n    <div class=\"control-group\">\n      <input type=\"text\" ng-model=\"fileName\" placeholder=\"File name\" class=\"col-md-12\"/>\n    </div>\n    <div class=\"control-group\">\n      <div ng-include=\"sourceView\" class=\"editor-autoresize\"></div>\n    </div>\n  </div>\n</div>\n");
-$templateCache.put("plugins/wiki/html/dozerMappings.html","<div class=\"wiki-fixed\" ng-controller=\"Wiki.DozerMappingsController\">\n  <div class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n    <div class=\"wiki logbar-container\">\n      <ul class=\"nav nav-tabs connected\">\n        <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href)}\'>\n          <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n        </li>\n\n        <!--\n                <li class=\"pull-right\">\n                  <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this camel configuration\"\n                     data-placement=\"bottom\">\n                    <i class=\"fa fa-edit\"></i> Edit</a></li>\n                <li class=\"pull-right\" ng-show=\"sourceLink()\">\n        -->\n        <li class=\"pull-right\">\n          <a href=\"\" id=\"saveButton\" ng-disabled=\"!isValid()\" ng-click=\"save()\"\n             ng-class=\"{\'nav-primary\' : modified}\"\n             title=\"Saves the Mappings document\">\n            <i class=\"fa fa-save\"></i> Save</a>\n        </li>\n        <li class=\"pull-right\">\n          <a href=\"\" id=\"cancelButton\" ng-click=\"cancel()\"\n             title=\"Discards any updates\">\n            <i class=\"fa fa-remove\"></i> Cancel</a>\n        </li>\n\n        <li class=\"pull-right\">\n          <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n             data-placement=\"bottom\">\n            <i class=\"icon-file-alt\"></i> Source</a>\n        </li>\n      </ul>\n    </div>\n  </div>\n\n  <div class=\"tabbable hawtio-form-tabs\" ng-model=\"tab\" ng-hide=\"missingContainer\">\n\n    <div class=\"tab-pane\" title=\"Mappings\">\n\n      <div class=\"row\">\n        <div class=\"col-md-12 centered spacer\">\n          <select class=\"no-bottom-margin\" ng-model=\"selectedMapping\" ng-options=\"m.map_id for m in mappings\"></select>\n          <button class=\"btn\"\n                  ng-click=\"addMapping()\"\n                  title=\"Add mapping\">\n            <i class=\"fa fa-plus\"></i>\n          </button>\n          <button class=\"btn\"\n                  ng-click=\"deleteDialog = true\"\n                  title=\"Delete mapping\">\n            <i class=\"fa fa-minus\"></i>\n          </button>\n          &nbsp;\n          &nbsp;\n          <label class=\"inline-block\" for=\"map_id\">Map ID: </label>\n          <input id=\"map_id\" type=\"text\" class=\"input-xxlarge no-bottom-margin\" ng-model=\"selectedMapping.map_id\">\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <!-- \"From\" class header -->\n        <div class=\"col-md-5\">\n          <div class=\"row\">\n            <input type=\"text\" class=\"col-md-12\"\n                   ng-model=\"aName\"\n                   typeahead=\"title for title in classNames($viewValue) | filter:$viewValue\"\n                   typeahead-editable=\"true\" title=\"Java classname for class \'A\'\"\n                   placeholder=\"Java classname for class \'A\'\">\n          </div>\n          <div class=\"row\" ng-show=\"selectedMapping.class_a.error\">\n            <div class=\"alert alert-error\">\n              <div class=\"expandable closed\">\n                <div class=\"title\">\n                  <i class=\"expandable-indicator\"></i> Failed to load properties for {{selectedMapping.class_a.value}} due to {{selectedMapping.class_a.error.type}}\n                </div>\n                <div class=\"expandable-body well\">\n                  <div ng-bind-html-unsafe=\"formatStackTrace(selectedMapping.class_a.error.stackTrace)\"></div>\n                </div>\n              </div>\n            </div>\n          </div>\n        </div>\n\n        <div class=\"col-md-2 centered\">\n          <button class=\"btn\" ng-click=\"doReload()\" ng-disabled=\"disableReload()\"><i class=\"fa fa-refresh\"></i> Reload</button>\n        </div>\n\n        <!-- \"To\" class header -->\n        <div class=\"col-md-5\">\n          <div class=\"row\">\n            <input type=\"text\" class=\"col-md-12\"\n                   ng-model=\"bName\"\n                   typeahead=\"title for title in classNames($viewValue) | filter:$viewValue\"\n                   typeahead-editable=\"true\" title=\"Java classname for class \'B\'\"\n                   placeholder=\"Java classname for class \'B\'\">\n          </div>\n          <div class=\"row\" ng-show=\"selectedMapping.class_b.error\">\n            <div class=\"alert alert-error\">\n              <div class=\"expandable closed\">\n                <div class=\"title\">\n                  <i class=\"expandable-indicator\"></i> Failed to load properties for {{selectedMapping.class_b.value}} due to {{selectedMapping.class_b.error.type}}\n                </div>\n                <div class=\"expandable-body well\">\n                  <div ng-bind-html-unsafe=\"formatStackTrace(selectedMapping.class_b.error.stackTrace)\"></div>\n                </div>\n              </div>\n            </div>\n          </div>\n        </div>\n\n      </div>\n\n      <script type=\"text/ng-template\" id=\"property.html\">\n        <span class=\"jsplumb-node dozer-mapping-node\"\n              id=\"{{field.id}}\"\n              anchors=\"{{field.anchor}}\"\n              field-path=\"{{field.path}}\">\n          <strong>{{field.displayName}}</strong> : <span class=\"typeName\">{{field.typeName}}</span>\n        </span>\n        <ul>\n          <li ng-repeat=\"field in field.properties\"\n              ng-include=\"\'property.html\'\"></li>\n        </ul>\n      </script>\n\n\n      <script type=\"text/ng-template\" id=\"pageTemplate.html\">\n        <div hawtio-jsplumb draggable=\"false\" layout=\"false\" timeout=\"500\">\n\n          <!-- \"from\" class -->\n          <div class=\"col-md-6\">\n            <div class=\"row\" ng-hide=\"selectedMapping.class_a.error\">\n              <ul class=\"dozer-mappings from\">\n                <li ng-repeat=\"field in selectedMapping.class_a.properties\"\n                    ng-include=\"\'property.html\'\"></li>\n              </ul>\n            </div>\n          </div>\n\n\n          <!-- \"to\" class -->\n          <div class=\"col-md-6\">\n            <div class=\"row\" ng-hide=\"selectedMapping.class_b.error\">\n              <ul class=\"dozer-mappings to\">\n                <li ng-repeat=\"field in selectedMapping.class_b.properties\"\n                    ng-include=\"\'property.html\'\"></li>\n              </ul>\n            </div>\n          </div>\n        </div>\n      </script>\n      <div class=\"row\" compile=\"main\"></div>\n\n    </div>\n\n    <div class=\"tab-pane\" title=\"Tree\">\n\n      <div class=\"row\">\n        <div class=\"col-md-12\">\n          <ul class=\"nav nav-pills\">\n            <li>\n              <a href=\'\' title=\"Add a new mapping between two classes\" ng-click=\"addMapping()\" data-placement=\"bottom\">\n                <i class=\"fa fa-plus\"></i> Class</a></li>\n            <li>\n              <a href=\'\' title=\"Add new mappings between fields in these classes\" ng-disable=\"!selectedMapping\" ng-click=\"addField()\" data-placement=\"bottom\">\n                <i class=\"fa fa-plus\"></i> Field</a></li>\n            <li>\n              <a href=\'\' title=\"Deletes the selected item\" ng-disabled=\"!canDelete()\" ng-click=\"deleteDialog = true\" data-placement=\"bottom\">\n                <i class=\"fa fa-remove\"></i> Delete</a></li>\n          </ul>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div id=\"tree-container\" class=\"col-md-4\">\n          <div hawtio-tree=\"mappingTree\" onselect=\"onNodeSelect\" onDragEnter=\"onNodeDragEnter\" onDrop=\"onNodeDrop\"\n               onRoot=\"onRootTreeNode\"\n               hideRoot=\"true\"></div>\n        </div>\n\n        <div class=\"col-md-8\">\n          <div ng-include=\"propertiesTemplate\"></div>\n        </div>\n      </div>\n\n      <div hawtio-confirm-dialog=\"deleteDialog\"\n           ok-button-text=\"Delete\"\n           on-ok=\"removeNode()\">\n        <div class=\"dialog-body\">\n          <p>You are about to delete the selected {{selectedDescription}}\n          </p>\n          <p>This operation cannot be undone so please be careful.</p>\n        </div>\n      </div>\n\n      <div class=\"modal-large\">\n        <div modal=\"addDialog.show\" close=\"addDialog.close()\" ng-options=\"addDialog.options\">\n          <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"addAndCloseDialog()\">\n            <div class=\"modal-header\"><h4>Add Fields</h4></div>\n            <div class=\"modal-body\">\n              <table class=\"\">\n                <tr>\n                  <th>From</th>\n                  <th></th>\n                  <th>To</th>\n                  <th>Exclude</th>\n                </tr>\n                <tr ng-repeat=\"unmapped in unmappedFields\">\n                  <td>\n                    {{unmapped.fromField}}\n                  </td>\n                  <td>-></td>\n                  <td>\n                    <input type=\"text\" ng-model=\"unmapped.toField\" ng-change=\"onUnmappedFieldChange(unmapped)\"\n                           typeahead=\"title for title in toFieldNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'\n                           title=\"The field to map to\"/>\n                  </td>\n                  <td>\n                    <input type=\"checkbox\" ng-model=\"unmapped.exclude\" ng-click=\"onUnmappedFieldChange(unmapped)\"\n                           title=\"Whether or not the field should be excluded\"/>\n                  </td>\n                </tr>\n              </table>\n            </div>\n            <div class=\"modal-footer\">\n              <input id=\"submit\" class=\"btn btn-primary add\" type=\"submit\" ng-disabled=\"!unmappedFieldsHasValid\"\n                     value=\"Add\">\n              <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"addDialog.close()\">Cancel</button>\n            </div>\n          </form>\n        </div>\n      </div>\n    </div>\n\n  </div>\n\n  <div class=\"jumbotron\" ng-show=\"missingContainer\">\n    <p>You cannot edit the dozer mapping file as there is no container running for the profile <b>{{profileId}}</b>.</p>\n\n    <p>\n      <a class=\"btn btn-primary btn-lg\"\n         href=\"#/fabric/containers/createContainer?profileIds={{profileId}}&versionId={{versionId}}\">\n        Create a container for: <strong>{{profileId}}</strong>\n      </a>\n    </p>\n  </div>\n</div>\n");
+$templateCache.put("plugins/wiki/html/createPage.html","<div ng-controller=\"Wiki.EditController\">\n  <div class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n\n    <div class=\"wiki logbar-container\">\n\n      <ul class=\"connected nav nav-tabs\">\n        <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href)}\'>\n          <a ng-href=\"{{link.href}}{{hash}}\">\n            {{link.name}}\n          </a>\n        </li>\n\n        <li class=\"pull-right\">\n\n          <a href=\"\" id=\"cancelButton\" ng-click=\"cancel()\"\n                  class=\"pull-right\"\n                  title=\"Discards any updates\">\n            <i class=\"fa fa-remove\"></i> Cancel\n          </a>\n        </li>\n\n        <li class=\"pull-right\">\n          <a href=\"\" id=\"saveButton\" ng-show=\"isValid()\" ng-click=\"create()\"\n                  class=\"pull-right\"\n                  title=\"Creates this page and saves it in the wiki\">\n            <i class=\"fa fa-file-alt\"></i> Create\n          </a>\n        </li>\n\n      </ul>\n    </div>\n  </div>\n\n  <div class=\"wiki-fixed form-horizontal\">\n    <div class=\"control-group\">\n      <input type=\"text\" ng-model=\"fileName\" placeholder=\"File name\" class=\"col-md-12\"/>\n    </div>\n    <div class=\"control-group\">\n      <div ng-include=\"sourceView\" class=\"editor-autoresize\"></div>\n    </div>\n  </div>\n</div>\n");
+$templateCache.put("plugins/wiki/html/dozerMappings.html","<div class=\"wiki-fixed\" ng-controller=\"Wiki.DozerMappingsController\">\n  <div class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n    <div class=\"wiki logbar-container\">\n      <ul class=\"nav nav-tabs connected\">\n        <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href)}\'>\n          <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n        </li>\n\n        <!--\n                <li class=\"pull-right\">\n                  <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this camel configuration\"\n                     data-placement=\"bottom\">\n                    <i class=\"fa fa-edit\"></i> Edit</a></li>\n                <li class=\"pull-right\" ng-show=\"sourceLink()\">\n        -->\n        <li class=\"pull-right\">\n          <a href=\"\" id=\"saveButton\" ng-disabled=\"!isValid()\" ng-click=\"save()\"\n             ng-class=\"{\'nav-primary\' : modified}\"\n             title=\"Saves the Mappings document\">\n            <i class=\"fa fa-save\"></i> Save</a>\n        </li>\n        <li class=\"pull-right\">\n          <a href=\"\" id=\"cancelButton\" ng-click=\"cancel()\"\n             title=\"Discards any updates\">\n            <i class=\"fa fa-remove\"></i> Cancel</a>\n        </li>\n\n        <li class=\"pull-right\">\n          <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n             data-placement=\"bottom\">\n            <i class=\"fa fa-file-alt\"></i> Source</a>\n        </li>\n      </ul>\n    </div>\n  </div>\n\n  <div class=\"tabbable hawtio-form-tabs\" ng-model=\"tab\" ng-hide=\"missingContainer\">\n\n    <div class=\"tab-pane\" title=\"Mappings\">\n\n      <div class=\"row\">\n        <div class=\"col-md-12 centered spacer\">\n          <select class=\"no-bottom-margin\" ng-model=\"selectedMapping\" ng-options=\"m.map_id for m in mappings\"></select>\n          <button class=\"btn\"\n                  ng-click=\"addMapping()\"\n                  title=\"Add mapping\">\n            <i class=\"fa fa-plus\"></i>\n          </button>\n          <button class=\"btn\"\n                  ng-click=\"deleteDialog = true\"\n                  title=\"Delete mapping\">\n            <i class=\"fa fa-minus\"></i>\n          </button>\n          &nbsp;\n          &nbsp;\n          <label class=\"inline-block\" for=\"map_id\">Map ID: </label>\n          <input id=\"map_id\" type=\"text\" class=\"input-xxlarge no-bottom-margin\" ng-model=\"selectedMapping.map_id\">\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <!-- \"From\" class header -->\n        <div class=\"col-md-5\">\n          <div class=\"row\">\n            <input type=\"text\" class=\"col-md-12\"\n                   ng-model=\"aName\"\n                   typeahead=\"title for title in classNames($viewValue) | filter:$viewValue\"\n                   typeahead-editable=\"true\" title=\"Java classname for class \'A\'\"\n                   placeholder=\"Java classname for class \'A\'\">\n          </div>\n          <div class=\"row\" ng-show=\"selectedMapping.class_a.error\">\n            <div class=\"alert alert-error\">\n              <div class=\"expandable closed\">\n                <div class=\"title\">\n                  <i class=\"expandable-indicator\"></i> Failed to load properties for {{selectedMapping.class_a.value}} due to {{selectedMapping.class_a.error.type}}\n                </div>\n                <div class=\"expandable-body well\">\n                  <div ng-bind-html-unsafe=\"formatStackTrace(selectedMapping.class_a.error.stackTrace)\"></div>\n                </div>\n              </div>\n            </div>\n          </div>\n        </div>\n\n        <div class=\"col-md-2 centered\">\n          <button class=\"btn\" ng-click=\"doReload()\" ng-disabled=\"disableReload()\"><i class=\"fa fa-refresh\"></i> Reload</button>\n        </div>\n\n        <!-- \"To\" class header -->\n        <div class=\"col-md-5\">\n          <div class=\"row\">\n            <input type=\"text\" class=\"col-md-12\"\n                   ng-model=\"bName\"\n                   typeahead=\"title for title in classNames($viewValue) | filter:$viewValue\"\n                   typeahead-editable=\"true\" title=\"Java classname for class \'B\'\"\n                   placeholder=\"Java classname for class \'B\'\">\n          </div>\n          <div class=\"row\" ng-show=\"selectedMapping.class_b.error\">\n            <div class=\"alert alert-error\">\n              <div class=\"expandable closed\">\n                <div class=\"title\">\n                  <i class=\"expandable-indicator\"></i> Failed to load properties for {{selectedMapping.class_b.value}} due to {{selectedMapping.class_b.error.type}}\n                </div>\n                <div class=\"expandable-body well\">\n                  <div ng-bind-html-unsafe=\"formatStackTrace(selectedMapping.class_b.error.stackTrace)\"></div>\n                </div>\n              </div>\n            </div>\n          </div>\n        </div>\n\n      </div>\n\n      <script type=\"text/ng-template\" id=\"property.html\">\n        <span class=\"jsplumb-node dozer-mapping-node\"\n              id=\"{{field.id}}\"\n              anchors=\"{{field.anchor}}\"\n              field-path=\"{{field.path}}\">\n          <strong>{{field.displayName}}</strong> : <span class=\"typeName\">{{field.typeName}}</span>\n        </span>\n        <ul>\n          <li ng-repeat=\"field in field.properties\"\n              ng-include=\"\'property.html\'\"></li>\n        </ul>\n      </script>\n\n\n      <script type=\"text/ng-template\" id=\"pageTemplate.html\">\n        <div hawtio-jsplumb draggable=\"false\" layout=\"false\" timeout=\"500\">\n\n          <!-- \"from\" class -->\n          <div class=\"col-md-6\">\n            <div class=\"row\" ng-hide=\"selectedMapping.class_a.error\">\n              <ul class=\"dozer-mappings from\">\n                <li ng-repeat=\"field in selectedMapping.class_a.properties\"\n                    ng-include=\"\'property.html\'\"></li>\n              </ul>\n            </div>\n          </div>\n\n\n          <!-- \"to\" class -->\n          <div class=\"col-md-6\">\n            <div class=\"row\" ng-hide=\"selectedMapping.class_b.error\">\n              <ul class=\"dozer-mappings to\">\n                <li ng-repeat=\"field in selectedMapping.class_b.properties\"\n                    ng-include=\"\'property.html\'\"></li>\n              </ul>\n            </div>\n          </div>\n        </div>\n      </script>\n      <div class=\"row\" compile=\"main\"></div>\n\n    </div>\n\n    <div class=\"tab-pane\" title=\"Tree\">\n\n      <div class=\"row\">\n        <div class=\"col-md-12\">\n          <ul class=\"nav nav-pills\">\n            <li>\n              <a href=\'\' title=\"Add a new mapping between two classes\" ng-click=\"addMapping()\" data-placement=\"bottom\">\n                <i class=\"fa fa-plus\"></i> Class</a></li>\n            <li>\n              <a href=\'\' title=\"Add new mappings between fields in these classes\" ng-disable=\"!selectedMapping\" ng-click=\"addField()\" data-placement=\"bottom\">\n                <i class=\"fa fa-plus\"></i> Field</a></li>\n            <li>\n              <a href=\'\' title=\"Deletes the selected item\" ng-disabled=\"!canDelete()\" ng-click=\"deleteDialog = true\" data-placement=\"bottom\">\n                <i class=\"fa fa-remove\"></i> Delete</a></li>\n          </ul>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div id=\"tree-container\" class=\"col-md-4\">\n          <div hawtio-tree=\"mappingTree\" onselect=\"onNodeSelect\" onDragEnter=\"onNodeDragEnter\" onDrop=\"onNodeDrop\"\n               onRoot=\"onRootTreeNode\"\n               hideRoot=\"true\"></div>\n        </div>\n\n        <div class=\"col-md-8\">\n          <div ng-include=\"propertiesTemplate\"></div>\n        </div>\n      </div>\n\n      <div hawtio-confirm-dialog=\"deleteDialog\"\n           ok-button-text=\"Delete\"\n           on-ok=\"removeNode()\">\n        <div class=\"dialog-body\">\n          <p>You are about to delete the selected {{selectedDescription}}\n          </p>\n          <p>This operation cannot be undone so please be careful.</p>\n        </div>\n      </div>\n\n      <div class=\"modal-large\">\n        <div modal=\"addDialog.show\" close=\"addDialog.close()\" ng-options=\"addDialog.options\">\n          <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"addAndCloseDialog()\">\n            <div class=\"modal-header\"><h4>Add Fields</h4></div>\n            <div class=\"modal-body\">\n              <table class=\"\">\n                <tr>\n                  <th>From</th>\n                  <th></th>\n                  <th>To</th>\n                  <th>Exclude</th>\n                </tr>\n                <tr ng-repeat=\"unmapped in unmappedFields\">\n                  <td>\n                    {{unmapped.fromField}}\n                  </td>\n                  <td>-></td>\n                  <td>\n                    <input type=\"text\" ng-model=\"unmapped.toField\" ng-change=\"onUnmappedFieldChange(unmapped)\"\n                           typeahead=\"title for title in toFieldNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'\n                           title=\"The field to map to\"/>\n                  </td>\n                  <td>\n                    <input type=\"checkbox\" ng-model=\"unmapped.exclude\" ng-click=\"onUnmappedFieldChange(unmapped)\"\n                           title=\"Whether or not the field should be excluded\"/>\n                  </td>\n                </tr>\n              </table>\n            </div>\n            <div class=\"modal-footer\">\n              <input id=\"submit\" class=\"btn btn-primary add\" type=\"submit\" ng-disabled=\"!unmappedFieldsHasValid\"\n                     value=\"Add\">\n              <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"addDialog.close()\">Cancel</button>\n            </div>\n          </form>\n        </div>\n      </div>\n    </div>\n\n  </div>\n\n  <div class=\"jumbotron\" ng-show=\"missingContainer\">\n    <p>You cannot edit the dozer mapping file as there is no container running for the profile <b>{{profileId}}</b>.</p>\n\n    <p>\n      <a class=\"btn btn-primary btn-lg\"\n         href=\"#/fabric/containers/createContainer?profileIds={{profileId}}&versionId={{versionId}}\">\n        Create a container for: <strong>{{profileId}}</strong>\n      </a>\n    </p>\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/dozerPropertiesEdit.html","<div simple-form name=\"formEditor\" entity=\'dozerEntity\' data=\'nodeModel\' schema=\"schema\"></div>\n");
 $templateCache.put("plugins/wiki/html/editPage.html","<div ng-controller=\"Wiki.EditController\">\n  <div class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n    <div class=\"wiki logbar-container\">\n      <ul class=\"nav nav-tabs\">\n        <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href)}\'>\n          <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n        </li>\n\n        <li class=\"pull-right\">\n          <a id=\"saveButton\"\n             href=\"\"\n             ng-disabled=\"canSave()\"\n             ng-click=\"save()\"\n             title=\"Saves the updated wiki page\">\n            <i class=\"fa fa-save\"></i> Save</a>\n        </li>\n        <li class=\"pull-right\">\n          <a id=\"cancelButton\"\n             href=\"\"\n             ng-click=\"cancel()\"\n             title=\"Discards any updates\">\n            <i class=\"fa fa-remove\"></i> Cancel</a>\n        </li>\n      </ul>\n    </div>\n  </div>\n\n  <div class=\"wiki-fixed form-horizontal\">\n    <div class=\"control-group editor-autoresize\">\n      <div ng-include=\"sourceView\" class=\"editor-autoresize\"></div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/formEdit.html","<div simple-form name=\"formEditor\" entity=\'formEntity\' data=\'formDefinition\'></div>\n");
-$templateCache.put("plugins/wiki/html/formTable.html","<div ng-controller=\"Wiki.FormTableController\">\n  <div class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n    <div class=\"wiki logbar-container\">\n      <ul class=\"nav nav-tabs\">\n        <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href)}\'>\n          <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n        </li>\n\n        <li class=\"pull-right\">\n          <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this page\"\n             data-placement=\"bottom\">\n            <i class=\"fa fa-edit\"></i> Edit</a></li>\n        <li class=\"pull-right\">\n          <a ng-href=\"{{historyLink}}{{hash}}\" ng-hide=\"!historyLink\" title=\"View the history of this file\"\n             data-placement=\"bottom\">\n            <i class=\"icon-comments-alt\"></i> History</a></li>\n        <li class=\"pull-right\">\n          <a ng-href=\"{{createLink()}}{{hash}}\" title=\"Create new page\"\n             data-placement=\"bottom\">\n            <i class=\"fa fa-plus\"></i> Create</a></li>\n        <li class=\"pull-right\" ng-show=\"sourceLink()\">\n          <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n             data-placement=\"bottom\">\n            <i class=\"icon-file-alt\"></i> Source</a></li>\n      </ul>\n    </div>\n  </div>\n\n  <div class=\"wiki-fixed row\">\n    <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n           placeholder=\"Filter...\">\n  </div>\n\n  <div class=\"form-horizontal\">\n    <div class=\"row\">\n      <div ng-include=\"tableView\"></div>\n    </div>\n  </div>\n</div>\n");
+$templateCache.put("plugins/wiki/html/formTable.html","<div ng-controller=\"Wiki.FormTableController\">\n  <div class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n    <div class=\"wiki logbar-container\">\n      <ul class=\"nav nav-tabs\">\n        <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href)}\'>\n          <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n        </li>\n\n        <li class=\"pull-right\">\n          <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this page\"\n             data-placement=\"bottom\">\n            <i class=\"fa fa-edit\"></i> Edit</a></li>\n        <li class=\"pull-right\">\n          <a ng-href=\"{{historyLink}}{{hash}}\" ng-hide=\"!historyLink\" title=\"View the history of this file\"\n             data-placement=\"bottom\">\n            <i class=\"fa fa-comments-alt\"></i> History</a></li>\n        <li class=\"pull-right\">\n          <a ng-href=\"{{createLink()}}{{hash}}\" title=\"Create new page\"\n             data-placement=\"bottom\">\n            <i class=\"fa fa-plus\"></i> Create</a></li>\n        <li class=\"pull-right\" ng-show=\"sourceLink()\">\n          <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n             data-placement=\"bottom\">\n            <i class=\"fa fa-file-alt\"></i> Source</a></li>\n      </ul>\n    </div>\n  </div>\n\n  <div class=\"wiki-fixed row\">\n    <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n           placeholder=\"Filter...\">\n  </div>\n\n  <div class=\"form-horizontal\">\n    <div class=\"row\">\n      <div ng-include=\"tableView\"></div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/formTableDatatable.html","<div class=\"gridStyle\" hawtio-datatable=\"gridOptions\"></div>\n");
 $templateCache.put("plugins/wiki/html/formView.html","<div simple-form name=\"formViewer\" mode=\'view\' entity=\'formEntity\' data=\'formDefinition\'></div>\n");
 $templateCache.put("plugins/wiki/html/gitPreferences.html","<div title=\"Git\" ng-controller=\"Wiki.GitPreferences\">\n  <form class=\"form-horizontal\">\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"gitUserName\"\n             title=\"The user name to be used when making changes to files with the source control system\">User\n        name</label>\n\n      <div class=\"controls\">\n        <input id=\"gitUserName\" type=\"text\" placeholder=\"username\" ng-model=\"gitUserName\"  autofill/>\n      </div>\n    </div>\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"gitUserEmail\"\n             title=\"The email address to use when making changes to files with the source control system\">Email\n        address</label>\n\n      <div class=\"controls\">\n        <input id=\"gitUserEmail\" type=\"email\" placeholder=\"email\" ng-model=\"gitUserEmail\"/>\n      </div>\n    </div>\n  </form>\n</div>\n");
-$templateCache.put("plugins/wiki/html/history.html","<link rel=\"stylesheet\" href=\"plugins/wiki/css/wiki.css\" type=\"text/css\"/>\n\n<div ng-controller=\"Wiki.HistoryController\">\n  <script type=\"text/ng-template\" id=\"changeCellTemplate.html\">\n    <div class=\"ngCellText\">\n      <a class=\"commit-link\" ng-href=\"{{row.entity.commitLink}}{{hash}}\" title=\"{{row.entity.name}}\">{{row.entity.commitHashText}}\n        <i class=\"icon-circle-arrow-right\"></i></a>\n    </div>\n  </script>\n\n  <div ng-hide=\"inDashboard\" class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n    <div class=\"wiki logbar-container\">\n      <ul class=\"nav nav-tabs\">\n        <li ng-show=\"branches.length || branch\" class=\"dropdown\">\n          <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\"\n             title=\"The branch to view\">\n            {{branch || \'branch\'}}\n            <span class=\"caret\"></span>\n          </a>\n          <ul class=\"dropdown-menu\">\n            <li ng-repeat=\"otherBranch in branches\">\n              <a ng-href=\"{{branchLink(otherBranch)}}{{hash}}\"\n                 ng-hide=\"otherBranch === branch\"\n                 title=\"Switch to the {{otherBranch}} branch\"\n                 data-placement=\"bottom\">\n                {{otherBranch}}</a>\n            </li>\n          </ul>\n        </li>\n        <li ng-repeat=\"link in breadcrumbs\">\n          <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n        </li>\n        <li class=\"ng-scope active\">\n          <a>History</a>\n        </li>\n\n        <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n          <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this page\"\n             data-placement=\"bottom\">\n            <i class=\"fa fa-edit\"></i> Edit</a></li>\n        <li class=\"pull-right\">\n          <a ng-href=\"{{historyLink}}{{hash}}\" ng-hide=\"!historyLink\" title=\"View the history of this file\"\n             data-placement=\"bottom\">\n            <i class=\"icon-comments-alt\"></i> History</a></li>\n        <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n          <a ng-href=\"{{createLink()}}{{hash}}\" title=\"Create new page\"\n             data-placement=\"bottom\">\n            <i class=\"fa fa-plus\"></i> Create</a></li>\n      </ul>\n    </div>\n  </div>\n\n  <div class=\"wiki-fixed row\">\n    <div class=\"col-md-4\">\n      <div class=\"control-group\">\n        <button class=\"btn\" ng-disabled=\"!selectedItems.length\" ng-click=\"diff()\"\n                title=\"Compare the selected versions of the files to see how they differ\"><i\n                class=\"fa fa-exchange\"></i>\n          Compare\n        </button>\n\n        <button class=\"btn\" ng-disabled=\"!canRevert()\" ng-click=\"revert()\"\n                title=\"Revert to this version of the file\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"revertTo\"><i class=\"fa fa-exchange\"></i> Revert\n        </button>\n      </div>\n    </div>\n    <div class=\"col-md-8\">\n      <div class=\"control-group\">\n        <input class=\"col-md-12 search-query\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n               placeholder=\"search\">\n      </div>\n    </div>\n  </div>\n\n  <div class=\"form-horizontal\">\n    <!--\n        <div class=\"row\">\n            <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n        </div>\n    </div>-->\n\n    <div class=\"row\">\n      <table class=\"table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n    </div>\n\n  </div>\n</div>\n");
+$templateCache.put("plugins/wiki/html/history.html","<link rel=\"stylesheet\" href=\"plugins/wiki/css/wiki.css\" type=\"text/css\"/>\n\n<div ng-controller=\"Wiki.HistoryController\">\n  <script type=\"text/ng-template\" id=\"changeCellTemplate.html\">\n    <div class=\"ngCellText\">\n      <a class=\"commit-link\" ng-href=\"{{row.entity.commitLink}}{{hash}}\" title=\"{{row.entity.name}}\">{{row.entity.commitHashText}}\n        <i class=\"fa fa-circle-arrow-right\"></i></a>\n    </div>\n  </script>\n\n  <div ng-hide=\"inDashboard\" class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n    <div class=\"wiki logbar-container\">\n      <ul class=\"nav nav-tabs\">\n        <li ng-show=\"branches.length || branch\" class=\"dropdown\">\n          <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\"\n             title=\"The branch to view\">\n            {{branch || \'branch\'}}\n            <span class=\"caret\"></span>\n          </a>\n          <ul class=\"dropdown-menu\">\n            <li ng-repeat=\"otherBranch in branches\">\n              <a ng-href=\"{{branchLink(otherBranch)}}{{hash}}\"\n                 ng-hide=\"otherBranch === branch\"\n                 title=\"Switch to the {{otherBranch}} branch\"\n                 data-placement=\"bottom\">\n                {{otherBranch}}</a>\n            </li>\n          </ul>\n        </li>\n        <li ng-repeat=\"link in breadcrumbs\">\n          <a ng-href=\"{{link.href}}{{hash}}\">{{link.name}}</a>\n        </li>\n        <li class=\"ng-scope active\">\n          <a>History</a>\n        </li>\n\n        <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n          <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this page\"\n             data-placement=\"bottom\">\n            <i class=\"fa fa-edit\"></i> Edit</a></li>\n        <li class=\"pull-right\">\n          <a ng-href=\"{{historyLink}}{{hash}}\" ng-hide=\"!historyLink\" title=\"View the history of this file\"\n             data-placement=\"bottom\">\n            <i class=\"fa fa-comments-alt\"></i> History</a></li>\n        <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n          <a ng-href=\"{{createLink()}}{{hash}}\" title=\"Create new page\"\n             data-placement=\"bottom\">\n            <i class=\"fa fa-plus\"></i> Create</a></li>\n      </ul>\n    </div>\n  </div>\n\n  <div class=\"wiki-fixed row\">\n    <div class=\"col-md-4\">\n      <div class=\"control-group\">\n        <button class=\"btn\" ng-disabled=\"!selectedItems.length\" ng-click=\"diff()\"\n                title=\"Compare the selected versions of the files to see how they differ\"><i\n                class=\"fa fa-exchange\"></i>\n          Compare\n        </button>\n\n        <button class=\"btn\" ng-disabled=\"!canRevert()\" ng-click=\"revert()\"\n                title=\"Revert to this version of the file\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"revertTo\"><i class=\"fa fa-exchange\"></i> Revert\n        </button>\n      </div>\n    </div>\n    <div class=\"col-md-8\">\n      <div class=\"control-group\">\n        <input class=\"col-md-12 search-query\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n               placeholder=\"search\">\n      </div>\n    </div>\n  </div>\n\n  <div class=\"form-horizontal\">\n    <!--\n        <div class=\"row\">\n            <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n        </div>\n    </div>-->\n\n    <div class=\"row\">\n      <table class=\"table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n    </div>\n\n  </div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/layoutWiki.html","<div class=\"row\" ng-controller=\"Wiki.TopLevelController\">\n  <div ng-view></div>\n</div>\n\n");
 $templateCache.put("plugins/wiki/html/sourceEdit.html","<textarea id=\"source\" ui-codemirror=\"codeMirrorOptions\" ng-model=\"entity.source\"></textarea>\n");
 $templateCache.put("plugins/wiki/html/sourceView.html","<textarea id=\"source\" ui-codemirror=\"codeMirrorOptions\" ng-model=\"source\"></textarea>\n");
-$templateCache.put("plugins/wiki/html/viewBook.html","<div ng-controller=\"Wiki.ViewController\">\n\n  <script type=\"text/ng-template\" id=\"fileCellTemplate.html\">\n    <div class=\"ngCellText\"\n         title=\"{{fileName(row.entity)}} - Last Modified: {{row.entity.lastModified | date:\'medium\'}}, Size: {{row.entity.length}}\">\n      <a href=\"{{childLink(row.entity)}}\" class=\"file-name\">\n        <span class=\"file-icon\"\n              ng-class=\"fileClass(row.entity)\"\n              ng-bind-html-unsafe=\"fileIconHtml(row)\">\n\n              </span>{{fileName(row.entity)}}\n      </a>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"fileColumnTemplate.html\">\n\n    <div class=\"ngHeaderSortColumn {{col.headerClass}}\"\n         ng-style=\"{\'cursor\': col.cursor}\"\n         ng-class=\"{ \'ngSorted\': !noSortVisible }\">\n\n      <div class=\"ngHeaderText\" ng-hide=\"pageId === \'/\'\">\n        <a ng-href=\"{{parentLink()}}\"\n           class=\"wiki-file-list-up\"\n           title=\"Open the parent folder\">\n          <i class=\"icon-level-up\"></i> Up a directory\n        </a>\n      </div>\n    </div>\n\n  </script>\n\n  <ng-include src=\"\'plugins/wiki/html/viewNavBar.html\'\"></ng-include>\n\n  <div class=\"wiki-fixed form-horizontal\">\n    <div class=\"row\">\n      <div class=\"tocify\" wiki-href-adjuster>\n        <!-- TODO we maybe want a more flexible way to find the links to include than the current link-filter -->\n        <div hawtio-toc-display get-contents=\"getContents(filename, cb)\"\n             html=\"html\" link-filter=\"[file-extension]\">\n        </div>\n      </div>\n      <div class=\"toc-content\" id=\"toc-content\"></div>\n    </div>\n  </div>\n</div>\n");
-$templateCache.put("plugins/wiki/html/viewNavBar.html","<div ng-hide=\"inDashboard\" class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs\">\n      <li ng-show=\"branches.length || branch\">\n        <div hawtio-drop-down=\"branchMenuConfig\"></div>\n      </li>\n      <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href) && !objectId}\'>\n        <a class=\"breadcrumb-link\" ng-href=\"{{link.href}}\">\n          <span class=\"contained c-medium\">{{link.name}}</span>\n        </a>\n      </li>\n      <li ng-show=\"objectId\">\n        <a ng-href=\"{{historyLink}}{{hash}}\">History</a>\n      </li>\n      <li ng-show=\"objectId\" class=\"active\">\n        <a>{{objectId}}</a>\n      </li>\n\n      <li class=\"pull-right dropdown\">\n        <a href=\"\" class=\"dropdown-toggle\" data-toggle=\"dropdown\">\n          Actions <span class=\"caret\"></span>\n        </a>\n        <ul class=\"dropdown-menu\">\n          <li ng-show=\"sourceLink()\">\n            <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n               data-placement=\"bottom\">\n              <i class=\"icon-file-alt\"></i> Source</a>\n          </li>\n          <li>\n            <a ng-href=\"{{historyLink}}{{hash}}\" ng-hide=\"!historyLink\" title=\"View the history of this file\"\n               data-placement=\"bottom\">\n              <i class=\"icon-comments-alt\"></i> History</a>\n          </li>\n          <!--\n          <li class=\"divider\">\n          </li>\n          -->\n          <li ng-hide=\"gridOptions.selectedItems.length !== 1\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"rename\">\n            <a ng-click=\"openRenameDialog()\"\n               title=\"Rename the selected document\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-adjust\"></i> Rename</a>\n          </li>\n          <li ng-hide=\"!gridOptions.selectedItems.length\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"rename\">\n            <a ng-click=\"openMoveDialog()\"\n               title=\"move the selected documents to a new folder\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-move\"></i> Move</a>\n          </li>\n          <!--\n          <li class=\"divider\">\n          </li>\n          -->\n          <li ng-hide=\"!gridOptions.selectedItems.length\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"remove\">\n            <a ng-click=\"openDeleteDialog()\"\n               title=\"Delete the selected document(s)\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-remove\"></i> Delete</a>\n          </li>\n          <li class=\"divider\" ng-show=\"childActions.length\">\n          </li>\n          <li ng-repeat=\"childAction in childActions\">\n            <a ng-click=\"childAction.doAction()\"\n               title=\"{{childAction.title}}\"\n               data-placement=\"bottom\">\n              <i class=\"{{childAction.icon}}\"></i> {{childAction.name}}</a>\n          </li>\n        </ul>\n      </li>\n      <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n        <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this page\"\n           data-placement=\"bottom\">\n          <i class=\"fa fa-edit\"></i> Edit</a>\n      </li>\n      <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n        <a ng-href=\"{{createLink()}}{{hash}}\"\n           title=\"Create new page\"\n           data-placement=\"bottom\">\n          <i class=\"fa fa-plus\"></i> Create</a>\n      </li>\n      <li class=\"pull-right\">\n        <div class=\"btn-group\" \n             ng-hide=\"!children || profile\">\n          <a class=\"btn btn-sm\"\n             ng-disabled=\"mode == ViewMode.List\"\n             href=\"\" \n             ng-click=\"setViewMode(ViewMode.List)\">\n            <i class=\"fa fa-list\"></i></a>\n          <a class=\"btn btn-sm\" \n             ng-disabled=\"mode == ViewMode.Icon\"\n             href=\"\" \n             ng-click=\"setViewMode(ViewMode.Icon)\">\n            <i class=\"icon-th-large\"></i></a>\n        </div>\n      </li>\n      <li class=\"pull-right\">\n        <a href=\"\" ng-hide=\"children || profile\" title=\"Add to dashboard\" ng-href=\"{{createDashboardLink()}}\"\n           data-placement=\"bottom\">\n          <i class=\"fa fa-share\"></i>\n        </a>\n      </li>\n    </ul>\n  </div>\n</div>\n\n\n");
-$templateCache.put("plugins/wiki/html/viewPage.html","<div ng-controller=\"Wiki.ViewController\">\n  <script type=\"text/ng-template\" id=\"fileCellTemplate.html\">\n    <div class=\"ngCellText\"\n         title=\"{{fileName(row.entity)}} - Last Modified: {{row.entity.lastModified | date:\'medium\'}}, Size: {{row.entity.length}}\">\n      <a href=\"{{childLink(row.entity)}}\" class=\"file-name\" hawtio-file-drop=\"{{row.entity.fileName}}\" download-url=\"{{row.entity.downloadURL}}\">\n        <span class=\"file-icon\"\n              ng-class=\"fileClass(row.entity)\"\n              compile=\"fileIconHtml(row)\">\n        </span>{{fileName(row.entity)}}\n      </a>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"fileColumnTemplate.html\">\n    <div class=\"ngHeaderSortColumn {{col.headerClass}}\"\n         ng-style=\"{\'cursor\': col.cursor}\"\n         ng-class=\"{ \'ngSorted\': !noSortVisible }\">\n      <div class=\"ngHeaderText\" ng-hide=\"pageId === \'/\'\">\n        <a ng-href=\"{{parentLink()}}\"\n           class=\"wiki-file-list-up\"\n           title=\"Open the parent folder\">\n          <i class=\"icon-level-up\"></i> Up a directory\n        </a>\n      </div>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"imageTemplate.html\">\n    <img src=\"{{imageURL}}\">\n  </script>\n\n  <ng-include src=\"\'plugins/wiki/html/viewNavBar.html\'\"></ng-include>\n\n  <!-- Icon View -->\n  <div ng-show=\"mode == ViewMode.Icon\" class=\"wiki-fixed\">\n    <div ng-hide=\"!showAppHeader\">\n      <div class=\"row\">\n        <div class=\"col-md-12\">\n          <div kubernetes-json=\"kubernetesJson\"></div>\n        </div>\n      </div>\n    </div>\n    <div ng-hide=\"!html\" wiki-href-adjuster wiki-title-linker>\n      <div class=\"row\" style=\"margin-left: 10px\">\n        <div class=\"col-md-12\">\n          <div compile=\"html\"></div>\n        </div>\n      </div>\n    </div>\n    <div class=\"row\" ng-show=\"html && children\">\n      <div class=\"col-md-12 wiki-icon-view-header\">\n        <h5>Directories and Files</h5>\n      </div>\n    </div>\n    <div class=\"row\" ng-hide=\"!directory\">\n      <div class=\"col-md-12\" ng-controller=\"Wiki.FileDropController\">\n        <div class=\"wiki-icon-view\" nv-file-drop nv-file-over uploader=\"uploader\" over-class=\"ready-drop\">\n          <div class=\"column-box mouse-pointer well\"\n               ng-repeat=\"child in children\" \n               ng-class=\"isInGroup(gridOptions.selectedItems, child, \'selected\', \'\')\"\n               ng-click=\"toggleSelectionFromGroup(gridOptions.selectedItems, child)\">\n            <div class=\"row\">\n              <div class=\"col-md-2\" hawtio-file-drop=\"{{child.fileName}}\" download-url=\"{{child.downloadURL}}\">\n                  <span class=\"app-logo\" ng-class=\"fileClass(child)\" compile=\"fileIconHtml(child)\"></span>\n              </div>\n              <div class=\"col-md-10\">\n                <h3>\n                  <a href=\"{{childLink(child)}}\">{{child.displayName || child.name}}</a>\n                </h3>\n              </div>\n            </div>\n            <div class=\"row\" ng-show=\"child.summary\">\n              <div class=\"col-md-12\">\n                <p compile=\"marked(child.summary)\"></p>\n              </div>\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n  <!-- end Icon view -->\n\n  <!-- start List view -->\n  <div ng-show=\"mode == ViewMode.List\" class=\"wiki-fixed\">\n    <hawtio-pane position=\"left\" width=\"300\">\n      <div ng-controller=\"Wiki.FileDropController\">\n        <div class=\"wiki-list-view\" nv-file-drop nv-file-over uploader=\"uploader\" over-class=\"ready-drop\">\n          <div class=\"wiki-grid\" hawtio-list=\"gridOptions\"></div>\n        </div>\n      </div>\n    </hawtio-pane>\n    <div class=\"row\">\n      <div ng-class=\"col-md-12\">\n        <div ng-hide=\"!showProfileHeader\">\n          <div class=\"row\">\n            <div class=\"col-md-12\">\n              <div fabric-profile-details version-id=\"versionId\" profile-id=\"profileId\"></div>\n              <p></p>\n            </div>\n          </div>\n        </div>\n        <div ng-hide=\"!showAppHeader\">\n          <div class=\"row\">\n            <div class=\"col-md-12\">\n              <div kubernetes-json=\"kubernetesJson\" children=\"children\"></div>\n            </div>\n          </div>\n        </div>\n        <div ng-hide=\"!html\" wiki-href-adjuster wiki-title-linker>\n          <div class=\"row\" style=\"margin-left: 10px\">\n            <div class=\"col-md-12\">\n              <div compile=\"html\"></div>\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n  <!-- end List view -->\n  <div ng-include=\"sourceView\" class=\"editor-autoresize\"></div>\n</div>\n");
+$templateCache.put("plugins/wiki/html/viewBook.html","<div ng-controller=\"Wiki.ViewController\">\n\n  <script type=\"text/ng-template\" id=\"fileCellTemplate.html\">\n    <div class=\"ngCellText\"\n         title=\"{{fileName(row.entity)}} - Last Modified: {{row.entity.lastModified | date:\'medium\'}}, Size: {{row.entity.length}}\">\n      <a href=\"{{childLink(row.entity)}}\" class=\"file-name\">\n        <span class=\"file-icon\"\n              ng-class=\"fileClass(row.entity)\"\n              ng-bind-html-unsafe=\"fileIconHtml(row)\">\n\n              </span>{{fileName(row.entity)}}\n      </a>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"fileColumnTemplate.html\">\n\n    <div class=\"ngHeaderSortColumn {{col.headerClass}}\"\n         ng-style=\"{\'cursor\': col.cursor}\"\n         ng-class=\"{ \'ngSorted\': !noSortVisible }\">\n\n      <div class=\"ngHeaderText\" ng-hide=\"pageId === \'/\'\">\n        <a ng-href=\"{{parentLink()}}\"\n           class=\"wiki-file-list-up\"\n           title=\"Open the parent folder\">\n          <i class=\"fa fa-level-up\"></i> Up a directory\n        </a>\n      </div>\n    </div>\n\n  </script>\n\n  <ng-include src=\"\'plugins/wiki/html/viewNavBar.html\'\"></ng-include>\n\n  <div class=\"wiki-fixed form-horizontal\">\n    <div class=\"row\">\n      <div class=\"tocify\" wiki-href-adjuster>\n        <!-- TODO we maybe want a more flexible way to find the links to include than the current link-filter -->\n        <div hawtio-toc-display get-contents=\"getContents(filename, cb)\"\n             html=\"html\" link-filter=\"[file-extension]\">\n        </div>\n      </div>\n      <div class=\"toc-content\" id=\"toc-content\"></div>\n    </div>\n  </div>\n</div>\n");
+$templateCache.put("plugins/wiki/html/viewNavBar.html","<div ng-hide=\"inDashboard\" class=\"logbar\" ng-controller=\"Wiki.NavBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs\">\n      <li ng-show=\"branches.length || branch\">\n        <div hawtio-drop-down=\"branchMenuConfig\"></div>\n      </li>\n      <li ng-repeat=\"link in breadcrumbs\" ng-class=\'{active : isActive(link.href) && !objectId}\'>\n        <a class=\"breadcrumb-link\" ng-href=\"{{link.href}}\">\n          <span class=\"contained c-medium\">{{link.name}}</span>\n        </a>\n      </li>\n      <li ng-show=\"objectId\">\n        <a ng-href=\"{{historyLink}}{{hash}}\">History</a>\n      </li>\n      <li ng-show=\"objectId\" class=\"active\">\n        <a>{{objectId}}</a>\n      </li>\n\n      <li class=\"pull-right dropdown\">\n        <a href=\"\" class=\"dropdown-toggle\" data-toggle=\"dropdown\">\n          Actions <span class=\"caret\"></span>\n        </a>\n        <ul class=\"dropdown-menu\">\n          <li ng-show=\"sourceLink()\">\n            <a ng-href=\"{{sourceLink()}}\" title=\"View source code\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-file-alt\"></i> Source</a>\n          </li>\n          <li>\n            <a ng-href=\"{{historyLink}}{{hash}}\" ng-hide=\"!historyLink\" title=\"View the history of this file\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-comments-alt\"></i> History</a>\n          </li>\n          <!--\n          <li class=\"divider\">\n          </li>\n          -->\n          <li ng-hide=\"gridOptions.selectedItems.length !== 1\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"rename\">\n            <a ng-click=\"openRenameDialog()\"\n               title=\"Rename the selected document\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-adjust\"></i> Rename</a>\n          </li>\n          <li ng-hide=\"!gridOptions.selectedItems.length\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"rename\">\n            <a ng-click=\"openMoveDialog()\"\n               title=\"move the selected documents to a new folder\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-move\"></i> Move</a>\n          </li>\n          <!--\n          <li class=\"divider\">\n          </li>\n          -->\n          <li ng-hide=\"!gridOptions.selectedItems.length\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"remove\">\n            <a ng-click=\"openDeleteDialog()\"\n               title=\"Delete the selected document(s)\"\n               data-placement=\"bottom\">\n              <i class=\"fa fa-remove\"></i> Delete</a>\n          </li>\n          <li class=\"divider\" ng-show=\"childActions.length\">\n          </li>\n          <li ng-repeat=\"childAction in childActions\">\n            <a ng-click=\"childAction.doAction()\"\n               title=\"{{childAction.title}}\"\n               data-placement=\"bottom\">\n              <i class=\"{{childAction.icon}}\"></i> {{childAction.name}}</a>\n          </li>\n        </ul>\n      </li>\n      <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n        <a ng-href=\"{{editLink()}}{{hash}}\" ng-hide=\"!editLink()\" title=\"Edit this page\"\n           data-placement=\"bottom\">\n          <i class=\"fa fa-edit\"></i> Edit</a>\n      </li>\n      <li class=\"pull-right\" hawtio-show object-name=\"{{gitMBean}}\" method-name=\"write\">\n        <a ng-href=\"{{createLink()}}{{hash}}\"\n           title=\"Create new page\"\n           data-placement=\"bottom\">\n          <i class=\"fa fa-plus\"></i> Create</a>\n      </li>\n      <li class=\"pull-right\">\n        <div class=\"btn-group\" \n             ng-hide=\"!children || profile\">\n          <a class=\"btn btn-sm\"\n             ng-disabled=\"mode == ViewMode.List\"\n             href=\"\" \n             ng-click=\"setViewMode(ViewMode.List)\">\n            <i class=\"fa fa-list\"></i></a>\n          <a class=\"btn btn-sm\" \n             ng-disabled=\"mode == ViewMode.Icon\"\n             href=\"\" \n             ng-click=\"setViewMode(ViewMode.Icon)\">\n            <i class=\"fa fa-th-large\"></i></a>\n        </div>\n      </li>\n      <li class=\"pull-right\">\n        <a href=\"\" ng-hide=\"children || profile\" title=\"Add to dashboard\" ng-href=\"{{createDashboardLink()}}\"\n           data-placement=\"bottom\">\n          <i class=\"fa fa-share\"></i>\n        </a>\n      </li>\n    </ul>\n  </div>\n</div>\n\n\n");
+$templateCache.put("plugins/wiki/html/viewPage.html","<div ng-controller=\"Wiki.ViewController\">\n  <script type=\"text/ng-template\" id=\"fileCellTemplate.html\">\n    <div class=\"ngCellText\"\n         title=\"{{fileName(row.entity)}} - Last Modified: {{row.entity.lastModified | date:\'medium\'}}, Size: {{row.entity.length}}\">\n      <a href=\"{{childLink(row.entity)}}\" class=\"file-name\" hawtio-file-drop=\"{{row.entity.fileName}}\" download-url=\"{{row.entity.downloadURL}}\">\n        <span class=\"file-icon\"\n              ng-class=\"fileClass(row.entity)\"\n              compile=\"fileIconHtml(row)\">\n        </span>{{fileName(row.entity)}}\n      </a>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"fileColumnTemplate.html\">\n    <div class=\"ngHeaderSortColumn {{col.headerClass}}\"\n         ng-style=\"{\'cursor\': col.cursor}\"\n         ng-class=\"{ \'ngSorted\': !noSortVisible }\">\n      <div class=\"ngHeaderText\" ng-hide=\"pageId === \'/\'\">\n        <a ng-href=\"{{parentLink()}}\"\n           class=\"wiki-file-list-up\"\n           title=\"Open the parent folder\">\n          <i class=\"fa fa-level-up\"></i> Up a directory\n        </a>\n      </div>\n    </div>\n  </script>\n\n  <script type=\"text/ng-template\" id=\"imageTemplate.html\">\n    <img src=\"{{imageURL}}\">\n  </script>\n\n  <ng-include src=\"\'plugins/wiki/html/viewNavBar.html\'\"></ng-include>\n\n  <!-- Icon View -->\n  <div ng-show=\"mode == ViewMode.Icon\" class=\"wiki-fixed\">\n    <div ng-hide=\"!showAppHeader\">\n      <div class=\"row\">\n        <div class=\"col-md-12\">\n          <div kubernetes-json=\"kubernetesJson\"></div>\n        </div>\n      </div>\n    </div>\n    <div ng-hide=\"!html\" wiki-href-adjuster wiki-title-linker>\n      <div class=\"row\" style=\"margin-left: 10px\">\n        <div class=\"col-md-12\">\n          <div compile=\"html\"></div>\n        </div>\n      </div>\n    </div>\n    <div class=\"row\" ng-show=\"html && children\">\n      <div class=\"col-md-12 wiki-icon-view-header\">\n        <h5>Directories and Files</h5>\n      </div>\n    </div>\n    <div class=\"row\" ng-hide=\"!directory\">\n      <div class=\"col-md-12\" ng-controller=\"Wiki.FileDropController\">\n        <div class=\"wiki-icon-view\" nv-file-drop nv-file-over uploader=\"uploader\" over-class=\"ready-drop\">\n          <div class=\"column-box mouse-pointer well\"\n               ng-repeat=\"child in children\" \n               ng-class=\"isInGroup(gridOptions.selectedItems, child, \'selected\', \'\')\"\n               ng-click=\"toggleSelectionFromGroup(gridOptions.selectedItems, child)\">\n            <div class=\"row\">\n              <div class=\"col-md-2\" hawtio-file-drop=\"{{child.fileName}}\" download-url=\"{{child.downloadURL}}\">\n                  <span class=\"app-logo\" ng-class=\"fileClass(child)\" compile=\"fileIconHtml(child)\"></span>\n              </div>\n              <div class=\"col-md-10\">\n                <h3>\n                  <a href=\"{{childLink(child)}}\">{{child.displayName || child.name}}</a>\n                </h3>\n              </div>\n            </div>\n            <div class=\"row\" ng-show=\"child.summary\">\n              <div class=\"col-md-12\">\n                <p compile=\"marked(child.summary)\"></p>\n              </div>\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n  <!-- end Icon view -->\n\n  <!-- start List view -->\n  <div ng-show=\"mode == ViewMode.List\" class=\"wiki-fixed\">\n    <hawtio-pane position=\"left\" width=\"300\">\n      <div ng-controller=\"Wiki.FileDropController\">\n        <div class=\"wiki-list-view\" nv-file-drop nv-file-over uploader=\"uploader\" over-class=\"ready-drop\">\n          <div class=\"wiki-grid\" hawtio-list=\"gridOptions\"></div>\n        </div>\n      </div>\n    </hawtio-pane>\n    <div class=\"row\">\n      <div ng-class=\"col-md-12\">\n        <div ng-hide=\"!showProfileHeader\">\n          <div class=\"row\">\n            <div class=\"col-md-12\">\n              <div fabric-profile-details version-id=\"versionId\" profile-id=\"profileId\"></div>\n              <p></p>\n            </div>\n          </div>\n        </div>\n        <div ng-hide=\"!showAppHeader\">\n          <div class=\"row\">\n            <div class=\"col-md-12\">\n              <div kubernetes-json=\"kubernetesJson\" children=\"children\"></div>\n            </div>\n          </div>\n        </div>\n        <div ng-hide=\"!html\" wiki-href-adjuster wiki-title-linker>\n          <div class=\"row\" style=\"margin-left: 10px\">\n            <div class=\"col-md-12\">\n              <div compile=\"html\"></div>\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n  <!-- end List view -->\n  <div ng-include=\"sourceView\" class=\"editor-autoresize\"></div>\n</div>\n");
 $templateCache.put("plugins/wiki/html/modal/deleteDialog.html","<div>\n  <form class=\"form-horizontal\" ng-submit=\"deleteAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Delete Document</h4></div>\n    <div class=\"modal-body\">\n      <div class=\"control-group\">\n        <p>You are about to delete\n          <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                        when=\"{\'1\': \'this document!\', \'other\': \'these {} documents!\'}\">\n          </ng-pluralize>\n        </p>\n\n        <div ng-bind-html-unsafe=\"selectedFileHtml\"></div>\n        <p class=\"alert alert-danger\" ng-show=\"warning\" ng-bind-html-unsafe=\"warning\">\n        </p>\n      </div>\n    </div>\n    <div class=\"modal-footer\">\n      <input class=\"btn btn-primary\" type=\"submit\"\n             value=\"Delete\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"close()\">Cancel</button>\n    </div>\n  </form>\n</div>\n");
 $templateCache.put("plugins/wiki/html/modal/moveDialog.html","<div>\n    <form class=\"form-horizontal\" ng-submit=\"moveAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Move Document</h4></div>\n    <div class=\"modal-body\">\n      <div class=\"control-group\">\n        <label class=\"control-label\" for=\"moveFolder\">Folder</label>\n\n        <div class=\"controls\">\n          <input type=\"text\" id=\"moveFolder\" ng-model=\"move.moveFolder\"\n                 typeahead=\"title for title in folderNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'>\n        </div>\n      </div>\n    </div>\n    <div class=\"modal-footer\">\n      <input class=\"btn btn-primary\" type=\"submit\"\n             ng-disabled=\"!move.moveFolder\"\n             value=\"Move\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"close()\">Cancel</button>\n    </div>\n  </form>\n</div>");
 $templateCache.put("plugins/wiki/html/modal/renameDialog.html","<div>\n  <form class=\"form-horizontal\" ng-submit=\"renameAndCloseDialog()\">\n    <div class=\"modal-header\"><h4>Rename Document</h4></div>\n    <div class=\"modal-body\">\n      <div class=\"control-group\">\n        <label class=\"control-label\" for=\"renameFileName\">Name</label>\n\n        <div class=\"controls\">\n          <input type=\"text\" id=\"renameFileName\" ng-model=\"rename.newFileName\">\n        </div>\n      </div>\n\n      <div class=\"control-group\">\n        <div ng-show=\"fileExists.exists\" class=\"alert\">\n          Please choose a different name as <b>{{fileExists.name}}</b> already exists\n        </div>\n      </div>\n    </div>\n    <div class=\"modal-footer\">\n      <input class=\"btn btn-primary\" type=\"submit\"\n             ng-disabled=\"!fileName || fileExists.exists\"\n             value=\"Rename\">\n      <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"close()\">Cancel</button>\n    </div>\n  </form>\n</div>\n");}]); hawtioPluginLoader.addModule("hawtio-wiki-templates");
