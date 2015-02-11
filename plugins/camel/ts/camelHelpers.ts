@@ -1,5 +1,7 @@
 /// <reference path="../../includes.ts"/>
 
+declare var _apacheCamelModel:any;
+
 /**
  * @module Camel
  */
@@ -14,8 +16,14 @@ module Camel {
   export var defaultCamelTraceOrDebugIncludeStreams = true;
   export var defaultCamelRouteMetricMaxSeconds = 10;
 
-  export declare var _apacheCamelModel: any;
+  export var _apacheCamelModel: any = undefined;
   export declare var _jsonSchema: any;
+
+  hawtioPluginLoader.registerPreBootstrapTask((next) => {
+    Camel._apacheCamelModel = window['_apacheCamelModel'];
+    log.debug("Setting apache camel model: ", Camel._apacheCamelModel);
+    next();
+  });
 
 
   /**
@@ -357,7 +365,7 @@ module Camel {
    * @method
    */
   export function camelLanguageSettings(nodeName) {
-    return _apacheCamelModel.languages[nodeName];
+    return Camel._apacheCamelModel.languages[nodeName];
   }
 
   export function isCamelLanguage(nodeName) {

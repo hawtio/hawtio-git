@@ -5,7 +5,7 @@
     "hawtio"
   ],
   "main": [
-    "dist/camelMode.js",
+    "dist/camelModel.js",
     "dist/hawtio-wiki.js"
   ],
   "ignore": [

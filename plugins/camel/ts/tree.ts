@@ -32,18 +32,17 @@ module Camel {
 
     $scope.$on("$routeChangeSuccess", function (event, current, previous) {
       // lets do this asynchronously to avoid Error: $digest already in progress
-      setTimeout(updateSelectionFromURL, 50);
+      $timeout(updateSelectionFromURL, 50);
     });
 
-    var reloadThrottled = Core.throttled(reloadFunction, 500);
-
     $scope.$watch('workspace.tree', function () {
-      reloadThrottled();
+      reloadFunction();
     });
 
     var reloadOnContextFilterThrottled = Core.throttled(() => {
       reloadFunction(() => {
         $("#camelContextIdFilter").focus();
+        Core.$apply($scope);
       });
     }, 500);
 
@@ -58,7 +57,7 @@ module Camel {
     });
 
     $scope.$on('jmxTreeUpdated', function () {
-      reloadThrottled();
+      reloadFunction();
     });
 
     function reloadFunction(afterSelectionFn = null) {
@@ -152,10 +151,10 @@ module Camel {
           });
         }
 
-        var treeElement = $("#cameltree");
-        Jmx.enableTree($scope, $location, workspace, treeElement, [rootFolder], true);
-        // lets do this asynchronously to avoid Error: $digest already in progress
-        setTimeout(() => {
+        $timeout(() => {
+          var treeElement = $("#cameltree");
+          Jmx.enableTree($scope, $location, workspace, treeElement, [rootFolder], true);
+          // lets do this asynchronously to avoid Error: $digest already in progress
           updateSelectionFromURL()
           if (angular.isFunction(afterSelectionFn)) {
             afterSelectionFn();
@@ -176,10 +175,12 @@ module Camel {
             var routes = children[0];
             if (routes.data.typeName === 'routes') {
               first = routes;
+              Core.$apply($scope);
               return first;
             }
           }
         }
+        Core.$apply($scope);
         return null;
       }, true);
       $scope.fullScreenViewLink = Camel.linkToFullScreenView(workspace);

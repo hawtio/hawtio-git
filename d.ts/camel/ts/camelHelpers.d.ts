@@ -1,4 +1,5 @@
 /// <reference path="../../includes.d.ts" />
+declare var _apacheCamelModel: any;
 /**
  * @module Camel
  */
