@@ -1,5 +1,6 @@
 /// <reference path="../../includes.ts"/>
 /// <reference path="camelPlugin.ts"/>
+/// <reference path="../../activemq/ts/activemqHelpers.ts"/>
 
 module Camel {
 
@@ -103,7 +104,8 @@ module Camel {
         var allMessages = $(doc).find("message");
 
         allMessages.each((idx, message) => {
-          var messageData = Camel.createMessageFromXml(message);
+          var messageData:any = Camel.createMessageFromXml(message);
+          messageData.openMessageDialog = $scope.openMessageDialog;
           data.push(messageData);
         });
       }

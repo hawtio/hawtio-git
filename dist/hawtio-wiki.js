@@ -3018,6 +3018,5523 @@ var ActiveMQ;
 })(ActiveMQ || (ActiveMQ = {}));
 
 /// <reference path="../../includes.ts"/>
+/**
+ * @module Camel
+ */
+var Camel;
+(function (Camel) {
+    Camel.log = Logger.get("Camel");
+    Camel.jmxDomain = 'org.apache.camel';
+    Camel.defaultMaximumLabelWidth = 34;
+    Camel.defaultCamelMaximumTraceOrDebugBodyLength = 5000;
+    Camel.defaultCamelTraceOrDebugIncludeStreams = true;
+    Camel.defaultCamelRouteMetricMaxSeconds = 10;
+    /**
+     * Looks up the route XML for the given context and selected route and
+     * processes the selected route's XML with the given function
+     * @method processRouteXml
+     * @param {Workspace} workspace
+     * @param {Object} jolokia
+     * @param {Folder} folder
+     * @param {Function} onRoute
+     */
+    function processRouteXml(workspace, jolokia, folder, onRoute) {
+        var selectedRouteId = getSelectedRouteId(workspace, folder);
+        var mbean = getSelectionCamelContextMBean(workspace);
+        function onRouteXml(response) {
+            var route = null;
+            var data = response ? response.value : null;
+            if (data) {
+                var doc = $.parseXML(data);
+                var routes = $(doc).find("route[id='" + selectedRouteId + "']");
+                if (routes && routes.length) {
+                    route = routes[0];
+                }
+            }
+            onRoute(route);
+        }
+        if (mbean && selectedRouteId) {
+            jolokia.request({ type: 'exec', mbean: mbean, operation: 'dumpRoutesAsXml()' }, Core.onSuccess(onRouteXml, { error: onRouteXml }));
+        }
+        else {
+            if (!selectedRouteId) {
+                console.log("No selectedRouteId when trying to lazy load the route!");
+            }
+            onRoute(null);
+        }
+    }
+    Camel.processRouteXml = processRouteXml;
+    /**
+     * Returns the URI string for the given EIP pattern node or null if it is not applicable
+     * @method getRouteNodeUri
+     * @param {Object} node
+     * @return {String}
+     */
+    function getRouteNodeUri(node) {
+        var uri = null;
+        if (node) {
+            uri = node.getAttribute("uri");
+            if (!uri) {
+                var ref = node.getAttribute("ref");
+                if (ref) {
+                    var method = node.getAttribute("method");
+                    if (method) {
+                        uri = ref + "." + method + "()";
+                    }
+                    else {
+                        uri = "ref:" + ref;
+                    }
+                }
+            }
+        }
+        return uri;
+    }
+    Camel.getRouteNodeUri = getRouteNodeUri;
+    /**
+     * Returns the JSON data for the camel folder; extracting it from the associated
+     * routeXmlNode or using the previously extracted and/or edited JSON
+     * @method getRouteFolderJSON
+     * @param {Folder} folder
+     * @param {Object} answer
+     * @return {Object}
+     */
+    function getRouteFolderJSON(folder, answer) {
+        if (answer === void 0) { answer = {}; }
+        var nodeData = folder["camelNodeData"];
+        if (!nodeData) {
+            var routeXmlNode = folder["routeXmlNode"];
+            if (routeXmlNode) {
+                nodeData = Camel.getRouteNodeJSON(routeXmlNode);
+            }
+            if (!nodeData) {
+                nodeData = answer;
+            }
+            folder["camelNodeData"] = nodeData;
+        }
+        return nodeData;
+    }
+    Camel.getRouteFolderJSON = getRouteFolderJSON;
+    function getRouteNodeJSON(routeXmlNode, answer) {
+        if (answer === void 0) { answer = {}; }
+        if (routeXmlNode) {
+            angular.forEach(routeXmlNode.attributes, function (attr) {
+                answer[attr.name] = attr.value;
+            });
+            // lets not iterate into routes or top level tags
+            var localName = routeXmlNode.localName;
+            if (localName !== "route" && localName !== "routes" && localName !== "camelContext") {
+                // lets look for nested elements and convert those
+                // explicitly looking for expressions
+                $(routeXmlNode).children("*").each(function (idx, element) {
+                    var nodeName = element.localName;
+                    var langSettings = Camel.camelLanguageSettings(nodeName);
+                    if (langSettings) {
+                        // TODO the expression key could be anything really; how should we know?
+                        answer["expression"] = {
+                            language: nodeName,
+                            expression: element.textContent
+                        };
+                    }
+                    else {
+                        if (!isCamelPattern(nodeName)) {
+                            var nested = getRouteNodeJSON(element);
+                            if (nested) {
+                                answer[nodeName] = nested;
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        return answer;
+    }
+    Camel.getRouteNodeJSON = getRouteNodeJSON;
+    function increaseIndent(currentIndent, indentAmount) {
+        if (indentAmount === void 0) { indentAmount = "  "; }
+        return currentIndent + indentAmount;
+    }
+    Camel.increaseIndent = increaseIndent;
+    function setRouteNodeJSON(routeXmlNode, newData, indent) {
+        if (routeXmlNode) {
+            var childIndent = increaseIndent(indent);
+            function doUpdate(value, key, append) {
+                if (append === void 0) { append = false; }
+                if (angular.isArray(value)) {
+                    // remove previous nodes
+                    $(routeXmlNode).children(key).remove();
+                    angular.forEach(value, function (item) {
+                        doUpdate(item, key, true);
+                    });
+                }
+                else if (angular.isObject(value)) {
+                    // convert languages to the right xml
+                    var textContent = null;
+                    if (key === "expression") {
+                        var languageName = value["language"];
+                        if (languageName) {
+                            key = languageName;
+                            textContent = value["expression"];
+                            value = angular.copy(value);
+                            delete value["expression"];
+                            delete value["language"];
+                        }
+                    }
+                    // TODO deal with nested objects...
+                    var nested = $(routeXmlNode).children(key);
+                    var element = null;
+                    if (append || !nested || !nested.length) {
+                        var doc = routeXmlNode.ownerDocument || document;
+                        routeXmlNode.appendChild(doc.createTextNode("\n" + childIndent));
+                        element = doc.createElementNS(routeXmlNode.namespaceURI, key);
+                        if (textContent) {
+                            element.appendChild(doc.createTextNode(textContent));
+                        }
+                        routeXmlNode.appendChild(element);
+                    }
+                    else {
+                        element = nested[0];
+                    }
+                    setRouteNodeJSON(element, value, childIndent);
+                    if (textContent) {
+                        nested.text(textContent);
+                    }
+                }
+                else {
+                    if (value) {
+                        if (key.startsWith("_")) {
+                        }
+                        else {
+                            var text = value.toString();
+                            routeXmlNode.setAttribute(key, text);
+                        }
+                    }
+                    else {
+                        routeXmlNode.removeAttribute(key);
+                    }
+                }
+            }
+            angular.forEach(newData, function (value, key) { return doUpdate(value, key, false); });
+        }
+    }
+    Camel.setRouteNodeJSON = setRouteNodeJSON;
+    function getRouteNodeIcon(nodeSettingsOrXmlNode) {
+        var nodeSettings = null;
+        if (nodeSettingsOrXmlNode) {
+            var nodeName = nodeSettingsOrXmlNode.localName;
+            if (nodeName) {
+                nodeSettings = getCamelSchema(nodeName);
+            }
+            else {
+                nodeSettings = nodeSettingsOrXmlNode;
+            }
+        }
+        if (nodeSettings) {
+            var imageName = nodeSettings["icon"] || "generic24.png";
+            return Core.url("/img/icons/camel/" + imageName);
+        }
+        else {
+            return null;
+        }
+    }
+    Camel.getRouteNodeIcon = getRouteNodeIcon;
+    /**
+     * Parse out the currently selected endpoint's name to be used when invoking on a
+     * context operation that wants an endpoint name
+     * @method getSelectedEndpointName
+     * @param {Workspace} workspace
+     * @return {any} either a string that is the endpoint name or null if it couldn't be parsed
+     */
+    function getSelectedEndpointName(workspace) {
+        var selection = workspace.selection;
+        if (selection && selection['objectName'] && selection['typeName'] && selection['typeName'] === 'endpoints') {
+            var mbean = Core.parseMBean(selection['objectName']);
+            if (!mbean) {
+                return null;
+            }
+            var attributes = mbean['attributes'];
+            if (!attributes) {
+                return null;
+            }
+            if (!('name' in attributes)) {
+                return null;
+            }
+            var uri = attributes['name'];
+            uri = uri.replace("\\?", "?");
+            if (uri.startsWith("\"")) {
+                uri = uri.last(uri.length - 1);
+            }
+            if (uri.endsWith("\"")) {
+                uri = uri.first(uri.length - 1);
+            }
+            return uri;
+        }
+        else {
+            return null;
+        }
+    }
+    Camel.getSelectedEndpointName = getSelectedEndpointName;
+    /**
+     * Escapes the given URI text so it can be used in a JMX name
+     */
+    function escapeEndpointUriNameForJmx(uri) {
+        if (angular.isString(uri)) {
+            var answer = uri.replace("?", "\\?");
+            // lets ensure that we have a "//" after each ":"
+            answer = answer.replace(/\:(\/[^\/])/, "://$1");
+            answer = answer.replace(/\:([^\/])/, "://$1");
+            return answer;
+        }
+        else {
+            return uri;
+        }
+    }
+    Camel.escapeEndpointUriNameForJmx = escapeEndpointUriNameForJmx;
+    /**
+     * Returns the mbean for the currently selected camel context and the name of the currently
+     * selected endpoint for JMX operations on a context that require an endpoint name.
+     * @method
+     * @param workspace
+     * @return {{uri: string, mbean: string}} either value could be null if there's a parse failure
+     */
+    function getContextAndTargetEndpoint(workspace) {
+        return {
+            uri: Camel.getSelectedEndpointName(workspace),
+            mbean: Camel.getSelectionCamelContextMBean(workspace)
+        };
+    }
+    Camel.getContextAndTargetEndpoint = getContextAndTargetEndpoint;
+    /**
+     * Returns the cached Camel XML route node stored in the current tree selection Folder
+     * @method
+     */
+    function getSelectedRouteNode(workspace) {
+        var selection = workspace.selection;
+        return (selection && Camel.jmxDomain === selection.domain) ? selection["routeXmlNode"] : null;
+    }
+    Camel.getSelectedRouteNode = getSelectedRouteNode;
+    /**
+     * Flushes the cached Camel XML route node stored in the selected tree Folder
+     * @method
+     * @param workspace
+     */
+    function clearSelectedRouteNode(workspace) {
+        var selection = workspace.selection;
+        if (selection && Camel.jmxDomain === selection.domain) {
+            delete selection["routeXmlNode"];
+        }
+    }
+    Camel.clearSelectedRouteNode = clearSelectedRouteNode;
+    /**
+     * Looks up the given node name in the Camel schema
+     * @method
+     */
+    function getCamelSchema(nodeIdOrDefinition) {
+        return (angular.isObject(nodeIdOrDefinition)) ? nodeIdOrDefinition : Forms.lookupDefinition(nodeIdOrDefinition, Camel._apacheCamelModel);
+    }
+    Camel.getCamelSchema = getCamelSchema;
+    /**
+     * Returns true if the given nodeId is a route, endpoint or pattern
+     * (and not some nested type like a data format)
+     * @method
+     */
+    function isCamelPattern(nodeId) {
+        return Forms.isJsonType(nodeId, Camel._apacheCamelModel, "org.apache.camel.model.OptionalIdentifiedDefinition");
+    }
+    Camel.isCamelPattern = isCamelPattern;
+    /**
+     * Returns true if the given node type prefers adding the next sibling as a child
+     * @method
+     */
+    function isNextSiblingAddedAsChild(nodeIdOrDefinition) {
+        var definition = getCamelSchema(nodeIdOrDefinition);
+        if (definition) {
+            return definition["nextSiblingAddedAsChild"] || false;
+        }
+        return null;
+    }
+    Camel.isNextSiblingAddedAsChild = isNextSiblingAddedAsChild;
+    function acceptInput(nodeIdOrDefinition) {
+        var definition = getCamelSchema(nodeIdOrDefinition);
+        if (definition) {
+            return definition["acceptInput"] || false;
+        }
+        return null;
+    }
+    Camel.acceptInput = acceptInput;
+    function acceptOutput(nodeIdOrDefinition) {
+        var definition = getCamelSchema(nodeIdOrDefinition);
+        if (definition) {
+            return definition["acceptOutput"] || false;
+        }
+        return null;
+    }
+    Camel.acceptOutput = acceptOutput;
+    /**
+     * Looks up the Camel language settings for the given language name
+     * @method
+     */
+    function camelLanguageSettings(nodeName) {
+        return Camel._apacheCamelModel.languages[nodeName];
+    }
+    Camel.camelLanguageSettings = camelLanguageSettings;
+    function isCamelLanguage(nodeName) {
+        return (camelLanguageSettings(nodeName) || nodeName === "expression") ? true : false;
+    }
+    Camel.isCamelLanguage = isCamelLanguage;
+    /**
+     * Converts the XML string or DOM node to a camel tree
+     * @method
+     */
+    function loadCamelTree(xml, key) {
+        var doc = xml;
+        if (angular.isString(xml)) {
+            doc = $.parseXML(xml);
+        }
+        // TODO get id from camelContext
+        var id = "camelContext";
+        var folder = new Folder(id);
+        folder.addClass = "org-apache-camel-context";
+        folder.domain = Camel.jmxDomain;
+        folder.typeName = "context";
+        folder.key = Core.toSafeDomID(key);
+        var context = $(doc).find("camelContext");
+        if (!context || !context.length) {
+            context = $(doc).find("routes");
+        }
+        if (context && context.length) {
+            folder["xmlDocument"] = doc;
+            folder["routeXmlNode"] = context;
+            $(context).children("route").each(function (idx, route) {
+                var id = route.getAttribute("id");
+                if (!id) {
+                    id = "route" + idx;
+                    route.setAttribute("id", id);
+                }
+                var routeFolder = new Folder(id);
+                routeFolder.addClass = "org-apache-camel-route";
+                routeFolder.typeName = "routes";
+                routeFolder.domain = Camel.jmxDomain;
+                routeFolder.key = folder.key + "_" + Core.toSafeDomID(id);
+                routeFolder.parent = folder;
+                var nodeSettings = getCamelSchema("route");
+                if (nodeSettings) {
+                    var imageUrl = getRouteNodeIcon(nodeSettings);
+                    routeFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
+                    routeFolder.icon = imageUrl;
+                }
+                folder.children.push(routeFolder);
+                addRouteChildren(routeFolder, route);
+            });
+        }
+        return folder;
+    }
+    Camel.loadCamelTree = loadCamelTree;
+    /**
+     * Adds the route children to the given folder for each step in the route
+     * @method
+     */
+    function addRouteChildren(folder, route) {
+        folder.children = [];
+        folder["routeXmlNode"] = route;
+        route.setAttribute("_cid", folder.key);
+        $(route).children("*").each(function (idx, n) {
+            addRouteChild(folder, n);
+        });
+    }
+    Camel.addRouteChildren = addRouteChildren;
+    /**
+     * Adds a child to the given folder / route
+     * @method
+     */
+    function addRouteChild(folder, n) {
+        var nodeName = n.localName;
+        if (nodeName) {
+            var nodeSettings = getCamelSchema(nodeName);
+            if (nodeSettings) {
+                var imageUrl = getRouteNodeIcon(nodeSettings);
+                var child = new Folder(nodeName);
+                child.domain = Camel.jmxDomain;
+                child.typeName = "routeNode";
+                updateRouteNodeLabelAndTooltip(child, n, nodeSettings);
+                // TODO should maybe auto-generate these?
+                child.parent = folder;
+                child.folderNames = folder.folderNames;
+                var id = n.getAttribute("id") || nodeName;
+                var key = folder.key + "_" + Core.toSafeDomID(id);
+                // lets find the next key thats unique
+                var counter = 1;
+                var notFound = true;
+                while (notFound) {
+                    var tmpKey = key + counter;
+                    if (folder.children.some({ key: tmpKey })) {
+                        counter += 1;
+                    }
+                    else {
+                        notFound = false;
+                        key = tmpKey;
+                    }
+                }
+                child.key = key;
+                child.icon = imageUrl;
+                child["routeXmlNode"] = n;
+                if (!folder.children) {
+                    folder.children = [];
+                }
+                folder.children.push(child);
+                addRouteChildren(child, n);
+                return child;
+            }
+        }
+        return null;
+    }
+    Camel.addRouteChild = addRouteChild;
+    /**
+     * Returns the root JMX Folder of the camel mbeans
+     */
+    function getRootCamelFolder(workspace) {
+        var tree = workspace ? workspace.tree : null;
+        if (tree) {
+            return tree.get(Camel.jmxDomain);
+        }
+        return null;
+    }
+    Camel.getRootCamelFolder = getRootCamelFolder;
+    /**
+     * Returns the JMX folder for the camel context
+     */
+    function getCamelContextFolder(workspace, camelContextId) {
+        var answer = null;
+        var root = getRootCamelFolder(workspace);
+        if (root && camelContextId) {
+            angular.forEach(root.children, function (contextFolder) {
+                if (!answer && camelContextId === contextFolder.title) {
+                    answer = contextFolder;
+                }
+            });
+        }
+        return answer;
+    }
+    Camel.getCamelContextFolder = getCamelContextFolder;
+    /**
+     * Returns the mbean for the given camel context ID or null if it cannot be found
+     */
+    function getCamelContextMBean(workspace, camelContextId) {
+        var contextsFolder = getCamelContextFolder(workspace, camelContextId);
+        if (contextsFolder) {
+            var contextFolder = contextsFolder.navigate("context");
+            if (contextFolder && contextFolder.children && contextFolder.children.length) {
+                var contextItem = contextFolder.children[0];
+                return contextItem.objectName;
+            }
+        }
+        return null;
+    }
+    Camel.getCamelContextMBean = getCamelContextMBean;
+    /**
+     * Given a selection in the workspace try figure out the URL to the
+     * full screen view
+     */
+    function linkToFullScreenView(workspace) {
+        var answer = null;
+        var selection = workspace.selection;
+        if (selection) {
+            var entries = selection.entries;
+            if (entries) {
+                var contextId = entries["context"];
+                var name = entries["name"];
+                var type = entries["type"];
+                if ("endpoints" === type) {
+                    return linkToBrowseEndpointFullScreen(contextId, name);
+                }
+                if ("routes" === type) {
+                    return linkToRouteDiagramFullScreen(contextId, name);
+                }
+            }
+        }
+        return answer;
+    }
+    Camel.linkToFullScreenView = linkToFullScreenView;
+    /**
+     * Returns the link to browse the endpoint full screen
+     */
+    function linkToBrowseEndpointFullScreen(contextId, endpointPath) {
+        var answer = null;
+        if (contextId && endpointPath) {
+            answer = "#/camel/endpoint/browse/" + contextId + "/" + endpointPath;
+        }
+        return answer;
+    }
+    Camel.linkToBrowseEndpointFullScreen = linkToBrowseEndpointFullScreen;
+    /**
+     * Returns the link to the route diagram full screen
+     */
+    function linkToRouteDiagramFullScreen(contextId, routeId) {
+        var answer = null;
+        if (contextId && routeId) {
+            answer = "#/camel/route/diagram/" + contextId + "/" + routeId;
+        }
+        return answer;
+    }
+    Camel.linkToRouteDiagramFullScreen = linkToRouteDiagramFullScreen;
+    function getFolderCamelNodeId(folder) {
+        var answer = Core.pathGet(folder, ["routeXmlNode", "localName"]);
+        return ("from" === answer || "to" === answer) ? "endpoint" : answer;
+    }
+    Camel.getFolderCamelNodeId = getFolderCamelNodeId;
+    /**
+     * Rebuilds the DOM tree from the tree node and performs all the various hacks
+     * to turn the folder / JSON / model into valid camel XML
+     * such as renaming language elements from <language expression="foo" language="bar/>
+     * to <bar>foo</bar>
+     * and changing <endpoint> into either <from> or <to>
+     * @method
+     * @param treeNode is either the Node from the tree widget (with the real Folder in the data property) or a Folder
+     */
+    function createFolderXmlTree(treeNode, xmlNode, indent) {
+        if (indent === void 0) { indent = Camel.increaseIndent(""); }
+        var folder = treeNode.data || treeNode;
+        var count = 0;
+        var parentName = getFolderCamelNodeId(folder);
+        if (folder) {
+            if (!xmlNode) {
+                xmlNode = document.createElement(parentName);
+                var rootJson = Camel.getRouteFolderJSON(folder);
+                if (rootJson) {
+                    Camel.setRouteNodeJSON(xmlNode, rootJson, indent);
+                }
+            }
+            var doc = xmlNode.ownerDocument || document;
+            var namespaceURI = xmlNode.namespaceURI;
+            var from = parentName !== "route";
+            var childIndent = Camel.increaseIndent(indent);
+            angular.forEach(treeNode.children || treeNode.getChildren(), function (childTreeNode) {
+                var childFolder = childTreeNode.data || childTreeNode;
+                var name = Camel.getFolderCamelNodeId(childFolder);
+                var json = Camel.getRouteFolderJSON(childFolder);
+                if (name && json) {
+                    var language = false;
+                    if (name === "endpoint") {
+                        if (from) {
+                            name = "to";
+                        }
+                        else {
+                            name = "from";
+                            from = true;
+                        }
+                    }
+                    if (name === "expression") {
+                        var languageName = json["language"];
+                        if (languageName) {
+                            name = languageName;
+                            language = true;
+                        }
+                    }
+                    // lets create the XML
+                    xmlNode.appendChild(doc.createTextNode("\n" + childIndent));
+                    var newNode = doc.createElementNS(namespaceURI, name);
+                    Camel.setRouteNodeJSON(newNode, json, childIndent);
+                    xmlNode.appendChild(newNode);
+                    count += 1;
+                    createFolderXmlTree(childTreeNode, newNode, childIndent);
+                }
+            });
+            if (count) {
+                xmlNode.appendChild(doc.createTextNode("\n" + indent));
+            }
+        }
+        return xmlNode;
+    }
+    Camel.createFolderXmlTree = createFolderXmlTree;
+    function updateRouteNodeLabelAndTooltip(folder, routeXmlNode, nodeSettings) {
+        var localName = routeXmlNode.localName;
+        var id = routeXmlNode.getAttribute("id");
+        var label = nodeSettings["title"] || localName;
+        // lets use the ID for routes and other things we give an id
+        var tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || label;
+        if (id) {
+            label = id;
+        }
+        else {
+            var uri = getRouteNodeUri(routeXmlNode);
+            if (uri) {
+                // Don't use from/to as it gets odd if you drag/drop and reorder
+                // label += " " + uri;
+                label = uri;
+                var split = uri.split("?");
+                if (split && split.length > 1) {
+                    label = split[0];
+                }
+                tooltip += " " + uri;
+            }
+            else {
+                var children = $(routeXmlNode).children("*");
+                if (children && children.length) {
+                    var child = children[0];
+                    var childName = child.localName;
+                    var expression = null;
+                    if (Camel.isCamelLanguage(childName)) {
+                        expression = child.textContent;
+                        if (!expression) {
+                            expression = child.getAttribute("expression");
+                        }
+                    }
+                    if (expression) {
+                        label += " " + expression;
+                        tooltip += " " + childName + " expression";
+                    }
+                }
+            }
+        }
+        folder.title = label;
+        folder.tooltip = tooltip;
+        return label;
+    }
+    Camel.updateRouteNodeLabelAndTooltip = updateRouteNodeLabelAndTooltip;
+    /**
+     * Returns the selected camel context mbean for the given selection or null if it cannot be found
+     * @method
+     */
+    // TODO should be a service
+    function getSelectionCamelContextMBean(workspace) {
+        if (workspace) {
+            var contextId = getContextId(workspace);
+            var selection = workspace.selection;
+            var tree = workspace.tree;
+            if (tree && selection) {
+                var domain = selection.domain;
+                if (domain && contextId) {
+                    var result = tree.navigate(domain, contextId, "context");
+                    if (result && result.children) {
+                        var contextBean = result.children.first();
+                        if (contextBean.title) {
+                            var contextName = contextBean.title;
+                            return "" + domain + ":context=" + contextId + ',type=context,name="' + contextName + '"';
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    Camel.getSelectionCamelContextMBean = getSelectionCamelContextMBean;
+    function getSelectionCamelContextEndpoints(workspace) {
+        if (workspace) {
+            var contextId = getContextId(workspace);
+            var selection = workspace.selection;
+            var tree = workspace.tree;
+            if (tree && selection) {
+                var domain = selection.domain;
+                if (domain && contextId) {
+                    return tree.navigate(domain, contextId, "endpoints");
+                }
+            }
+        }
+        return null;
+    }
+    Camel.getSelectionCamelContextEndpoints = getSelectionCamelContextEndpoints;
+    /**
+     * Returns the selected camel trace mbean for the given selection or null if it cannot be found
+     * @method
+     */
+    // TODO Should be a service
+    function getSelectionCamelTraceMBean(workspace) {
+        if (workspace) {
+            var contextId = getContextId(workspace);
+            var selection = workspace.selection;
+            var tree = workspace.tree;
+            if (tree && selection) {
+                var domain = selection.domain;
+                if (domain && contextId) {
+                    // look for the Camel 2.11 mbean which we prefer
+                    var result = tree.navigate(domain, contextId, "tracer");
+                    if (result && result.children) {
+                        var mbean = result.children.find(function (m) { return m.title.startsWith("BacklogTracer"); });
+                        if (mbean) {
+                            return mbean.objectName;
+                        }
+                    }
+                    // look for the fuse camel fabric mbean
+                    var fabricResult = tree.navigate(domain, contextId, "fabric");
+                    if (fabricResult && fabricResult.children) {
+                        var mbean = fabricResult.children.first();
+                        return mbean.objectName;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    Camel.getSelectionCamelTraceMBean = getSelectionCamelTraceMBean;
+    function getSelectionCamelDebugMBean(workspace) {
+        if (workspace) {
+            var contextId = getContextId(workspace);
+            var selection = workspace.selection;
+            var tree = workspace.tree;
+            if (tree && selection) {
+                var domain = selection.domain;
+                if (domain && contextId) {
+                    var result = tree.navigate(domain, contextId, "tracer");
+                    if (result && result.children) {
+                        var mbean = result.children.find(function (m) { return m.title.startsWith("BacklogDebugger"); });
+                        if (mbean) {
+                            return mbean.objectName;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    Camel.getSelectionCamelDebugMBean = getSelectionCamelDebugMBean;
+    function getSelectionCamelTypeConverter(workspace) {
+        if (workspace) {
+            var contextId = getContextId(workspace);
+            var selection = workspace.selection;
+            var tree = workspace.tree;
+            if (tree && selection) {
+                var domain = selection.domain;
+                if (domain && contextId) {
+                    var result = tree.navigate(domain, contextId, "services");
+                    if (result && result.children) {
+                        var mbean = result.children.find(function (m) { return m.title.startsWith("DefaultTypeConverter"); });
+                        if (mbean) {
+                            return mbean.objectName;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    Camel.getSelectionCamelTypeConverter = getSelectionCamelTypeConverter;
+    function getSelectionCamelRestRegistry(workspace) {
+        if (workspace) {
+            var contextId = getContextId(workspace);
+            var selection = workspace.selection;
+            var tree = workspace.tree;
+            if (tree && selection) {
+                var domain = selection.domain;
+                if (domain && contextId) {
+                    var result = tree.navigate(domain, contextId, "services");
+                    if (result && result.children) {
+                        var mbean = result.children.find(function (m) { return m.title.startsWith("DefaultRestRegistry"); });
+                        if (mbean) {
+                            return mbean.objectName;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    Camel.getSelectionCamelRestRegistry = getSelectionCamelRestRegistry;
+    function getSelectionCamelRouteMetrics(workspace) {
+        if (workspace) {
+            var contextId = getContextId(workspace);
+            var selection = workspace.selection;
+            var tree = workspace.tree;
+            if (tree && selection) {
+                var domain = selection.domain;
+                if (domain && contextId) {
+                    var result = tree.navigate(domain, contextId, "services");
+                    if (result && result.children) {
+                        var mbean = result.children.find(function (m) { return m.title.startsWith("MetricsRegistryService"); });
+                        if (mbean) {
+                            return mbean.objectName;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    Camel.getSelectionCamelRouteMetrics = getSelectionCamelRouteMetrics;
+    // TODO should be a service
+    function getContextId(workspace) {
+        var selection = workspace.selection;
+        if (selection) {
+            // find the camel context and find ancestors in the tree until we find the camel context selection
+            // this is either if the title is 'context' or if the parent title is 'org.apache.camel' (the Camel tree is a bit special)
+            selection = selection.findAncestor(function (s) { return s.title === 'context' || s.parent != null && s.parent.title === 'org.apache.camel'; });
+            if (selection) {
+                var tree = workspace.tree;
+                var folderNames = selection.folderNames;
+                var entries = selection.entries;
+                var contextId;
+                if (tree) {
+                    if (folderNames && folderNames.length > 1) {
+                        contextId = folderNames[1];
+                    }
+                    else if (entries) {
+                        contextId = entries["context"];
+                    }
+                }
+            }
+        }
+        return contextId;
+    }
+    Camel.getContextId = getContextId;
+    /**
+     * Returns true if the state of the item begins with the given state - or one of the given states
+     * @method
+     * @param item the item which has a State
+     * @param state a value or an array of states
+     */
+    function isState(item, state) {
+        var value = (item.State || "").toLowerCase();
+        if (angular.isArray(state)) {
+            return state.any(function (stateText) { return value.startsWith(stateText); });
+        }
+        else {
+            return value.startsWith(state);
+        }
+    }
+    Camel.isState = isState;
+    function iconClass(state) {
+        if (state) {
+            switch (state.toLowerCase()) {
+                case 'started':
+                    return "green fa fa-play-circle";
+                case 'suspended':
+                    return "fa fa-pause";
+            }
+        }
+        return "orange fa fa-off";
+    }
+    Camel.iconClass = iconClass;
+    function getSelectedRouteId(workspace, folder) {
+        if (folder === void 0) { folder = null; }
+        var selection = folder || workspace.selection;
+        var selectedRouteId = null;
+        if (selection) {
+            if (selection && selection.entries) {
+                var typeName = selection.entries["type"];
+                var name = selection.entries["name"];
+                if ("routes" === typeName && name) {
+                    selectedRouteId = Core.trimQuotes(name);
+                }
+            }
+        }
+        return selectedRouteId;
+    }
+    Camel.getSelectedRouteId = getSelectedRouteId;
+    /**
+     * Returns the selected camel route mbean for the given route id
+     * @method
+     */
+    // TODO Should be a service
+    function getSelectionRouteMBean(workspace, routeId) {
+        if (workspace) {
+            var contextId = getContextId(workspace);
+            var selection = workspace.selection;
+            var tree = workspace.tree;
+            if (tree && selection) {
+                var domain = selection.domain;
+                if (domain && contextId) {
+                    var result = tree.navigate(domain, contextId, "routes");
+                    if (result && result.children) {
+                        var mbean = result.children.find(function (m) { return m.title === routeId; });
+                        if (mbean) {
+                            return mbean.objectName;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    Camel.getSelectionRouteMBean = getSelectionRouteMBean;
+    function getCamelVersion(workspace, jolokia) {
+        if (workspace) {
+            var contextId = getContextId(workspace);
+            var selection = workspace.selection;
+            var tree = workspace.tree;
+            if (tree && selection) {
+                var domain = selection.domain;
+                if (domain && contextId) {
+                    var result = tree.navigate(domain, contextId, "context");
+                    if (result && result.children) {
+                        var contextBean = result.children.first();
+                        if (contextBean.version) {
+                            // read the cached version
+                            return contextBean.version;
+                        }
+                        if (contextBean.title) {
+                            // okay no version cached, so need to get the version using jolokia
+                            var contextName = contextBean.title;
+                            var mbean = "" + domain + ":context=" + contextId + ',type=context,name="' + contextName + '"';
+                            // must use Core.onSuccess(null) that means sync as we need the version asap
+                            var version = jolokia.getAttribute(mbean, "CamelVersion", Core.onSuccess(null));
+                            // cache version so we do not need to read it again using jolokia
+                            contextBean.version = version;
+                            return version;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    Camel.getCamelVersion = getCamelVersion;
+    function createMessageFromXml(exchange) {
+        var exchangeElement = $(exchange);
+        var uid = exchangeElement.children("uid").text();
+        var timestamp = exchangeElement.children("timestamp").text();
+        var messageData = {
+            headers: {},
+            headerTypes: {},
+            id: null,
+            uid: uid,
+            timestamp: timestamp,
+            headerHtml: ""
+        };
+        var message = exchangeElement.children("message")[0];
+        if (!message) {
+            message = exchange;
+        }
+        var messageElement = $(message);
+        var headers = messageElement.find("header");
+        var headerHtml = "";
+        headers.each(function (idx, header) {
+            var key = header.getAttribute("key");
+            var typeName = header.getAttribute("type");
+            var value = header.textContent;
+            if (key) {
+                if (value)
+                    messageData.headers[key] = value;
+                if (typeName)
+                    messageData.headerTypes[key] = typeName;
+                headerHtml += "<tr><td class='property-name'>" + key + "</td>" + "<td class='property-value'>" + (humanizeJavaType(typeName)) + "</td>" + "<td class='property-value'>" + (value || "") + "</td></tr>";
+            }
+        });
+        messageData.headerHtml = headerHtml;
+        var id = messageData.headers["breadcrumbId"];
+        if (!id) {
+            var postFixes = ["MessageID", "ID", "Path", "Name"];
+            angular.forEach(postFixes, function (postfix) {
+                if (!id) {
+                    angular.forEach(messageData.headers, function (value, key) {
+                        if (!id && key.endsWith(postfix)) {
+                            id = value;
+                        }
+                    });
+                }
+            });
+            // lets find the first header with a name or Path in it
+            // if still no value, lets use the first :)
+            angular.forEach(messageData.headers, function (value, key) {
+                if (!id)
+                    id = value;
+            });
+        }
+        messageData.id = id;
+        var body = messageElement.children("body")[0];
+        if (body) {
+            var bodyText = body.textContent;
+            var bodyType = body.getAttribute("type");
+            messageData["body"] = bodyText;
+            messageData["bodyType"] = humanizeJavaType(bodyType);
+        }
+        return messageData;
+    }
+    Camel.createMessageFromXml = createMessageFromXml;
+    function humanizeJavaType(type) {
+        if (!type) {
+            return "";
+        }
+        // skip leading java.lang
+        if (type.startsWith("java.lang")) {
+            return type.substr(10);
+        }
+        return type;
+    }
+    Camel.humanizeJavaType = humanizeJavaType;
+    function createBrowseGridOptions() {
+        return {
+            selectedItems: [],
+            data: 'messages',
+            displayFooter: false,
+            showFilter: false,
+            showColumnMenu: true,
+            enableColumnResize: true,
+            enableColumnReordering: true,
+            filterOptions: {
+                filterText: ''
+            },
+            selectWithCheckboxOnly: true,
+            showSelectionCheckbox: true,
+            maintainColumnRatios: false,
+            columnDefs: [
+                {
+                    field: 'id',
+                    displayName: 'ID',
+                    // for ng-grid
+                    //width: '50%',
+                    // for hawtio-datatable
+                    // width: "22em",
+                    cellTemplate: '<div class="ngCellText"><a href="" ng-click="row.entity.openMessageDialog(row)">{{row.entity.id}}</a></div>'
+                }
+            ]
+        };
+    }
+    Camel.createBrowseGridOptions = createBrowseGridOptions;
+    function loadRouteXmlNodes($scope, doc, selectedRouteId, nodes, links, width) {
+        var allRoutes = $(doc).find("route");
+        var routeDelta = width / allRoutes.length;
+        var rowX = 0;
+        allRoutes.each(function (idx, route) {
+            var routeId = route.getAttribute("id");
+            if (!selectedRouteId || !routeId || selectedRouteId === routeId) {
+                Camel.addRouteXmlChildren($scope, route, nodes, links, null, rowX, 0);
+                rowX += routeDelta;
+            }
+        });
+    }
+    Camel.loadRouteXmlNodes = loadRouteXmlNodes;
+    function addRouteXmlChildren($scope, parent, nodes, links, parentId, parentX, parentY, parentNode) {
+        if (parentNode === void 0) { parentNode = null; }
+        var delta = 150;
+        var x = parentX;
+        var y = parentY + delta;
+        var rid = parent.getAttribute("id");
+        var siblingNodes = [];
+        var parenNodeName = parent.localName;
+        $(parent).children().each(function (idx, route) {
+            var id = nodes.length;
+            // from acts as a parent even though its a previous sibling :)
+            var nodeId = route.localName;
+            if (nodeId === "from" && !parentId) {
+                parentId = id;
+            }
+            var nodeSettings = getCamelSchema(nodeId);
+            var node = null;
+            if (nodeSettings) {
+                var label = nodeSettings["title"] || nodeId;
+                var uri = getRouteNodeUri(route);
+                if (uri) {
+                    label += " " + uri.split("?")[0];
+                }
+                var tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || label;
+                if (uri) {
+                    tooltip += " " + uri;
+                }
+                var elementID = route.getAttribute("id");
+                var labelSummary = label;
+                if (elementID) {
+                    var customId = route.getAttribute("customId");
+                    if ($scope.camelIgnoreIdForLabel || (!customId || customId === "false")) {
+                        labelSummary = "id: " + elementID;
+                    }
+                    else {
+                        label = elementID;
+                    }
+                }
+                // lets check if we need to trim the label
+                var labelLimit = $scope.camelMaximumLabelWidth || Camel.defaultMaximumLabelWidth;
+                var length = label.length;
+                if (length > labelLimit) {
+                    labelSummary = label + "\n\n" + labelSummary;
+                    label = label.substring(0, labelLimit) + "..";
+                }
+                var imageUrl = getRouteNodeIcon(nodeSettings);
+                if ((nodeId === "from" || nodeId === "to") && uri) {
+                    var uriIdx = uri.indexOf(":");
+                    if (uriIdx > 0) {
+                        var componentScheme = uri.substring(0, uriIdx);
+                        //console.log("lets find the endpoint icon for " + componentScheme);
+                        if (componentScheme) {
+                            var value = Camel.getEndpointIcon(componentScheme);
+                            if (value) {
+                                imageUrl = Core.url(value);
+                            }
+                        }
+                    }
+                }
+                //console.log("Image URL is " + imageUrl);
+                var cid = route.getAttribute("_cid") || route.getAttribute("id");
+                node = { "name": name, "label": label, "labelSummary": labelSummary, "group": 1, "id": id, "elementId": elementID, "x": x, "y:": y, "imageUrl": imageUrl, "cid": cid, "tooltip": tooltip, "type": nodeId };
+                if (rid) {
+                    node["rid"] = rid;
+                    if (!$scope.routeNodes)
+                        $scope.routeNodes = {};
+                    $scope.routeNodes[rid] = node;
+                }
+                if (!cid) {
+                    cid = nodeId + (nodes.length + 1);
+                }
+                if (cid) {
+                    node["cid"] = cid;
+                    if (!$scope.nodes)
+                        $scope.nodes = {};
+                    $scope.nodes[cid] = node;
+                }
+                // only use the route id on the first from node
+                rid = null;
+                nodes.push(node);
+                if (parentId !== null && parentId !== id) {
+                    if (siblingNodes.length === 0 || parenNodeName === "choice") {
+                        links.push({ "source": parentId, "target": id, "value": 1 });
+                    }
+                    else {
+                        siblingNodes.forEach(function (nodeId) {
+                            links.push({ "source": nodeId, "target": id, "value": 1 });
+                        });
+                        siblingNodes.length = 0;
+                    }
+                }
+            }
+            else {
+                // ignore non EIP nodes, though we should add expressions...
+                var langSettings = Camel.camelLanguageSettings(nodeId);
+                if (langSettings && parentNode) {
+                    // lets add the language kind
+                    var name = langSettings["name"] || nodeId;
+                    var text = route.textContent;
+                    if (text) {
+                        parentNode["tooltip"] = parentNode["label"] + " " + name + " " + text;
+                        parentNode["label"] = text;
+                    }
+                    else {
+                        parentNode["label"] = parentNode["label"] + " " + name;
+                    }
+                }
+            }
+            var siblings = addRouteXmlChildren($scope, route, nodes, links, id, x, y, node);
+            if (parenNodeName === "choice") {
+                siblingNodes = siblingNodes.concat(siblings);
+                x += delta;
+            }
+            else if (nodeId === "choice") {
+                siblingNodes = siblings;
+                y += delta;
+            }
+            else {
+                siblingNodes = [nodes.length - 1];
+                y += delta;
+            }
+        });
+        return siblingNodes;
+    }
+    Camel.addRouteXmlChildren = addRouteXmlChildren;
+    function getCanvasHeight(canvasDiv) {
+        var height = canvasDiv.height();
+        if (height < 300) {
+            console.log("browse thinks the height is only " + height + " so calculating offset from doc height");
+            var offset = canvasDiv.offset();
+            height = $(document).height() - 5;
+            if (offset) {
+                var top = offset['top'];
+                if (top) {
+                    height -= top;
+                }
+            }
+        }
+        return height;
+    }
+    Camel.getCanvasHeight = getCanvasHeight;
+    /**
+     * Recursively add all the folders which have a cid value into the given map
+     * @method
+     */
+    function addFoldersToIndex(folder, map) {
+        if (map === void 0) { map = {}; }
+        if (folder) {
+            var key = folder.key;
+            if (key) {
+                map[key] = folder;
+            }
+            angular.forEach(folder.children, function (child) { return addFoldersToIndex(child, map); });
+        }
+        return map;
+    }
+    Camel.addFoldersToIndex = addFoldersToIndex;
+    /**
+     * Re-generates the XML document using the given Tree widget Node or Folder as the source
+     * @method
+     */
+    function generateXmlFromFolder(treeNode) {
+        var folder = (treeNode && treeNode.data) ? treeNode.data : treeNode;
+        if (!folder)
+            return null;
+        var doc = folder["xmlDocument"];
+        var context = folder["routeXmlNode"];
+        if (context && context.length) {
+            var element = context[0];
+            var children = element.childNodes;
+            var routeIndices = [];
+            for (var i = 0; i < children.length; i++) {
+                var node = children[i];
+                var name = node.localName;
+                if ("route" === name && parent) {
+                    routeIndices.push(i);
+                }
+            }
+            while (routeIndices.length) {
+                var idx = routeIndices.pop();
+                var nextIndex = idx + 1;
+                while (true) {
+                    var node = element.childNodes[nextIndex];
+                    if (Core.isTextNode(node)) {
+                        element.removeChild(node);
+                    }
+                    else {
+                        break;
+                    }
+                }
+                if (idx < element.childNodes.length) {
+                    element.removeChild(element.childNodes[idx]);
+                }
+                for (var i = idx - 1; i >= 0; i--) {
+                    var node = element.childNodes[i];
+                    if (Core.isTextNode(node)) {
+                        element.removeChild(node);
+                    }
+                    else {
+                        break;
+                    }
+                }
+            }
+            Camel.createFolderXmlTree(treeNode, context[0]);
+        }
+        return doc;
+    }
+    Camel.generateXmlFromFolder = generateXmlFromFolder;
+    /**
+     * Returns an object of all the CamelContext MBeans keyed by their id
+     * @method
+     */
+    function camelContextMBeansById(workspace) {
+        var answer = {};
+        var tree = workspace.tree;
+        if (tree) {
+            var camelTree = tree.navigate(Camel.jmxDomain);
+            if (camelTree) {
+                angular.forEach(camelTree.children, function (contextsFolder) {
+                    var contextFolder = contextsFolder.navigate("context");
+                    if (contextFolder && contextFolder.children && contextFolder.children.length) {
+                        var contextItem = contextFolder.children[0];
+                        var id = Core.pathGet(contextItem, ["entries", "name"]) || contextItem.key;
+                        if (id) {
+                            answer[id] = {
+                                folder: contextItem,
+                                mbean: contextItem.objectName
+                            };
+                        }
+                    }
+                });
+            }
+        }
+        return answer;
+    }
+    Camel.camelContextMBeansById = camelContextMBeansById;
+    /**
+     * Returns an object of all the CamelContext MBeans keyed by the component name
+     * @method
+     */
+    function camelContextMBeansByComponentName(workspace) {
+        return camelContextMBeansByRouteOrComponentId(workspace, "components");
+    }
+    Camel.camelContextMBeansByComponentName = camelContextMBeansByComponentName;
+    /**
+     * Returns an object of all the CamelContext MBeans keyed by the route ID
+     * @method
+     */
+    function camelContextMBeansByRouteId(workspace) {
+        return camelContextMBeansByRouteOrComponentId(workspace, "routes");
+    }
+    Camel.camelContextMBeansByRouteId = camelContextMBeansByRouteId;
+    function camelContextMBeansByRouteOrComponentId(workspace, componentsOrRoutes) {
+        var answer = {};
+        var tree = workspace.tree;
+        if (tree) {
+            var camelTree = tree.navigate(Camel.jmxDomain);
+            if (camelTree) {
+                angular.forEach(camelTree.children, function (contextsFolder) {
+                    var contextFolder = contextsFolder.navigate("context");
+                    var componentsFolder = contextsFolder.navigate(componentsOrRoutes);
+                    if (contextFolder && componentsFolder && contextFolder.children && contextFolder.children.length) {
+                        var contextItem = contextFolder.children[0];
+                        var mbean = contextItem.objectName;
+                        if (mbean) {
+                            var contextValues = {
+                                folder: contextItem,
+                                mbean: mbean
+                            };
+                            angular.forEach(componentsFolder.children, function (componentFolder) {
+                                var id = componentFolder.title;
+                                if (id) {
+                                    answer[id] = contextValues;
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+        }
+        return answer;
+    }
+    /**
+     * Returns an object for the given processor from the Camel tree
+     * @method
+     */
+    function camelProcessorMBeansById(workspace) {
+        var answer = {};
+        var tree = workspace.tree;
+        if (tree) {
+            var camelTree = tree.navigate(Camel.jmxDomain);
+            if (camelTree) {
+                angular.forEach(camelTree.children, function (contextsFolder) {
+                    var processorsFolder = contextsFolder.navigate("processors");
+                    if (processorsFolder && processorsFolder.children && processorsFolder.children.length) {
+                        angular.forEach(processorsFolder.children, function (processorFolder) {
+                            var id = processorFolder.title;
+                            if (id) {
+                                var processorValues = {
+                                    folder: processorsFolder,
+                                    key: processorFolder.key
+                                };
+                                answer[id] = processorValues;
+                            }
+                        });
+                    }
+                });
+            }
+        }
+        return answer;
+    }
+    Camel.camelProcessorMBeansById = camelProcessorMBeansById;
+    /**
+     * Returns true if we should ignore ID values for labels in camel diagrams
+     * @method
+     */
+    function ignoreIdForLabel(localStorage) {
+        var value = localStorage["camelIgnoreIdForLabel"];
+        return Core.parseBooleanValue(value);
+    }
+    Camel.ignoreIdForLabel = ignoreIdForLabel;
+    /**
+     * Returns the maximum width of a label before we start to truncate
+     * @method
+     */
+    function maximumLabelWidth(localStorage) {
+        var value = localStorage["camelMaximumLabelWidth"];
+        if (angular.isString(value)) {
+            value = parseInt(value);
+        }
+        if (!value) {
+            value = Camel.defaultMaximumLabelWidth;
+        }
+        return value;
+    }
+    Camel.maximumLabelWidth = maximumLabelWidth;
+    /**
+     * Returns the max body length for tracer and debugger
+     * @method
+     */
+    function maximumTraceOrDebugBodyLength(localStorage) {
+        var value = localStorage["camelMaximumTraceOrDebugBodyLength"];
+        if (angular.isString(value)) {
+            value = parseInt(value);
+        }
+        if (!value) {
+            value = Camel.defaultCamelMaximumTraceOrDebugBodyLength;
+        }
+        return value;
+    }
+    Camel.maximumTraceOrDebugBodyLength = maximumTraceOrDebugBodyLength;
+    /**
+     * Returns whether to include streams body for tracer and debugger
+     * @method
+     */
+    function traceOrDebugIncludeStreams(localStorage) {
+        var value = localStorage["camelTraceOrDebugIncludeStreams"];
+        return Core.parseBooleanValue(value, Camel.defaultCamelTraceOrDebugIncludeStreams);
+    }
+    Camel.traceOrDebugIncludeStreams = traceOrDebugIncludeStreams;
+    /**
+     * Returns the max value for seconds in the route metrics UI
+     * @method
+     */
+    function routeMetricMaxSeconds(localStorage) {
+        var value = localStorage["camelRouteMetricMaxSeconds"];
+        if (angular.isString(value)) {
+            value = parseInt(value);
+        }
+        if (!value) {
+            value = Camel.defaultCamelRouteMetricMaxSeconds;
+        }
+        return value;
+    }
+    Camel.routeMetricMaxSeconds = routeMetricMaxSeconds;
+    /**
+     * Function to highlight the selected toNode in the nodes graph
+     *
+     * @param nodes the nodes
+     * @param toNode the node to highlight
+     */
+    function highlightSelectedNode(nodes, toNode) {
+        // lets clear the selected node first
+        nodes.attr("class", "node");
+        nodes.filter(function (item) {
+            if (item) {
+                var cid = item["cid"];
+                var rid = item["rid"];
+                var type = item["type"];
+                var elementId = item["elementId"];
+                // if its from then match on rid
+                if ("from" === type) {
+                    return toNode === rid;
+                }
+                // okay favor using element id as the cids can become
+                // undefined or mangled with mbean object names, causing this to not work
+                // where as elementId when present works fine
+                if (elementId) {
+                    // we should match elementId if defined
+                    return toNode === elementId;
+                }
+                // then fallback to cid
+                if (cid) {
+                    return toNode === cid;
+                }
+                else {
+                    // and last rid
+                    return toNode === rid;
+                }
+            }
+            return null;
+        }).attr("class", "node selected");
+    }
+    Camel.highlightSelectedNode = highlightSelectedNode;
+    /**
+     * Is the currently selected Camel version equal or greater than
+     *
+     * @param major   major version as number
+     * @param minor   minor version as number
+     */
+    function isCamelVersionEQGT(major, minor, workspace, jolokia) {
+        var camelVersion = getCamelVersion(workspace, jolokia);
+        if (camelVersion) {
+            console.log("Camel version " + camelVersion);
+            camelVersion += "camel-";
+            var numbers = Core.parseVersionNumbers(camelVersion);
+            if (Core.compareVersionNumberArrays(numbers, [major, minor]) >= 0) {
+                return true;
+            }
+            else {
+                return false;
+            }
+        }
+        return false;
+    }
+    Camel.isCamelVersionEQGT = isCamelVersionEQGT;
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelHelpers.ts"/>
+/**
+ *
+ * @module Camel
+ * @main Camel
+ */
+var Camel;
+(function (Camel) {
+    var jmxModule = Jmx;
+    Camel.pluginName = 'camel';
+    var routeToolBar = "plugins/camel/html/attributeToolBarRoutes.html";
+    var contextToolBar = "plugins/camel/html/attributeToolBarContext.html";
+    Camel._module = angular.module(Camel.pluginName, []);
+    Camel._module.config(["$routeProvider", function ($routeProvider) {
+        $routeProvider.when('/camel/browseEndpoint', { templateUrl: 'plugins/camel/html/browseEndpoint.html' }).when('/camel/endpoint/browse/:contextId/*endpointPath', { templateUrl: 'plugins/camel/html/browseEndpoint.html' }).when('/camel/createEndpoint', { templateUrl: 'plugins/camel/html/createEndpoint.html' }).when('/camel/route/diagram/:contextId/:routeId', { templateUrl: 'plugins/camel/html/routes.html' }).when('/camel/routes', { templateUrl: 'plugins/camel/html/routes.html' }).when('/camel/fabricDiagram', { templateUrl: 'plugins/camel/html/fabricDiagram.html', reloadOnSearch: false }).when('/camel/typeConverter', { templateUrl: 'plugins/camel/html/typeConverter.html', reloadOnSearch: false }).when('/camel/restRegistry', { templateUrl: 'plugins/camel/html/restRegistry.html', reloadOnSearch: false }).when('/camel/routeMetrics', { templateUrl: 'plugins/camel/html/routeMetrics.html', reloadOnSearch: false }).when('/camel/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html', reloadOnSearch: false }).when('/camel/source', { templateUrl: 'plugins/camel/html/source.html' }).when('/camel/traceRoute', { templateUrl: 'plugins/camel/html/traceRoute.html' }).when('/camel/debugRoute', { templateUrl: 'plugins/camel/html/debug.html' }).when('/camel/profileRoute', { templateUrl: 'plugins/camel/html/profileRoute.html' }).when('/camel/properties', { templateUrl: 'plugins/camel/html/properties.html' });
+    }]);
+    Camel._module.factory('tracerStatus', function () {
+        return {
+            jhandle: null,
+            messages: []
+        };
+    });
+    Camel._module.filter('camelIconClass', function () { return Camel.iconClass; });
+    Camel._module.factory('activeMQMessage', function () {
+        return { 'message': null };
+    });
+    Camel._module.run(["HawtioNav", "workspace", "jolokia", "viewRegistry", "layoutFull", "helpRegistry", "preferencesRegistry", "$templateCache", function (nav, workspace, jolokia, viewRegistry, layoutFull, helpRegistry, preferencesRegistry, $templateCache) {
+        viewRegistry['camel/endpoint/'] = layoutFull;
+        viewRegistry['camel/route/'] = layoutFull;
+        viewRegistry['camel/fabricDiagram'] = layoutFull;
+        viewRegistry['camel'] = 'plugins/camel/html/layoutCamelTree.html';
+        helpRegistry.addUserDoc('camel', 'plugins/camel/doc/help.md', function () {
+            return workspace.treeContainsDomainAndProperties(Camel.jmxDomain);
+        });
+        preferencesRegistry.addTab('Camel', 'plugins/camel/html/preferences.html', function () {
+            return workspace.treeContainsDomainAndProperties(Camel.jmxDomain);
+        });
+        // TODO should really do this via a service that the JMX plugin exposes
+        Jmx.addAttributeToolBar(Camel.pluginName, Camel.jmxDomain, function (selection) {
+            // TODO there should be a nicer way to do this!
+            var typeName = selection.typeName;
+            if (typeName) {
+                if (typeName.startsWith("context"))
+                    return contextToolBar;
+                if (typeName.startsWith("route"))
+                    return routeToolBar;
+            }
+            var folderNames = selection.folderNames;
+            if (folderNames && selection.domain === Camel.jmxDomain) {
+                var last = folderNames.last();
+                if ("routes" === last)
+                    return routeToolBar;
+                if ("context" === last)
+                    return contextToolBar;
+            }
+            return null;
+        });
+        // register default attribute views
+        var stateField = 'State';
+        var stateTemplate = '<div class="ngCellText pagination-centered" title="{{row.getProperty(col.field)}}"><i class="{{row.getProperty(\'' + stateField + '\') | camelIconClass}}"></i></div>';
+        var stateColumn = { field: stateField, displayName: stateField, cellTemplate: stateTemplate, width: 56, minWidth: 56, maxWidth: 56, resizable: false, defaultSort: false };
+        var attributes = workspace.attributeColumnDefs;
+        attributes[Camel.jmxDomain + "/context/folder"] = [
+            stateColumn,
+            { field: 'CamelId', displayName: 'Context' },
+            { field: 'Uptime', displayName: 'Uptime', visible: false },
+            { field: 'CamelVersion', displayName: 'Version', visible: false },
+            { field: 'ExchangesCompleted', displayName: 'Completed #' },
+            { field: 'ExchangesFailed', displayName: 'Failed #' },
+            { field: 'FailuresHandled', displayName: 'Failed Handled #' },
+            { field: 'ExchangesTotal', displayName: 'Total #', visible: false },
+            { field: 'InflightExchanges', displayName: 'Inflight #' },
+            { field: 'MeanProcessingTime', displayName: 'Mean Time' },
+            { field: 'MinProcessingTime', displayName: 'Min Time' },
+            { field: 'MaxProcessingTime', displayName: 'Max Time' },
+            { field: 'TotalProcessingTime', displayName: 'Total Time', visible: false },
+            { field: 'LastProcessingTime', displayName: 'Last Time', visible: false },
+            { field: 'LastExchangeCompletedTimestamp', displayName: 'Last completed', visible: false },
+            { field: 'LastExchangeFailedTimestamp', displayName: 'Last failed', visible: false },
+            { field: 'Redeliveries', displayName: 'Redelivery #', visible: false },
+            { field: 'ExternalRedeliveries', displayName: 'External Redelivery #', visible: false }
+        ];
+        attributes[Camel.jmxDomain + "/routes/folder"] = [
+            stateColumn,
+            { field: 'CamelId', displayName: 'Context' },
+            { field: 'RouteId', displayName: 'Route' },
+            { field: 'ExchangesCompleted', displayName: 'Completed #' },
+            { field: 'ExchangesFailed', displayName: 'Failed #' },
+            { field: 'FailuresHandled', displayName: 'Failed Handled #' },
+            { field: 'ExchangesTotal', displayName: 'Total #', visible: false },
+            { field: 'InflightExchanges', displayName: 'Inflight #' },
+            { field: 'MeanProcessingTime', displayName: 'Mean Time' },
+            { field: 'MinProcessingTime', displayName: 'Min Time' },
+            { field: 'MaxProcessingTime', displayName: 'Max Time' },
+            { field: 'TotalProcessingTime', displayName: 'Total Time', visible: false },
+            { field: 'DeltaProcessingTime', displayName: 'Delta Time', visible: false },
+            { field: 'LastProcessingTime', displayName: 'Last Time', visible: false },
+            { field: 'LastExchangeCompletedTimestamp', displayName: 'Last completed', visible: false },
+            { field: 'LastExchangeFailedTimestamp', displayName: 'Last failed', visible: false },
+            { field: 'Redeliveries', displayName: 'Redelivery #', visible: false },
+            { field: 'ExternalRedeliveries', displayName: 'External Redelivery #', visible: false }
+        ];
+        attributes[Camel.jmxDomain + "/processors/folder"] = [
+            stateColumn,
+            { field: 'CamelId', displayName: 'Context' },
+            { field: 'RouteId', displayName: 'Route' },
+            { field: 'ProcessorId', displayName: 'Processor' },
+            { field: 'ExchangesCompleted', displayName: 'Completed #' },
+            { field: 'ExchangesFailed', displayName: 'Failed #' },
+            { field: 'FailuresHandled', displayName: 'Failed Handled #' },
+            { field: 'ExchangesTotal', displayName: 'Total #', visible: false },
+            { field: 'InflightExchanges', displayName: 'Inflight #' },
+            { field: 'MeanProcessingTime', displayName: 'Mean Time' },
+            { field: 'MinProcessingTime', displayName: 'Min Time' },
+            { field: 'MaxProcessingTime', displayName: 'Max Time' },
+            { field: 'TotalProcessingTime', displayName: 'Total Time', visible: false },
+            { field: 'LastProcessingTime', displayName: 'Last Time', visible: false },
+            { field: 'LastExchangeCompletedTimestamp', displayName: 'Last completed', visible: false },
+            { field: 'LastExchangeFailedTimestamp', displayName: 'Last failed', visible: false },
+            { field: 'Redeliveries', displayName: 'Redelivery #', visible: false },
+            { field: 'ExternalRedeliveries', displayName: 'External Redelivery #', visible: false }
+        ];
+        attributes[Camel.jmxDomain + "/components/folder"] = [
+            stateColumn,
+            { field: 'CamelId', displayName: 'Context' },
+            { field: 'ComponentName', displayName: 'Name' }
+        ];
+        attributes[Camel.jmxDomain + "/consumers/folder"] = [
+            stateColumn,
+            { field: 'CamelId', displayName: 'Context' },
+            { field: 'RouteId', displayName: 'Route' },
+            { field: 'EndpointUri', displayName: 'Endpoint URI', width: "**" },
+            { field: 'Suspended', displayName: 'Suspended', resizable: false },
+            { field: 'InflightExchanges', displayName: 'Inflight #' }
+        ];
+        attributes[Camel.jmxDomain + "/services/folder"] = [
+            stateColumn,
+            { field: 'CamelId', displayName: 'Context' },
+            { field: 'RouteId', displayName: 'Route' },
+            { field: 'Suspended', displayName: 'Suspended', resizable: false },
+            { field: 'SupportsSuspended', displayName: 'Can Suspend', resizable: false }
+        ];
+        attributes[Camel.jmxDomain + "/endpoints/folder"] = [
+            stateColumn,
+            { field: 'CamelId', displayName: 'Context' },
+            { field: 'EndpointUri', displayName: 'Endpoint URI', width: "***" },
+            { field: 'Singleton', displayName: 'Singleton', resizable: false }
+        ];
+        attributes[Camel.jmxDomain + "/threadpools/folder"] = [
+            { field: 'Id', displayName: 'Id', width: "**" },
+            { field: 'ActiveCount', displayName: 'Active #' },
+            { field: 'PoolSize', displayName: 'Pool Size' },
+            { field: 'CorePoolSize', displayName: 'Core Pool Size' },
+            { field: 'TaskQueueSize', displayName: 'Task Queue Size' },
+            { field: 'TaskCount', displayName: 'Task #' },
+            { field: 'CompletedTaskCount', displayName: 'Completed Task #' }
+        ];
+        attributes[Camel.jmxDomain + "/errorhandlers/folder"] = [
+            { field: 'CamelId', displayName: 'Context' },
+            { field: 'DeadLetterChannel', displayName: 'Dead Letter' },
+            { field: 'DeadLetterChannelEndpointUri', displayName: 'Endpoint URI', width: "**", resizable: true },
+            { field: 'MaximumRedeliveries', displayName: 'Max Redeliveries' },
+            { field: 'RedeliveryDelay', displayName: 'Redelivery Delay' },
+            { field: 'MaximumRedeliveryDelay', displayName: 'Max Redeliveries Delay' }
+        ];
+        var builder = nav.builder();
+        var tab = builder.id('camel').title(function () { return 'Camel'; }).href(function () { return '/jmx/attributes?tab=camel'; }).isSelected(function () { return workspace.isTopTabActive('camel'); }).isValid(function () { return workspace.treeContainsDomainAndProperties(Camel.jmxDomain); }).build();
+        // add sub level tabs
+        tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
+        // special for route diagram as we want this to be the 1st
+        tab.tabs.push({
+            id: 'camel-route-diagram',
+            title: function () { return 'Route Diagram'; },
+            //title: "View a diagram of the Camel routes",
+            show: function () { return workspace.isRoute() && workspace.hasInvokeRightsForName(Camel.getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"); },
+            isSelected: function () { return workspace.isLinkActive('camel/routes'); },
+            href: function () { return "/camel/routes" + workspace.hash(); },
+            // make sure we have route diagram shown first
+            index: -2
+        });
+        tab.tabs.push({
+            id: 'camel-route-metrics',
+            title: function () { return '<i class="fa fa-bar-chart"></i> Route Metrics'; },
+            //title: "View the entire JVMs Camel route metrics",
+            show: function () { return !workspace.isEndpointsFolder() && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext()) && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelRouteMetrics(workspace), "dumpStatisticsAsJson"); },
+            isSelected: function () { return workspace.isLinkActive('camel/routeMetrics'); },
+            href: function () { return "/camel/routeMetrics" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-source',
+            title: function () { return '<i class=" fa fa-file-alt"></i> Source'; },
+            //title: "View the source of the Camel routes",
+            show: function () { return !workspace.isEndpointsFolder() && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext()) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"); },
+            isSelected: function () { return workspace.isLinkActive('camel/source'); },
+            href: function () { return "/camel/source" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-properties',
+            title: function () { return '<i class=" fa fa-edit"></i> Properties'; },
+            //title: "View the pattern properties",
+            show: function () { return Camel.getSelectedRouteNode(workspace); },
+            isSelected: function () { return workspace.isLinkActive('camel/properties'); },
+            href: function () { return "/camel/properties" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-type-converters',
+            title: function () { return '<i class="fa fa-list"></i> Type Converters'; },
+            //title: "List all the type converters registered in the context",
+            show: function () { return workspace.isTopTabActive("camel") && !workspace.isEndpointsFolder() && !workspace.isRoute() && Camel.isCamelVersionEQGT(2, 13, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTypeConverter(workspace), "listTypeConverters"); },
+            isSelected: function () { return workspace.isLinkActive('camel/typeConverter'); },
+            href: function () { return "/camel/typeConverter" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-rest-services',
+            title: function () { return '<i class="fa fa-list"></i> Rest Services'; },
+            //title: "List all the REST services registered in the context",
+            show: function () { return workspace.isTopTabActive("camel") && !workspace.isEndpointsFolder() && !workspace.isRoute() && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelRestRegistry(workspace), "listRestServices"); },
+            isSelected: function () { return workspace.isLinkActive('camel/restRegistry'); },
+            href: function () { return "/camel/restRegistry" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-browser',
+            title: function () { return '<i class="fa fa-envelope"></i> Browse'; },
+            //title: "Browse the messages on the endpoint",
+            show: function () { return workspace.isEndpoint() && workspace.hasInvokeRights(workspace.selection, "browseAllMessagesAsXml"); },
+            isSelected: function () { return workspace.isLinkActive('camel/browseEndpoint'); },
+            href: function () { return "/camel/browseEndpoint" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-debug',
+            title: function () { return '<i class="fa fa-stethoscope"></i> Debug'; },
+            //title: "Debug the Camel route",
+            show: function () { return workspace.isRoute() && Camel.getSelectionCamelDebugMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelDebugMBean(workspace), "getBreakpoints"); },
+            isSelected: function () { return workspace.isLinkActive('camel/debugRoute'); },
+            href: function () { return "/camel/debugRoute" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-trace',
+            title: function () { return '<i class="fa fa-envelope"></i> Trace'; },
+            //title: "Trace the messages flowing through the Camel route",
+            show: function () { return workspace.isRoute() && Camel.getSelectionCamelTraceMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"); },
+            isSelected: function () { return workspace.isLinkActive('camel/traceRoute'); },
+            href: function () { return "/camel/traceRoute" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-profile',
+            title: function () { return '<i class="fa fa-bar-chart"></i> Profile'; },
+            //title: "Profile the messages flowing through the Camel route",
+            show: function () { return workspace.isRoute() && Camel.getSelectionCamelTraceMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"); },
+            isSelected: function () { return workspace.isLinkActive('camel/profileRoute'); },
+            href: function () { return "/camel/profileRoute" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-send',
+            title: function () { return '<i class="fa fa-pencil"></i> Send'; },
+            //title: "Send a message to this endpoint",
+            show: function () { return workspace.isEndpoint() && workspace.hasInvokeRights(workspace.selection, workspace.selection.domain === "org.apache.camel" ? "sendBodyAndHeaders" : "sendTextMessage"); },
+            isSelected: function () { return workspace.isLinkActive('camel/sendMessage'); },
+            href: function () { return "/camel/sendMessage" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-endpoint',
+            title: function () { return '<i class="fa fa-plus"></i> Endpoint'; },
+            //title: "Create a new endpoint",
+            show: function () { return workspace.isEndpointsFolder() && workspace.hasInvokeRights(workspace.selection, "createEndpoint"); },
+            isSelected: function () { return workspace.isLinkActive('camel/createEndpoint'); },
+            href: function () { return "/camel/createEndpoint" + workspace.hash(); }
+        });
+        nav.add(tab);
+    }]);
+    hawtioPluginLoader.addModule(Camel.pluginName);
+    // register the jmx lazy loader here as it won't have been invoked in the run method
+    hawtioPluginLoader.registerPreBootstrapTask(function (task) {
+        jmxModule.registerLazyLoadHandler(Camel.jmxDomain, function (folder) {
+            if (Camel.jmxDomain === folder.domain && "routes" === folder.typeName) {
+                return function (workspace, folder, onComplete) {
+                    if ("routes" === folder.typeName) {
+                        Camel.processRouteXml(workspace, workspace.jolokia, folder, function (route) {
+                            if (route) {
+                                Camel.addRouteChildren(folder, route);
+                            }
+                            onComplete();
+                        });
+                    }
+                    else {
+                        onComplete();
+                    }
+                };
+            }
+            return null;
+        });
+        task();
+    });
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.AttributesToolBarController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
+        $scope.deleteDialog = false;
+        $scope.start = function () {
+            $scope.invokeSelectedMBeans(function (item) {
+                return Camel.isState(item, "suspend") ? "resume()" : "start()";
+            });
+        };
+        $scope.pause = function () {
+            $scope.invokeSelectedMBeans("suspend()");
+        };
+        $scope.stop = function () {
+            $scope.invokeSelectedMBeans("stop()", function () {
+                // lets navigate to the parent folder!
+                // as this will be going way
+                workspace.removeAndSelectParentNode();
+            });
+        };
+        /*
+         * Only for routes!
+         */
+        $scope.delete = function () {
+            $scope.invokeSelectedMBeans("remove()", function () {
+                // force a reload of the tree
+                $scope.workspace.operationCounter += 1;
+                Core.$apply($scope);
+            });
+        };
+        $scope.anySelectionHasState = function (state) {
+            var selected = $scope.selectedItems || [];
+            return selected.length && selected.any(function (s) { return Camel.isState(s, state); });
+        };
+        $scope.everySelectionHasState = function (state) {
+            var selected = $scope.selectedItems || [];
+            return selected.length && selected.every(function (s) { return Camel.isState(s, state); });
+        };
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.BreadcrumbBarController", ["$scope", "$routeParams", "workspace", "jolokia", function ($scope, $routeParams, workspace, jolokia) {
+        $scope.workspace = workspace;
+        // if we are in dashboard then $routeParams may be null
+        if ($routeParams != null) {
+            $scope.contextId = $routeParams["contextId"];
+            $scope.endpointPath = $routeParams["endpointPath"];
+            $scope.endpointName = tidyJmxName($scope.endpointPath);
+            $scope.routeId = $routeParams["routeId"];
+        }
+        $scope.treeViewLink = linkToTreeView();
+        var defaultChildEntity = $scope.endpointPath ? "endpoints" : "routes";
+        var childEntityToolTips = {
+            "endpoints": "Camel Endpoint",
+            "routes": "Camel Route"
+        };
+        /**
+         * The array of breadcrumbs so that each item in the list of bookmarks can be switched for fast navigation and
+         * we can easily render the navigation path
+         */
+        $scope.breadcrumbs = [
+            {
+                name: $scope.contextId,
+                items: findContexts(),
+                tooltip: "Camel Context"
+            },
+            {
+                name: defaultChildEntity,
+                items: findChildEntityTypes($scope.contextId),
+                tooltip: "Entity inside a Camel Context"
+            },
+            {
+                name: $scope.endpointName || tidyJmxName($scope.routeId),
+                items: findChildEntityLinks($scope.contextId, currentChildEntity()),
+                tooltip: childEntityToolTips[defaultChildEntity]
+            }
+        ];
+        // lets find all the camel contexts
+        function findContexts() {
+            var answer = [];
+            var rootFolder = Camel.getRootCamelFolder(workspace);
+            if (rootFolder) {
+                angular.forEach(rootFolder.children, function (contextFolder) {
+                    var id = contextFolder.title;
+                    if (id && id !== $scope.contextId) {
+                        var name = id;
+                        var link = createLinkToFirstChildEntity(id, currentChildEntity());
+                        answer.push({
+                            name: name,
+                            tooltip: "Camel Context",
+                            link: link
+                        });
+                    }
+                });
+            }
+            return answer;
+        }
+        // lets find all the the child entities of a camel context
+        function findChildEntityTypes(contextId) {
+            var answer = [];
+            angular.forEach(["endpoints", "routes"], function (childEntityName) {
+                if (childEntityName && childEntityName !== currentChildEntity()) {
+                    var link = createLinkToFirstChildEntity(contextId, childEntityName);
+                    answer.push({
+                        name: childEntityName,
+                        tooltip: "Entity inside a Camel Context",
+                        link: link
+                    });
+                }
+            });
+            return answer;
+        }
+        function currentChildEntity() {
+            var answer = Core.pathGet($scope, ["breadcrumbs", "childEntity"]);
+            return answer || defaultChildEntity;
+        }
+        /**
+         * Based on the current child entity type, find the child links for the given context id and
+         * generate a link to the first child; used when changing context or child entity type
+         */
+        function createLinkToFirstChildEntity(id, childEntityValue) {
+            var links = findChildEntityLinks(id, childEntityValue);
+            // TODO here we should switch to a default context view if there's no endpoints available...
+            var link = links.length > 0 ? links[0].link : Camel.linkToBrowseEndpointFullScreen(id, "noEndpoints");
+            return link;
+        }
+        function findChildEntityLinks(contextId, childEntityValue) {
+            if ("endpoints" === childEntityValue) {
+                return findEndpoints(contextId);
+            }
+            else {
+                return findRoutes(contextId);
+            }
+        }
+        // lets find all the endpoints for the given context id
+        function findEndpoints(contextId) {
+            var answer = [];
+            var contextFolder = Camel.getCamelContextFolder(workspace, contextId);
+            if (contextFolder) {
+                var endpoints = (contextFolder["children"] || []).find(function (n) { return "endpoints" === n.title; });
+                if (endpoints) {
+                    angular.forEach(endpoints.children, function (endpointFolder) {
+                        var entries = endpointFolder ? endpointFolder.entries : null;
+                        if (entries) {
+                            var endpointPath = entries["name"];
+                            if (endpointPath) {
+                                var name = tidyJmxName(endpointPath);
+                                var link = Camel.linkToBrowseEndpointFullScreen(contextId, endpointPath);
+                                answer.push({
+                                    contextId: contextId,
+                                    path: endpointPath,
+                                    name: name,
+                                    tooltip: "Endpoint",
+                                    link: link
+                                });
+                            }
+                        }
+                    });
+                }
+            }
+            return answer;
+        }
+        // lets find all the routes for the given context id
+        function findRoutes(contextId) {
+            var answer = [];
+            var contextFolder = Camel.getCamelContextFolder(workspace, contextId);
+            if (contextFolder) {
+                var folders = (contextFolder["children"] || []).find(function (n) { return "routes" === n.title; });
+                if (folders) {
+                    angular.forEach(folders.children, function (folder) {
+                        var entries = folder ? folder.entries : null;
+                        if (entries) {
+                            var routeId = entries["name"];
+                            if (routeId) {
+                                var name = tidyJmxName(routeId);
+                                var link = Camel.linkToRouteDiagramFullScreen(contextId, routeId);
+                                answer.push({
+                                    contextId: contextId,
+                                    path: routeId,
+                                    name: name,
+                                    tooltip: "Camel Route",
+                                    link: link
+                                });
+                            }
+                        }
+                    });
+                }
+            }
+            return answer;
+        }
+        /**
+         * Creates a link to the tree view version of this view
+         */
+        function linkToTreeView() {
+            var answer = null;
+            if ($scope.contextId) {
+                var node = null;
+                var tab = null;
+                if ($scope.endpointPath) {
+                    tab = "browseEndpoint";
+                    node = workspace.findMBeanWithProperties(Camel.jmxDomain, {
+                        context: $scope.contextId,
+                        type: "endpoints",
+                        name: $scope.endpointPath
+                    });
+                }
+                else if ($scope.routeId) {
+                    tab = "routes";
+                    node = workspace.findMBeanWithProperties(Camel.jmxDomain, {
+                        context: $scope.contextId,
+                        type: "routes",
+                        name: $scope.routeId
+                    });
+                }
+                var key = node ? node["key"] : null;
+                if (key && tab) {
+                    answer = "#/camel/" + tab + "?tab=camel&nid=" + key;
+                }
+            }
+            return answer;
+        }
+        function tidyJmxName(jmxName) {
+            return jmxName ? Core.trimQuotes(jmxName) : jmxName;
+        }
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+/// <reference path="../../activemq/ts/activemqHelpers.ts"/>
+var Camel;
+(function (Camel) {
+    Camel.BrowseEndpointController = Camel._module.controller("Camel.BrowseEndpointController", ["$scope", "$routeParams", "workspace", "jolokia", function ($scope, $routeParams, workspace, jolokia) {
+        $scope.workspace = workspace;
+        $scope.forwardDialog = new UI.Dialog();
+        $scope.showMessageDetails = false;
+        $scope.mode = 'text';
+        $scope.gridOptions = Camel.createBrowseGridOptions();
+        $scope.contextId = $routeParams["contextId"];
+        $scope.endpointPath = $routeParams["endpointPath"];
+        $scope.isJmxTab = !$routeParams["contextId"] || !$routeParams["endpointPath"];
+        $scope.$watch('workspace.selection', function () {
+            if ($scope.isJmxTab && workspace.moveIfViewInvalid())
+                return;
+            loadData();
+        });
+        // TODO can we share these 2 methods from activemq browse / camel browse / came trace?
+        $scope.openMessageDialog = function (message) {
+            ActiveMQ.selectCurrentMessage(message, "id", $scope);
+            if ($scope.row) {
+                $scope.mode = CodeEditor.detectTextFormat($scope.row.body);
+                $scope.showMessageDetails = true;
+            }
+        };
+        ActiveMQ.decorate($scope);
+        $scope.forwardMessagesAndCloseForwardDialog = function () {
+            var mbean = Camel.getSelectionCamelContextMBean(workspace);
+            var selectedItems = $scope.gridOptions.selectedItems;
+            var uri = $scope.endpointUri;
+            if (mbean && uri && selectedItems && selectedItems.length) {
+                //console.log("Creating a new endpoint called: " + uri + " just in case!");
+                jolokia.execute(mbean, "createEndpoint(java.lang.String)", uri, Core.onSuccess(intermediateResult));
+                $scope.message = "Forwarded " + Core.maybePlural(selectedItems.length, "message" + " to " + uri);
+                angular.forEach(selectedItems, function (item, idx) {
+                    var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
+                    var body = item.body;
+                    var headers = item.headers;
+                    //console.log("sending to uri " + uri + " headers: " + JSON.stringify(headers) + " body: " + body);
+                    jolokia.execute(mbean, "sendBodyAndHeaders(java.lang.String, java.lang.Object, java.util.Map)", uri, body, headers, Core.onSuccess(callback));
+                });
+            }
+            $scope.forwardDialog.close();
+        };
+        $scope.endpointUris = function () {
+            var endpointFolder = Camel.getSelectionCamelContextEndpoints(workspace);
+            return (endpointFolder) ? endpointFolder.children.map(function (n) { return n.title; }) : [];
+        };
+        $scope.refresh = loadData;
+        function intermediateResult() {
+        }
+        function operationSuccess() {
+            if ($scope.messageDialog) {
+                $scope.messageDialog.close();
+            }
+            $scope.gridOptions.selectedItems.splice(0);
+            Core.notification("success", $scope.message);
+            setTimeout(loadData, 50);
+        }
+        function loadData() {
+            var mbean = null;
+            if ($scope.contextId && $scope.endpointPath) {
+                var node = workspace.findMBeanWithProperties(Camel.jmxDomain, {
+                    context: $scope.contextId,
+                    type: "endpoints",
+                    name: $scope.endpointPath
+                });
+                if (node) {
+                    mbean = node.objectName;
+                }
+            }
+            if (!mbean) {
+                mbean = workspace.getSelectedMBeanName();
+            }
+            if (mbean) {
+                Camel.log.info("MBean: " + mbean);
+                var options = Core.onSuccess(populateTable);
+                jolokia.execute(mbean, 'browseAllMessagesAsXml(java.lang.Boolean)', true, options);
+            }
+        }
+        function populateTable(response) {
+            var data = [];
+            if (angular.isString(response)) {
+                // lets parse the XML DOM here...
+                var doc = $.parseXML(response);
+                var allMessages = $(doc).find("message");
+                allMessages.each(function (idx, message) {
+                    var messageData = Camel.createMessageFromXml(message);
+                    messageData.openMessageDialog = $scope.openMessageDialog;
+                    data.push(messageData);
+                });
+            }
+            $scope.messages = data;
+            Core.$apply($scope);
+        }
+    }]);
+})(Camel || (Camel = {}));
+
+var Camel;
+(function (Camel) {
+    // NOTE this file is code generated by the ide-codegen module in Fuse IDE
+    Camel.camelHeaderSchema = {
+        definitions: {
+            headers: {
+                properties: {
+                    "CamelAuthentication": {
+                        type: "java.lang.String"
+                    },
+                    "CamelAuthenticationFailurePolicyId": {
+                        type: "java.lang.String"
+                    },
+                    "CamelAcceptContentType": {
+                        type: "java.lang.String"
+                    },
+                    "CamelAggregatedSize": {
+                        type: "java.lang.String"
+                    },
+                    "CamelAggregatedTimeout": {
+                        type: "java.lang.String"
+                    },
+                    "CamelAggregatedCompletedBy": {
+                        type: "java.lang.String"
+                    },
+                    "CamelAggregatedCorrelationKey": {
+                        type: "java.lang.String"
+                    },
+                    "CamelAggregationStrategy": {
+                        type: "java.lang.String"
+                    },
+                    "CamelAggregationCompleteAllGroups": {
+                        type: "java.lang.String"
+                    },
+                    "CamelAggregationCompleteAllGroupsInclusive": {
+                        type: "java.lang.String"
+                    },
+                    "CamelAsyncWait": {
+                        type: "java.lang.String"
+                    },
+                    "CamelBatchIndex": {
+                        type: "java.lang.String"
+                    },
+                    "CamelBatchSize": {
+                        type: "java.lang.String"
+                    },
+                    "CamelBatchComplete": {
+                        type: "java.lang.String"
+                    },
+                    "CamelBeanMethodName": {
+                        type: "java.lang.String"
+                    },
+                    "CamelBeanMultiParameterArray": {
+                        type: "java.lang.String"
+                    },
+                    "CamelBinding": {
+                        type: "java.lang.String"
+                    },
+                    "breadcrumbId": {
+                        type: "java.lang.String"
+                    },
+                    "CamelCharsetName": {
+                        type: "java.lang.String"
+                    },
+                    "CamelCreatedTimestamp": {
+                        type: "java.lang.String"
+                    },
+                    "Content-Encoding": {
+                        type: "java.lang.String"
+                    },
+                    "Content-Length": {
+                        type: "java.lang.String"
+                    },
+                    "Content-Type": {
+                        type: "java.lang.String"
+                    },
+                    "CamelCorrelationId": {
+                        type: "java.lang.String"
+                    },
+                    "CamelDataSetIndex": {
+                        type: "java.lang.String"
+                    },
+                    "org.apache.camel.default.charset": {
+                        type: "java.lang.String"
+                    },
+                    "CamelDestinationOverrideUrl": {
+                        type: "java.lang.String"
+                    },
+                    "CamelDisableHttpStreamCache": {
+                        type: "java.lang.String"
+                    },
+                    "CamelDuplicateMessage": {
+                        type: "java.lang.String"
+                    },
+                    "CamelExceptionCaught": {
+                        type: "java.lang.String"
+                    },
+                    "CamelExceptionHandled": {
+                        type: "java.lang.String"
+                    },
+                    "CamelEvaluateExpressionResult": {
+                        type: "java.lang.String"
+                    },
+                    "CamelErrorHandlerHandled": {
+                        type: "java.lang.String"
+                    },
+                    "CamelExternalRedelivered": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFailureHandled": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFailureEndpoint": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFailureRouteId": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFilterNonXmlChars": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFileLocalWorkPath": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFileName": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFileNameOnly": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFileNameProduced": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFileNameConsumed": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFilePath": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFileParent": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFileLastModified": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFileLength": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFilterMatched": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFileLockFileAcquired": {
+                        type: "java.lang.String"
+                    },
+                    "CamelFileLockFileName": {
+                        type: "java.lang.String"
+                    },
+                    "CamelGroupedExchange": {
+                        type: "java.lang.String"
+                    },
+                    "CamelHttpBaseUri": {
+                        type: "java.lang.String"
+                    },
+                    "CamelHttpCharacterEncoding": {
+                        type: "java.lang.String"
+                    },
+                    "CamelHttpMethod": {
+                        type: "java.lang.String"
+                    },
+                    "CamelHttpPath": {
+                        type: "java.lang.String"
+                    },
+                    "CamelHttpProtocolVersion": {
+                        type: "java.lang.String"
+                    },
+                    "CamelHttpQuery": {
+                        type: "java.lang.String"
+                    },
+                    "CamelHttpResponseCode": {
+                        type: "java.lang.String"
+                    },
+                    "CamelHttpUri": {
+                        type: "java.lang.String"
+                    },
+                    "CamelHttpUrl": {
+                        type: "java.lang.String"
+                    },
+                    "CamelHttpChunked": {
+                        type: "java.lang.String"
+                    },
+                    "CamelHttpServletRequest": {
+                        type: "java.lang.String"
+                    },
+                    "CamelHttpServletResponse": {
+                        type: "java.lang.String"
+                    },
+                    "CamelInterceptedEndpoint": {
+                        type: "java.lang.String"
+                    },
+                    "CamelInterceptSendToEndpointWhenMatched": {
+                        type: "java.lang.String"
+                    },
+                    "CamelLanguageScript": {
+                        type: "java.lang.String"
+                    },
+                    "CamelLogDebugBodyMaxChars": {
+                        type: "java.lang.String"
+                    },
+                    "CamelLogDebugStreams": {
+                        type: "java.lang.String"
+                    },
+                    "CamelLoopIndex": {
+                        type: "java.lang.String"
+                    },
+                    "CamelLoopSize": {
+                        type: "java.lang.String"
+                    },
+                    "CamelMaximumCachePoolSize": {
+                        type: "java.lang.String"
+                    },
+                    "CamelMaximumEndpointCacheSize": {
+                        type: "java.lang.String"
+                    },
+                    "CamelMessageHistory": {
+                        type: "java.lang.String"
+                    },
+                    "CamelMulticastIndex": {
+                        type: "java.lang.String"
+                    },
+                    "CamelMulticastComplete": {
+                        type: "java.lang.String"
+                    },
+                    "CamelNotifyEvent": {
+                        type: "java.lang.String"
+                    },
+                    "CamelOnCompletion": {
+                        type: "java.lang.String"
+                    },
+                    "CamelOverruleFileName": {
+                        type: "java.lang.String"
+                    },
+                    "CamelParentUnitOfWork": {
+                        type: "java.lang.String"
+                    },
+                    "CamelRecipientListEndpoint": {
+                        type: "java.lang.String"
+                    },
+                    "CamelReceivedTimestamp": {
+                        type: "java.lang.String"
+                    },
+                    "CamelRedelivered": {
+                        type: "java.lang.String"
+                    },
+                    "CamelRedeliveryCounter": {
+                        type: "java.lang.String"
+                    },
+                    "CamelRedeliveryMaxCounter": {
+                        type: "java.lang.String"
+                    },
+                    "CamelRedeliveryExhausted": {
+                        type: "java.lang.String"
+                    },
+                    "CamelRedeliveryDelay": {
+                        type: "java.lang.String"
+                    },
+                    "CamelRollbackOnly": {
+                        type: "java.lang.String"
+                    },
+                    "CamelRollbackOnlyLast": {
+                        type: "java.lang.String"
+                    },
+                    "CamelRouteStop": {
+                        type: "java.lang.String"
+                    },
+                    "CamelSoapAction": {
+                        type: "java.lang.String"
+                    },
+                    "CamelSkipGzipEncoding": {
+                        type: "java.lang.String"
+                    },
+                    "CamelSlipEndpoint": {
+                        type: "java.lang.String"
+                    },
+                    "CamelSplitIndex": {
+                        type: "java.lang.String"
+                    },
+                    "CamelSplitComplete": {
+                        type: "java.lang.String"
+                    },
+                    "CamelSplitSize": {
+                        type: "java.lang.String"
+                    },
+                    "CamelTimerCounter": {
+                        type: "java.lang.String"
+                    },
+                    "CamelTimerFiredTime": {
+                        type: "java.lang.String"
+                    },
+                    "CamelTimerName": {
+                        type: "java.lang.String"
+                    },
+                    "CamelTimerPeriod": {
+                        type: "java.lang.String"
+                    },
+                    "CamelTimerTime": {
+                        type: "java.lang.String"
+                    },
+                    "CamelToEndpoint": {
+                        type: "java.lang.String"
+                    },
+                    "CamelTraceEvent": {
+                        type: "java.lang.String"
+                    },
+                    "CamelTraceEventNodeId": {
+                        type: "java.lang.String"
+                    },
+                    "CamelTraceEventTimestamp": {
+                        type: "java.lang.String"
+                    },
+                    "CamelTraceEventExchange": {
+                        type: "java.lang.String"
+                    },
+                    "Transfer-Encoding": {
+                        type: "java.lang.String"
+                    },
+                    "CamelUnitOfWorkExhausted": {
+                        type: "java.lang.String"
+                    },
+                    "CamelUnitOfWorkProcessSync": {
+                        type: "java.lang.String"
+                    },
+                    "CamelXsltFileName": {
+                        type: "java.lang.String"
+                    }
+                }
+            }
+        }
+    };
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.DebugRouteController", ["$scope", "$element", "workspace", "jolokia", "localStorage", function ($scope, $element, workspace, jolokia, localStorage) {
+        // ignore the cached stuff in camel.ts as it seems to bork the node ids for some reason...
+        $scope.ignoreRouteXmlNode = true;
+        $scope.startDebugging = function () {
+            setDebugging(true);
+        };
+        $scope.stopDebugging = function () {
+            setDebugging(false);
+        };
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            // lets do this asynchronously to avoid Error: $digest already in progress
+            setTimeout(reloadData, 50);
+        });
+        $scope.$on("camel.diagram.selectedNodeId", function (event, value) {
+            $scope.selectedDiagramNodeId = value;
+            updateBreakpointFlag();
+        });
+        $scope.$on("camel.diagram.layoutComplete", function (event, value) {
+            updateBreakpointIcons();
+            $($element).find("g.node").dblclick(function (n) {
+                var id = this.getAttribute("data-cid");
+                $scope.toggleBreakpoint(id);
+            });
+        });
+        $scope.$watch('workspace.selection', function () {
+            if (workspace.moveIfViewInvalid())
+                return;
+            reloadData();
+        });
+        $scope.toggleBreakpoint = function (id) {
+            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
+            if (mbean && id) {
+                var method = isBreakpointSet(id) ? "removeBreakpoint" : "addBreakpoint";
+                jolokia.execute(mbean, method, id, Core.onSuccess(breakpointsChanged));
+            }
+        };
+        $scope.addBreakpoint = function () {
+            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
+            if (mbean && $scope.selectedDiagramNodeId) {
+                jolokia.execute(mbean, "addBreakpoint", $scope.selectedDiagramNodeId, Core.onSuccess(breakpointsChanged));
+            }
+        };
+        $scope.removeBreakpoint = function () {
+            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
+            if (mbean && $scope.selectedDiagramNodeId) {
+                jolokia.execute(mbean, "removeBreakpoint", $scope.selectedDiagramNodeId, Core.onSuccess(breakpointsChanged));
+            }
+        };
+        $scope.resume = function () {
+            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
+            if (mbean) {
+                jolokia.execute(mbean, "resumeAll", Core.onSuccess(clearStoppedAndResume));
+            }
+        };
+        $scope.suspend = function () {
+            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
+            if (mbean) {
+                jolokia.execute(mbean, "suspendAll", Core.onSuccess(clearStoppedAndResume));
+            }
+        };
+        $scope.step = function () {
+            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
+            var stepNode = getStoppedBreakpointId();
+            if (mbean && stepNode) {
+                jolokia.execute(mbean, "stepBreakpoint(java.lang.String)", stepNode, Core.onSuccess(clearStoppedAndResume));
+            }
+        };
+        // TODO refactor into common code with trace.ts?
+        // START
+        $scope.messages = [];
+        $scope.mode = 'text';
+        $scope.messageDialog = new UI.Dialog();
+        $scope.gridOptions = Camel.createBrowseGridOptions();
+        $scope.gridOptions.selectWithCheckboxOnly = false;
+        $scope.gridOptions.showSelectionCheckbox = false;
+        $scope.gridOptions.multiSelect = false;
+        $scope.gridOptions.afterSelectionChange = onSelectionChanged;
+        $scope.gridOptions.columnDefs.push({
+            field: 'toNode',
+            displayName: 'To Node'
+        });
+        $scope.openMessageDialog = function (message) {
+            var idx = Core.pathGet(message, ["rowIndex"]);
+            $scope.selectRowIndex(idx);
+            if ($scope.row) {
+                var body = $scope.row.body;
+                $scope.mode = angular.isString(body) ? CodeEditor.detectTextFormat(body) : "text";
+                $scope.messageDialog.open();
+            }
+        };
+        $scope.selectRowIndex = function (idx) {
+            $scope.rowIndex = idx;
+            var selected = $scope.gridOptions.selectedItems;
+            selected.splice(0, selected.length);
+            if (idx >= 0 && idx < $scope.messages.length) {
+                $scope.row = $scope.messages[idx];
+                if ($scope.row) {
+                    selected.push($scope.row);
+                }
+            }
+            else {
+                $scope.row = null;
+            }
+            onSelectionChanged();
+        };
+        // END
+        function onSelectionChanged() {
+            var toNode = getStoppedBreakpointId();
+            if (toNode) {
+                // lets highlight the node in the diagram
+                var nodes = getDiagramNodes();
+                Camel.highlightSelectedNode(nodes, toNode);
+            }
+        }
+        function reloadData() {
+            $scope.debugging = false;
+            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
+            if (mbean) {
+                $scope.debugging = jolokia.getAttribute(mbean, "Enabled", Core.onSuccess(null));
+                if ($scope.debugging) {
+                    jolokia.execute(mbean, "getBreakpoints", Core.onSuccess(onBreakpoints));
+                    // get the breakpoints...
+                    $scope.graphView = "plugins/camel/html/routes.html";
+                    $scope.tableView = "plugins/camel/html/browseMessages.html";
+                    Core.register(jolokia, $scope, {
+                        type: 'exec',
+                        mbean: mbean,
+                        operation: 'getDebugCounter'
+                    }, Core.onSuccess(onBreakpointCounter));
+                }
+                else {
+                    $scope.graphView = null;
+                    $scope.tableView = null;
+                }
+            }
+        }
+        function onBreakpointCounter(response) {
+            var counter = response.value;
+            if (counter && counter !== $scope.breakpointCounter) {
+                $scope.breakpointCounter = counter;
+                loadCurrentStack();
+            }
+        }
+        /*
+         * lets load current 'stack' of which breakpoints are active
+         * and what is the current message content
+         */
+        function loadCurrentStack() {
+            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
+            if (mbean) {
+                console.log("getting suspended breakpoints!");
+                jolokia.execute(mbean, "getSuspendedBreakpointNodeIds", Core.onSuccess(onSuspendedBreakpointNodeIds));
+            }
+        }
+        function onSuspendedBreakpointNodeIds(response) {
+            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
+            $scope.suspendedBreakpoints = response;
+            $scope.stopped = response && response.length;
+            var stopNodeId = getStoppedBreakpointId();
+            if (mbean && stopNodeId) {
+                jolokia.execute(mbean, 'dumpTracedMessagesAsXml', stopNodeId, Core.onSuccess(onMessages));
+                // lets update the diagram selection to the newly stopped node
+                $scope.selectedDiagramNodeId = stopNodeId;
+            }
+            updateBreakpointIcons();
+            Core.$apply($scope);
+        }
+        function onMessages(response) {
+            console.log("onMessage! ");
+            $scope.messages = [];
+            if (response) {
+                var xml = response;
+                if (angular.isString(xml)) {
+                    // lets parse the XML DOM here...
+                    var doc = $.parseXML(xml);
+                    var allMessages = $(doc).find("fabricTracerEventMessage");
+                    if (!allMessages || !allMessages.length) {
+                        // lets try find another element name
+                        allMessages = $(doc).find("backlogTracerEventMessage");
+                    }
+                    allMessages.each(function (idx, message) {
+                        var messageData = Camel.createMessageFromXml(message);
+                        var toNode = $(message).find("toNode").text();
+                        if (toNode) {
+                            messageData["toNode"] = toNode;
+                        }
+                        $scope.messages.push(messageData);
+                    });
+                }
+            }
+            else {
+                console.log("WARNING: dumpTracedMessagesAsXml() returned no results!");
+            }
+            // lets update the selection and selected row for the message detail view
+            updateMessageSelection();
+            console.log("has messages " + $scope.messages.length + " selected row " + $scope.row + " index " + $scope.rowIndex);
+            Core.$apply($scope);
+            updateBreakpointIcons();
+        }
+        function updateMessageSelection() {
+            $scope.selectRowIndex($scope.rowIndex);
+            if (!$scope.row && $scope.messageDialog.show) {
+                // lets make a dummy empty row
+                // so we can keep the detail view while resuming
+                $scope.row = {
+                    headers: {},
+                    body: ""
+                };
+            }
+        }
+        function clearStoppedAndResume() {
+            $scope.messages = [];
+            $scope.suspendedBreakpoints = [];
+            $scope.stopped = false;
+            updateMessageSelection();
+            Core.$apply($scope);
+            updateBreakpointIcons();
+        }
+        /*
+         * Return the current node id we are stopped at
+         */
+        function getStoppedBreakpointId() {
+            var stepNode = null;
+            var stepNodes = $scope.suspendedBreakpoints;
+            if (stepNodes && stepNodes.length) {
+                stepNode = stepNodes[0];
+                if (stepNodes.length > 1 && isSuspendedAt($scope.selectedDiagramNodeId)) {
+                    // TODO should consider we stepping from different nodes based on the call thread or selection?
+                    stepNode = $scope.selectedDiagramNodeId;
+                }
+            }
+            return stepNode;
+        }
+        /*
+         * Returns true if the execution is currently suspended at the given node
+         */
+        function isSuspendedAt(nodeId) {
+            return containsNodeId($scope.suspendedBreakpoints, nodeId);
+        }
+        function onBreakpoints(response) {
+            $scope.breakpoints = response;
+            updateBreakpointFlag();
+            // update the breakpoint icons...
+            var nodes = getDiagramNodes();
+            if (nodes.length) {
+                updateBreakpointIcons(nodes);
+            }
+            Core.$apply($scope);
+        }
+        /*
+         * Returns true if there is a breakpoint set at the given node id
+         */
+        function isBreakpointSet(nodeId) {
+            return containsNodeId($scope.breakpoints, nodeId);
+        }
+        function updateBreakpointFlag() {
+            $scope.hasBreakpoint = isBreakpointSet($scope.selectedDiagramNodeId);
+        }
+        function containsNodeId(breakpoints, nodeId) {
+            return nodeId && breakpoints && breakpoints.some(nodeId);
+        }
+        function getDiagramNodes() {
+            var svg = d3.select("svg");
+            return svg.selectAll("g .node");
+        }
+        var breakpointImage = Core.url("/plugins/camel/doc/img/debug/breakpoint.gif");
+        var suspendedBreakpointImage = Core.url("/plugins/camel/doc/img/debug/breakpoint-suspended.gif");
+        function updateBreakpointIcons(nodes) {
+            if (nodes === void 0) { nodes = getDiagramNodes(); }
+            nodes.each(function (object) {
+                // add breakpoint icon
+                var nodeId = object.cid;
+                var thisNode = d3.select(this);
+                var icons = thisNode.selectAll("image.breakpoint");
+                var isSuspended = isSuspendedAt(nodeId);
+                var isBreakpoint = isBreakpointSet(nodeId);
+                if (isBreakpoint || isSuspended) {
+                    var imageUrl = isSuspended ? suspendedBreakpointImage : breakpointImage;
+                    // lets add an icon image if we don't already have one
+                    if (!icons.length || !icons[0].length) {
+                        thisNode.append("image").attr("xlink:href", function (d) {
+                            return imageUrl;
+                        }).attr("class", "breakpoint").attr("x", -12).attr("y", -20).attr("height", 24).attr("width", 24);
+                    }
+                    else {
+                        icons.attr("xlink:href", function (d) {
+                            return imageUrl;
+                        });
+                    }
+                }
+                else {
+                    icons.remove();
+                }
+            });
+        }
+        function breakpointsChanged(response) {
+            reloadData();
+            Core.$apply($scope);
+        }
+        function setDebugging(flag) {
+            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
+            if (mbean) {
+                var method = flag ? "enableDebugger" : "disableDebugger";
+                var max = Camel.maximumTraceOrDebugBodyLength(localStorage);
+                var streams = Camel.traceOrDebugIncludeStreams(localStorage);
+                jolokia.setAttribute(mbean, "BodyMaxChars", max);
+                jolokia.setAttribute(mbean, "BodyIncludeStreams", streams);
+                jolokia.setAttribute(mbean, "BodyIncludeFiles", streams);
+                jolokia.execute(mbean, method, Core.onSuccess(breakpointsChanged));
+            }
+        }
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.EndpointController", ["$scope", "$location", "localStorage", "workspace", "jolokia", function ($scope, $location, localStorage, workspace, jolokia) {
+        Camel.initEndpointChooserScope($scope, $location, localStorage, workspace, jolokia);
+        $scope.workspace = workspace;
+        $scope.message = "";
+        $scope.createEndpoint = function (name) {
+            var jolokia = workspace.jolokia;
+            if (jolokia) {
+                var mbean = Camel.getSelectionCamelContextMBean(workspace);
+                if (mbean) {
+                    $scope.message = "Creating endpoint " + name;
+                    var operation = "createEndpoint(java.lang.String)";
+                    jolokia.execute(mbean, operation, name, Core.onSuccess(operationSuccess));
+                }
+                else {
+                    Core.notification("error", "Could not find the CamelContext MBean!");
+                }
+            }
+        };
+        $scope.createEndpointFromData = function () {
+            if ($scope.selectedComponentName && $scope.endpointPath) {
+                var name = $scope.selectedComponentName + "://" + $scope.endpointPath;
+                console.log("Have endpoint data " + JSON.stringify($scope.endpointParameters));
+                var params = "";
+                angular.forEach($scope.endpointParameters, function (value, key) {
+                    var prefix = params ? "&" : "";
+                    params += prefix + key + "=" + value;
+                });
+                if (params) {
+                    name += "?" + params;
+                }
+                // TODO use form data too for URIs parameters...
+                $scope.createEndpoint(name);
+            }
+        };
+        $scope.deleteEndpoint = function () {
+            var jolokia = workspace.jolokia;
+            var selection = workspace.selection;
+            var entries = selection.entries;
+            if (selection && jolokia && entries) {
+                var domain = selection.domain;
+                var brokerName = entries["BrokerName"];
+                var name = entries["Destination"];
+                var isQueue = "Topic" !== entries["Type"];
+                if (domain && brokerName) {
+                    var mbean = "" + domain + ":BrokerName=" + brokerName + ",Type=Broker";
+                    $scope.message = "Deleting " + (isQueue ? "queue" : "topic") + " " + name;
+                    var operation = "removeEndpoint(java.lang.String)";
+                    jolokia.execute(mbean, operation, name, Core.onSuccess(deleteSuccess));
+                }
+            }
+        };
+        function operationSuccess() {
+            $scope.endpointName = "";
+            $scope.workspace.operationCounter += 1;
+            Core.$apply($scope);
+            Core.notification("success", $scope.message);
+        }
+        function deleteSuccess() {
+            // lets set the selection to the parent
+            if (workspace.selection) {
+                var parent = Core.pathGet(workspace, ["selection", "parent"]);
+                if (parent) {
+                    $scope.workspace.updateSelectionNode(parent);
+                }
+            }
+            $scope.workspace.operationCounter += 1;
+            Core.$apply($scope);
+            Core.notification("success", $scope.message);
+        }
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Camel
+ */
+var Camel;
+(function (Camel) {
+    /**
+     * Define the default categories for endpoints and map them to endpoint names
+     * @property
+     * @for Camel
+     * @type {ObjecT}
+     */
+    Camel.endpointCategories = {
+        bigdata: {
+            label: "Big Data",
+            endpoints: ["hdfs", "hbase", "lucene", "solr"],
+            endpointIcon: "/img/icons/camel/endpointRepository24.png"
+        },
+        database: {
+            label: "Database",
+            endpoints: ["couchdb", "elasticsearch", "hbase", "jdbc", "jpa", "hibernate", "mongodb", "mybatis", "sql"],
+            endpointIcon: "/img/icons/camel/endpointRepository24.png"
+        },
+        cloud: {
+            label: "Cloud",
+            endpoints: [
+                "aws-cw",
+                "aws-ddb",
+                "aws-sdb",
+                "aws-ses",
+                "aws-sns",
+                "aws-sqs",
+                "aws-s3",
+                "gauth",
+                "ghhtp",
+                "glogin",
+                "gtask",
+                "jclouds"
+            ]
+        },
+        core: {
+            label: "Core",
+            endpoints: ["bean", "direct", "seda"]
+        },
+        messaging: {
+            label: "Messaging",
+            endpoints: ["jms", "activemq", "amqp", "cometd", "cometds", "mqtt", "netty", "vertx", "websocket"],
+            endpointIcon: "/img/icons/camel/endpointQueue24.png"
+        },
+        mobile: {
+            label: "Mobile",
+            endpoints: ["apns"]
+        },
+        sass: {
+            label: "SaaS",
+            endpoints: ["salesforce", "sap-netweaver"]
+        },
+        social: {
+            label: "Social",
+            endpoints: ["atom", "facebook", "irc", "ircs", "rss", "smpp", "twitter", "weather"]
+        },
+        storage: {
+            label: "Storage",
+            endpointIcon: "/img/icons/camel/endpointFolder24.png",
+            endpoints: ["file", "ftp", "sftp", "scp", "jsch"]
+        },
+        template: {
+            label: "Templating",
+            endpoints: ["freemarker", "velocity", "xquery", "xslt", "scalate", "string-template"]
+        }
+    };
+    /**
+     * Maps endpoint names to a category object
+     * @property
+     * @for Camel
+     * @type {ObjecT}
+     */
+    Camel.endpointToCategory = {};
+    Camel.endpointIcon = "/img/icons/camel/endpoint24.png";
+    /**
+     *  specify custom label & icon properties for endpoint names
+     * @property
+     * @for Camel
+     * @type {ObjecT}
+     */
+    Camel.endpointConfigurations = {
+        drools: {
+            icon: "/img/icons/camel/endpointQueue24.png"
+        },
+        quartz: {
+            icon: "/img/icons/camel/endpointTimer24.png"
+        },
+        facebook: {
+            icon: "/img/icons/camel/endpoints/facebook24.jpg"
+        },
+        salesforce: {
+            icon: "/img/icons/camel/endpoints/salesForce24.png"
+        },
+        sap: {
+            icon: "/img/icons/camel/endpoints/SAPe24.png"
+        },
+        "sap-netweaver": {
+            icon: "/img/icons/camel/endpoints/SAPNetweaver24.jpg"
+        },
+        timer: {
+            icon: "/img/icons/camel/endpointTimer24.png"
+        },
+        twitter: {
+            icon: "/img/icons/camel/endpoints/twitter24.png"
+        },
+        weather: {
+            icon: "/img/icons/camel/endpoints/weather24.jpg"
+        }
+    };
+    /**
+     * Define the default form configurations
+     * @property
+     * @for Camel
+     * @type {ObjecT}
+     */
+    Camel.endpointForms = {
+        file: {
+            tabs: {
+                //'Core': ['key', 'value'],
+                'Options': ['*']
+            }
+        },
+        activemq: {
+            tabs: {
+                'Connection': ['clientId', 'transacted', 'transactedInOut', 'transactionName', 'transactionTimeout'],
+                'Producer': ['timeToLive', 'priority', 'allowNullBody', 'pubSubNoLocal', 'preserveMessageQos'],
+                'Consumer': ['concurrentConsumers', 'acknowledgementModeName', 'selector', 'receiveTimeout'],
+                'Reply': ['replyToDestination', 'replyToDeliveryPersistent', 'replyToCacheLevelName', 'replyToDestinationSelectorName'],
+                'Options': ['*']
+            }
+        }
+    };
+    Camel.endpointForms["jms"] = Camel.endpointForms.activemq;
+    angular.forEach(Camel.endpointCategories, function (category, catKey) {
+        category.id = catKey;
+        angular.forEach(category.endpoints, function (endpoint) {
+            Camel.endpointToCategory[endpoint] = category;
+        });
+    });
+    /**
+     * Override the EIP pattern tabs...
+     * @property
+     * @for Camel
+     * @type {ObjecT}
+     */
+    var camelModelTabExtensions = {
+        route: {
+            'Overview': ['id', 'description'],
+            'Advanced': ['*']
+        }
+    };
+    function getEndpointIcon(endpointName) {
+        var value = Camel.getEndpointConfig(endpointName, null);
+        var answer = Core.pathGet(value, ["icon"]);
+        if (!answer) {
+            var category = getEndpointCategory(endpointName);
+            answer = Core.pathGet(category, ["endpointIcon"]);
+        }
+        return answer || Camel.endpointIcon;
+    }
+    Camel.getEndpointIcon = getEndpointIcon;
+    function getEndpointConfig(endpointName, category) {
+        var answer = Camel.endpointConfigurations[endpointName];
+        if (!answer) {
+            answer = {};
+            Camel.endpointConfigurations[endpointName] = answer;
+        }
+        if (!answer.label) {
+            answer.label = endpointName;
+        }
+        if (!answer.icon) {
+            answer.icon = Core.pathGet(category, ["endpointIcon"]) || Camel.endpointIcon;
+        }
+        if (!answer.category) {
+            answer.category = category;
+        }
+        return answer;
+    }
+    Camel.getEndpointConfig = getEndpointConfig;
+    function getEndpointCategory(endpointName) {
+        return Camel.endpointToCategory[endpointName] || Camel.endpointCategories.core;
+    }
+    Camel.getEndpointCategory = getEndpointCategory;
+    function getConfiguredCamelModel() {
+        var schema = Camel._apacheCamelModel;
+        var definitions = schema["definitions"];
+        if (definitions) {
+            angular.forEach(camelModelTabExtensions, function (tabs, name) {
+                var model = definitions[name];
+                if (model) {
+                    if (!model["tabs"]) {
+                        model["tabs"] = tabs;
+                    }
+                }
+            });
+        }
+        return schema;
+    }
+    Camel.getConfiguredCamelModel = getConfiguredCamelModel;
+    function initEndpointChooserScope($scope, $location, localStorage, workspace, jolokia) {
+        $scope.selectedComponentName = null;
+        $scope.endpointParameters = {};
+        $scope.endpointPath = "";
+        $scope.schema = {
+            definitions: {}
+        };
+        $scope.jolokia = jolokia;
+        // lets see if we need to use a remote jolokia container
+        var versionId = $scope.branch;
+        var profileId = Fabric.pagePathToProfileId($scope.pageId);
+        if (profileId && versionId) {
+            Fabric.profileJolokia(jolokia, profileId, versionId, function (profileJolokia) {
+                if (!profileJolokia) {
+                    // TODO we should expose this to the user somewhere nicely!
+                    Camel.log.info("No container is running for profile " + profileId + " and version " + versionId + " so using current container for endpoint completion");
+                    profileJolokia = jolokia;
+                }
+                $scope.jolokia = profileJolokia;
+                // force a reload
+                $scope.profileWorkspace = null;
+                $scope.loadEndpointNames();
+            });
+        }
+        var silentOptions = { silent: true };
+        $scope.$watch('workspace.selection', function () {
+            $scope.loadEndpointNames();
+        });
+        $scope.$watch('selectedComponentName', function () {
+            if ($scope.selectedComponentName !== $scope.loadedComponentName) {
+                $scope.endpointParameters = {};
+                $scope.loadEndpointSchema($scope.selectedComponentName);
+                $scope.loadedComponentName = $scope.selectedComponentName;
+            }
+        });
+        $scope.endpointCompletions = function (completionText) {
+            var answer = null;
+            var mbean = findCamelContextMBean();
+            var componentName = $scope.selectedComponentName;
+            var endpointParameters = {};
+            if (mbean && componentName && completionText) {
+                answer = $scope.jolokia.execute(mbean, 'completeEndpointPath', componentName, endpointParameters, completionText, Core.onSuccess(null, silentOptions));
+            }
+            return answer || [];
+        };
+        $scope.loadEndpointNames = function () {
+            $scope.componentNames = null;
+            var mbean = findCamelContextMBean();
+            if (mbean) {
+                //$scope.jolokia.execute(mbean, 'findComponentNames', Core.onSuccess(onComponents, silentOptions));
+                $scope.jolokia.execute(mbean, 'findComponentNames', Core.onSuccess(onComponents, { silent: true }));
+            }
+            else {
+                console.log("WARNING: No camel context mbean so cannot load component names");
+            }
+        };
+        $scope.loadEndpointSchema = function (componentName) {
+            var mbean = findCamelContextMBean();
+            if (mbean && componentName && componentName !== $scope.loadedEndpointSchema) {
+                $scope.selectedComponentName = componentName;
+                $scope.jolokia.execute(mbean, 'componentParameterJsonSchema', componentName, Core.onSuccess(onEndpointSchema, silentOptions));
+            }
+        };
+        function onComponents(response) {
+            $scope.componentNames = response;
+            Camel.log.info("onComponents: " + response);
+            $scope.hasComponentNames = $scope.componentNames ? true : false;
+            Core.$apply($scope);
+        }
+        function onEndpointSchema(response) {
+            if (response) {
+                try {
+                    //console.log("got JSON: " + response);
+                    var json = JSON.parse(response);
+                    var endpointName = $scope.selectedComponentName;
+                    configureEndpointSchema(endpointName, json);
+                    $scope.endpointSchema = json;
+                    $scope.schema.definitions[endpointName] = json;
+                    $scope.loadedEndpointSchema = endpointName;
+                    Core.$apply($scope);
+                }
+                catch (e) {
+                    console.log("Failed to parse JSON " + e);
+                    console.log("JSON: " + response);
+                }
+            }
+        }
+        function configureEndpointSchema(endpointName, json) {
+            console.log("======== configuring schema for " + endpointName);
+            var config = Camel.endpointForms[endpointName];
+            if (config && json) {
+                if (config.tabs) {
+                    json.tabs = config.tabs;
+                }
+            }
+        }
+        function findCamelContextMBean() {
+            var profileWorkspace = $scope.profileWorkspace;
+            if (!profileWorkspace) {
+                var removeJolokia = $scope.jolokia;
+                if (removeJolokia) {
+                    profileWorkspace = Core.createRemoteWorkspace(removeJolokia, $location, localStorage);
+                    $scope.profileWorkspace = profileWorkspace;
+                }
+            }
+            if (!profileWorkspace) {
+                Camel.log.info("No profileWorkspace found so defaulting it to workspace for now");
+                profileWorkspace = workspace;
+            }
+            // TODO we need to find the MBean for the CamelContext / Route we are editing!
+            var componentName = $scope.selectedComponentName;
+            var selectedCamelContextId;
+            var selectedRouteId;
+            if (angular.isDefined($scope.camelSelectionDetails)) {
+                selectedCamelContextId = $scope.camelSelectionDetails.selectedCamelContextId;
+                selectedRouteId = $scope.camelSelectionDetails.selectedRouteId;
+            }
+            console.log("==== componentName " + componentName + " selectedCamelContextId: " + selectedCamelContextId + " selectedRouteId: " + selectedRouteId);
+            var contextsById = Camel.camelContextMBeansById(profileWorkspace);
+            if (selectedCamelContextId) {
+                var mbean = Core.pathGet(contextsById, [selectedCamelContextId, "mbean"]);
+                if (mbean) {
+                    return mbean;
+                }
+            }
+            if (selectedRouteId) {
+                var map = Camel.camelContextMBeansByRouteId(profileWorkspace);
+                var mbean = Core.pathGet(map, [selectedRouteId, "mbean"]);
+                if (mbean) {
+                    return mbean;
+                }
+            }
+            if (componentName) {
+                var map = Camel.camelContextMBeansByComponentName(profileWorkspace);
+                var mbean = Core.pathGet(map, [componentName, "mbean"]);
+                if (mbean) {
+                    return mbean;
+                }
+            }
+            // NOTE we don't really know which camel context to pick, so lets just find the first one?
+            var answer = null;
+            angular.forEach(contextsById, function (details, id) {
+                var mbean = details.mbean;
+                if (!answer && mbean)
+                    answer = mbean;
+            });
+            return answer;
+            /*
+                  // we could be remote to lets query jolokia
+                  var results = $scope.jolokia.search("org.apache.camel:*,type=context", Core.onSuccess(null));
+                  //var results = $scope.jolokia.search("org.apache.camel:*", Core.onSuccess(null));
+                  if (results && results.length) {
+                    console.log("===== Got results: " + results);
+                    return results[0];
+                  }
+            
+                  var mbean = Camel.getSelectionCamelContextMBean(profileWorkspace);
+                  if (!mbean && $scope.findProfileCamelContext) {
+                    // TODO as a hack for now lets just find any camel context we can
+                    var folder = Core.getMBeanTypeFolder(profileWorkspace, Camel.jmxDomain, "context");
+                    mbean = Core.pathGet(folder, ["objectName"]);
+                  }
+                  return mbean;
+            */
+        }
+    }
+    Camel.initEndpointChooserScope = initEndpointChooserScope;
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.FabricDiagramController", ["$scope", "$compile", "$location", "localStorage", "jolokia", "workspace", function ($scope, $compile, $location, localStorage, jolokia, workspace) {
+        Fabric.initScope($scope, $location, jolokia, workspace);
+        var isFmc = Wiki.isFMCContainer(workspace);
+        $scope.isFmc = isFmc;
+        $scope.selectedNode = null;
+        var defaultFlags = {
+            panel: true,
+            popup: false,
+            label: true,
+            container: false,
+            endpoint: true,
+            route: true,
+            context: false,
+            consumer: true,
+            producer: true
+        };
+        $scope.viewSettings = {};
+        $scope.shapeSize = {
+            context: 12,
+            route: 10,
+            endpoint: 7
+        };
+        var graphBuilder = new ForceGraph.GraphBuilder();
+        Core.bindModelToSearchParam($scope, $location, "searchFilter", "q", "");
+        angular.forEach(defaultFlags, function (defaultValue, key) {
+            var modelName = "viewSettings." + key;
+            // bind model values to search params...
+            function currentValue() {
+                var answer = $location.search()[paramName] || defaultValue;
+                return answer === "false" ? false : answer;
+            }
+            var paramName = key;
+            var value = currentValue();
+            Core.pathSet($scope, modelName, value);
+            $scope.$watch(modelName, function () {
+                var current = Core.pathGet($scope, modelName);
+                var old = currentValue();
+                if (current !== old) {
+                    var defaultValue = defaultFlags[key];
+                    if (current !== defaultValue) {
+                        if (!current) {
+                            current = "false";
+                        }
+                        $location.search(paramName, current);
+                    }
+                    else {
+                        $location.search(paramName, null);
+                    }
+                }
+                redrawGraph();
+            });
+        });
+        $scope.connectToContext = function () {
+            var selectedNode = $scope.selectedNode;
+            if (selectedNode) {
+                var container = selectedNode["container"] || selectedNode;
+                var postfix = null;
+                connectToContainer(container, postfix);
+            }
+        };
+        $scope.connectToEndpoint = function () {
+            var selectedNode = $scope.selectedNode;
+            if (selectedNode) {
+                var container = selectedNode["container"] || selectedNode;
+                var postfix = null;
+                connectToContainer(container, postfix);
+            }
+        };
+        function connectToContainer(container, postfix, viewPrefix) {
+            if (viewPrefix === void 0) { viewPrefix = "#/jmx/attributes?tab=camel"; }
+            var view = viewPrefix;
+            if (postfix) {
+                view += postfix;
+            }
+            // TODO if local just link to local view!
+            $scope.doConnect(container, view);
+        }
+        $scope.$on('$destroy', function (event) {
+            stopOldJolokia();
+        });
+        function stopOldJolokia() {
+            var oldJolokia = $scope.selectedNodeJolokia;
+            if (oldJolokia && oldJolokia !== jolokia) {
+                oldJolokia.stop();
+            }
+        }
+        $scope.$watch("selectedNode", function (newValue, oldValue) {
+            // lets cancel any previously registered thingy
+            if ($scope.unregisterFn) {
+                $scope.unregisterFn();
+                $scope.unregisterFn = null;
+            }
+            var node = $scope.selectedNode;
+            if (node) {
+                var mbean = node.objectName;
+                var container = node.container || {};
+                var nodeJolokia = node.jolokia || container.jolokia || jolokia;
+                if (nodeJolokia !== $scope.selectedNodeJolokia) {
+                    stopOldJolokia();
+                    $scope.selectedNodeJolokia = nodeJolokia;
+                    if (nodeJolokia !== jolokia) {
+                        var rate = Core.parseIntValue(localStorage['updateRate'] || "2000", "update rate");
+                        if (rate) {
+                            nodeJolokia.start(rate);
+                        }
+                    }
+                }
+                var dummyResponse = { value: node.panelProperties || {} };
+                if (mbean && nodeJolokia) {
+                    $scope.unregisterFn = Core.register(nodeJolokia, $scope, {
+                        type: 'read',
+                        mbean: mbean
+                    }, Core.onSuccess(renderNodeAttributes, { error: function (response) {
+                        // probably we've got a wrong mbean name?
+                        // so lets render at least
+                        renderNodeAttributes(dummyResponse);
+                        Core.defaultJolokiaErrorHandler(response);
+                    } }));
+                }
+                else {
+                    renderNodeAttributes(dummyResponse);
+                }
+            }
+        });
+        var ignoreNodeAttributes = [
+            "CamelId",
+            "CamelManagementName"
+        ];
+        var ignoreNodeAttributesByType = {
+            context: ["ApplicationContextClassName", "CamelId", "ClassResolver", "ManagementName", "PackageScanClassResolver", "Properties"],
+            endpoint: ["Camel", "Endpoint"],
+            route: ["Description"]
+        };
+        var onlyShowAttributesByType = {
+            broker: []
+        };
+        function renderNodeAttributes(response) {
+            var properties = [];
+            if (response) {
+                var value = response.value || {};
+                $scope.selectedNodeAttributes = value;
+                var selectedNode = $scope.selectedNode || {};
+                var container = selectedNode['container'] || {};
+                var nodeType = selectedNode["type"];
+                var brokerName = selectedNode["brokerName"];
+                var containerId = container["id"];
+                var group = selectedNode["group"] || container["group"];
+                var jolokiaUrl = selectedNode["jolokiaUrl"] || container["jolokiaUrl"];
+                var profile = selectedNode["profile"] || container["profile"];
+                var version = selectedNode["version"] || container["version"];
+                var isBroker = nodeType && nodeType.startsWith("broker");
+                var ignoreKeys = ignoreNodeAttributes.concat(ignoreNodeAttributesByType[nodeType] || []);
+                var onlyShowKeys = onlyShowAttributesByType[nodeType];
+                angular.forEach(value, function (v, k) {
+                    if (onlyShowKeys ? onlyShowKeys.indexOf(k) >= 0 : ignoreKeys.indexOf(k) < 0) {
+                        var formattedValue = Core.humanizeValueHtml(v);
+                        properties.push({ key: Core.humanizeValue(k), value: formattedValue });
+                    }
+                });
+                properties = properties.sortBy("key");
+                if (containerId && isFmc) {
+                    //var containerModel = "selectedNode.container";
+                    properties.splice(0, 0, { key: "Container", value: $compile('<div fabric-container-link="' + selectedNode['container']['id'] + '"></div>')($scope) });
+                }
+                var typeLabel = selectedNode["typeLabel"];
+                var name = selectedNode["name"] || selectedNode["id"] || selectedNode['objectName'];
+                if (typeLabel) {
+                    var html = name;
+                    if (nodeType === "queue" || nodeType === "topic") {
+                        html = createDestinationLink(name, nodeType);
+                    }
+                    var typeProperty = { key: typeLabel, value: html };
+                    properties.splice(0, 0, typeProperty);
+                }
+            }
+            $scope.selectedNodeProperties = properties;
+            Core.$apply($scope);
+        }
+        /**
+         * Generates the HTML for a link to the destination
+         */
+        function createDestinationLink(destinationName, destinationType) {
+            if (destinationType === void 0) { destinationType = "queue"; }
+            return $compile('<a target="destination" title="' + destinationName + '" ng-click="connectToEndpoint()">' + destinationName + '</a>')($scope);
+        }
+        $scope.$watch("searchFilter", function (newValue, oldValue) {
+            redrawGraph();
+        });
+        if (isFmc) {
+            $scope.versionId = Fabric.getDefaultVersionId(jolokia);
+            var fields = ["id", "alive", "parentId", "profileIds", "versionId", "provisionResult", "jolokiaUrl", "jmxDomains"];
+            Fabric.getContainersFields(jolokia, fields, onFabricContainerData);
+        }
+        else {
+            // lets just use the current stuff from the workspace
+            $scope.$watch('workspace.tree', function () {
+                reloadLocalJmxTree();
+            });
+            $scope.$on('jmxTreeUpdated', function () {
+                reloadLocalJmxTree();
+            });
+        }
+        function reloadLocalJmxTree() {
+            var localContainer = {
+                jolokia: jolokia
+            };
+            $scope.activeContainers = {
+                "local": localContainer
+            };
+            redrawGraph();
+            $scope.containerCount = 1;
+        }
+        function onFabricContainerData(response) {
+            if (response) {
+                var responseJson = angular.toJson(response);
+                if ($scope.responseJson === responseJson) {
+                    return;
+                }
+                $scope.responseJson = responseJson;
+                var containersToDelete = $scope.activeContainers || {};
+                $scope.activeContainers = (response || {}).filter(function (c) { return c.jmxDomains.any(Camel.jmxDomain); });
+                $scope.containerCount = $scope.activeContainers.length;
+                // query containers which have camel...
+                redrawGraph();
+            }
+            else {
+                $scope.containerCount = 0;
+            }
+        }
+        function redrawGraph() {
+            graphBuilder = new ForceGraph.GraphBuilder();
+            // TODO delete any nodes from dead containers in containersToDelete
+            angular.forEach($scope.activeContainers, function (container, id) {
+                var containerJolokia = container.jolokia;
+                if (!containerJolokia) {
+                    var jolokiaUrl = container["jolokiaUrl"];
+                    if (jolokiaUrl) {
+                        var url = Core.useProxyIfExternal(jolokiaUrl);
+                        containerJolokia = Fabric.createJolokia(url);
+                    }
+                }
+                if (containerJolokia) {
+                    onContainerJolokia(containerJolokia, container);
+                }
+                else {
+                    Fabric.containerJolokia(jolokia, id, function (containerJolokia) { return onContainerJolokia(containerJolokia, container); });
+                }
+            });
+            //$scope.graph = graphBuilder.buildGraph();
+            Core.$apply($scope);
+        }
+        /**
+         * Returns true if the given CamelContext ID matches the current search filter
+         */
+        function matchesContextId(contextId) {
+            if (contextId) {
+                return !$scope.searchFilter || contextId.indexOf($scope.searchFilter) >= 0;
+            }
+            return false;
+        }
+        function onContainerJolokia(containerJolokia, container) {
+            if (containerJolokia) {
+                container.jolokia = containerJolokia;
+                var containerId = container.id || "local";
+                var idPrefix = containerId + ":";
+                var endpointUriToObject = {};
+                var startedLoadMetaDataFromEndpointMBeans = false;
+                function getOrCreateRoute(objectName, properties, addEndpointLink, routeId, contextId, camelContext) {
+                    if (routeId === void 0) { routeId = null; }
+                    if (contextId === void 0) { contextId = null; }
+                    if (camelContext === void 0) { camelContext = null; }
+                    if (!objectName) {
+                        // lets try guess the mbean name
+                        objectName = Camel.jmxDomain + ':context=' + contextId + ',type=routes,name="' + routeId + '"';
+                    }
+                    var details = Core.parseMBean(objectName);
+                    var attributes = details['attributes'];
+                    var contextId = attributes["context"];
+                    if (!routeId) {
+                        routeId = Core.trimQuotes(attributes["name"]);
+                    }
+                    attributes["routeId"] = routeId;
+                    attributes["mbean"] = objectName;
+                    attributes["container"] = container;
+                    attributes["type"] = "route";
+                    var route = null;
+                    if (routeId && matchesContextId(contextId)) {
+                        route = getOrAddNode("route", idPrefix + routeId, attributes, function () {
+                            return {
+                                name: routeId,
+                                typeLabel: "Route",
+                                container: container,
+                                objectName: objectName,
+                                jolokia: containerJolokia,
+                                popup: {
+                                    title: "Route: " + routeId,
+                                    content: "<p>context: " + contextId + "</p>"
+                                }
+                            };
+                        });
+                        if (addEndpointLink) {
+                            var uri = properties["EndpointUri"];
+                            if (uri && route) {
+                                var endpoint = null;
+                                var escaledUrl = Camel.escapeEndpointUriNameForJmx(uri);
+                                var urlsToTry = [uri, escaledUrl];
+                                angular.forEach(urlsToTry, function (key) {
+                                    if (!endpoint) {
+                                        endpoint = endpointUriToObject[key];
+                                    }
+                                });
+                                if (!endpoint) {
+                                    angular.forEach(urlsToTry, function (key) {
+                                        if (!endpoint) {
+                                            var idx = key.lastIndexOf("?");
+                                            if (idx > 0) {
+                                                var prefix = key.substring(0, idx);
+                                                endpoint = endpointUriToObject[prefix];
+                                            }
+                                        }
+                                    });
+                                }
+                                addLink(route, endpoint, "consumer");
+                            }
+                        }
+                        if ($scope.viewSettings.route && $scope.viewSettings.context) {
+                            if (!camelContext) {
+                                camelContext = getOrCreateCamelContext(contextId);
+                            }
+                            addLink(camelContext, route, "route");
+                        }
+                    }
+                    return route;
+                }
+                function getOrCreateEndpoint(objectName, uri, contextId) {
+                    if (uri === void 0) { uri = null; }
+                    if (contextId === void 0) { contextId = null; }
+                    if (!objectName) {
+                        // lets try guess the mbean name
+                        objectName = Camel.jmxDomain + ':context=' + contextId + ',type=endpoints,name="' + Camel.escapeEndpointUriNameForJmx(uri) + '"';
+                    }
+                    var details = Core.parseMBean(objectName);
+                    var attributes = details['attributes'];
+                    //log.info("attributes: " + angular.toJson(attributes));
+                    var contextId = attributes["context"];
+                    if (!uri) {
+                        uri = Core.trimQuotes(attributes["name"]);
+                    }
+                    attributes["uri"] = uri;
+                    attributes["mbean"] = objectName;
+                    attributes["container"] = container;
+                    attributes["contextId"] = contextId;
+                    var endpoint = null;
+                    if (uri && matchesContextId(contextId)) {
+                        endpoint = getOrAddNode("endpoint", idPrefix + uri, attributes, function () {
+                            return {
+                                name: uri,
+                                typeLabel: "Endpoint",
+                                container: container,
+                                objectName: objectName,
+                                jolokia: containerJolokia,
+                                popup: {
+                                    title: "Endpoint: " + uri,
+                                    content: "<p>context: " + contextId + "</p>"
+                                }
+                            };
+                        });
+                        if (endpoint) {
+                            endpointUriToObject[uri] = endpoint;
+                        }
+                    }
+                    return endpoint;
+                }
+                // lets use the old way for pre-camel 2.13 versions
+                function loadMetaDataFromEndpointMBeans() {
+                    // find routes
+                    if ($scope.viewSettings.route) {
+                        containerJolokia.request({ type: "read", mbean: "org.apache.camel:type=routes,*", attribute: ["EndpointUri"] }, Core.onSuccess(function (response) {
+                            angular.forEach(response.value, function (properties, objectName) {
+                                getOrCreateRoute(objectName, properties, true);
+                            });
+                            graphModelUpdated();
+                        }));
+                    }
+                    if ($scope.viewSettings.endpoint) {
+                        containerJolokia.search("org.apache.camel:type=endpoints,*", Core.onSuccess(function (response) {
+                            angular.forEach(response, function (objectName) {
+                                var endpoint = getOrCreateEndpoint(objectName);
+                                var camelContext = getOrCreateCamelContext(null, objectName);
+                                addLink(camelContext, endpoint, "endpoint");
+                            });
+                            graphModelUpdated();
+                        }));
+                    }
+                }
+                function getOrCreateCamelContext(contextId, contextMBean) {
+                    if (contextMBean === void 0) { contextMBean = null; }
+                    var answer = null;
+                    if (matchesContextId(contextId)) {
+                        if (!contextMBean) {
+                            // try guess the mbean name
+                            contextMBean = Camel.jmxDomain + ':context=' + contextId + ',type=context,name="' + contextId + '"';
+                        }
+                        if (!contextId && contextMBean) {
+                            var details = Core.parseMBean(contextMBean);
+                            var attributes = details['attributes'];
+                            contextId = attributes["context"];
+                        }
+                        var contextAttributes = {
+                            contextId: contextId
+                        };
+                        if ($scope.viewSettings.context) {
+                            answer = getOrAddNode("context", idPrefix + contextId, contextAttributes, function () {
+                                return {
+                                    name: contextId,
+                                    typeLabel: "CamelContext",
+                                    container: container,
+                                    objectName: contextMBean,
+                                    jolokia: containerJolokia,
+                                    popup: {
+                                        title: "CamelContext: " + contextId,
+                                        content: ""
+                                    }
+                                };
+                            });
+                        }
+                        // lets try out the new Camel 2.13 API to find endpoint usage...
+                        containerJolokia.execute(contextMBean, "createRouteStaticEndpointJson", Core.onSuccess(function (response) {
+                            if (angular.isString(response)) {
+                                var text = response;
+                                var data = null;
+                                try {
+                                    data = JSON.parse(text);
+                                }
+                                catch (e) {
+                                    // there's a bug in 2.13.0 - lets try trimming the final '}' to see if that makes it valid json ;)
+                                    text = Core.trimTrailing(text.trim(), "}");
+                                    try {
+                                        data = JSON.parse(text);
+                                    }
+                                    catch (e2) {
+                                        Camel.log.debug("Ignored invalid json: " + e + " from text: " + response);
+                                    }
+                                }
+                            }
+                            if (data) {
+                                angular.forEach(data["routes"], function (routeData, routeId) {
+                                    angular.forEach(routeData["inputs"], function (inputEndpoint) {
+                                        var inputUri = inputEndpoint["uri"];
+                                        if (inputUri) {
+                                            var route = getOrCreateRoute(null, {}, false, routeId, contextId, answer);
+                                            var input = getOrCreateEndpoint(null, inputUri, contextId);
+                                            var nextStep = route;
+                                            addLink(input, route, "endpoint");
+                                            angular.forEach(routeData["outputs"], function (outputEndpoint) {
+                                                var outputUri = outputEndpoint["uri"];
+                                                if (outputUri) {
+                                                    var output = getOrCreateEndpoint(null, outputUri, contextId);
+                                                    addLink(nextStep, output, "endpoint");
+                                                    nextStep = output;
+                                                }
+                                            });
+                                        }
+                                    });
+                                });
+                                Camel.log.info("Updating graph model!");
+                                graphModelUpdated();
+                            }
+                        }, {
+                            error: function (response) {
+                                // probably a pre-2.13 Camel implementation so lets use the old way
+                                if (!startedLoadMetaDataFromEndpointMBeans) {
+                                    startedLoadMetaDataFromEndpointMBeans = true;
+                                    loadMetaDataFromEndpointMBeans();
+                                }
+                            }
+                        }));
+                    }
+                    return answer;
+                }
+                containerJolokia.search("org.apache.camel:type=context,*", Core.onSuccess(function (response) {
+                    angular.forEach(response, function (objectName) {
+                        var details = Core.parseMBean(objectName);
+                        var attributes = details['attributes'];
+                        var contextId = attributes["context"];
+                        var uri = Core.trimQuotes(attributes["name"]);
+                        getOrCreateCamelContext(contextId, objectName);
+                    });
+                    //graphModelUpdated();
+                }));
+            }
+        }
+        function graphModelUpdated() {
+            $scope.graph = graphBuilder.buildGraph();
+            Core.$apply($scope);
+        }
+        function getOrAddNode(typeName, id, properties, createFn) {
+            var node = null;
+            if (id) {
+                var nodeId = typeName + ":" + id;
+                node = graphBuilder.getNode(nodeId);
+                if (!node) {
+                    var nodeValues = createFn();
+                    node = angular.copy(properties);
+                    angular.forEach(nodeValues, function (value, key) { return node[key] = value; });
+                    node['id'] = nodeId;
+                    if (!node['type']) {
+                        node['type'] = typeName;
+                    }
+                    if (!node['name']) {
+                        node['name'] = id;
+                    }
+                    if (node) {
+                        var size = $scope.shapeSize[typeName];
+                        if (size && !node['size']) {
+                            node['size'] = size;
+                        }
+                        if (!node['summary']) {
+                            node['summary'] = node['popup'] || "";
+                        }
+                        if (!$scope.viewSettings.popup) {
+                            delete node['popup'];
+                        }
+                        if (!$scope.viewSettings.label) {
+                            delete node['name'];
+                        }
+                        // lets not add nodes which are defined as being disabled
+                        var enabled = $scope.viewSettings[typeName];
+                        if (enabled || !angular.isDefined(enabled)) {
+                            //log.info("==== Adding node " + nodeId + " of type + " + typeName);
+                            graphBuilder.addNode(node);
+                        }
+                        else {
+                        }
+                    }
+                }
+            }
+            return node;
+        }
+        function addLink(object1, object2, linkType) {
+            if (object1 && object2) {
+                addLinkIds(object1.id, object2.id, linkType);
+            }
+        }
+        function addLinkIds(id1, id2, linkType) {
+            if (id1 && id2) {
+                //log.info("==== Linking " + id1 + " to " + id2);
+                graphBuilder.addLink(id1, id2, linkType);
+            }
+        }
+        /**
+         * Avoid the JMX type property clashing with the ForceGraph type property; used for associating css classes with nodes on the graph
+         *
+         * @param properties
+         */
+        function renameTypeProperty(properties) {
+            properties.mbeanType = properties['type'];
+            delete properties['type'];
+        }
+        function configureEndpointProperties(properties) {
+            renameTypeProperty(properties);
+            var destinationType = properties.destinationType || "Queue";
+            var typeName = destinationType.toLowerCase();
+            properties.isQueue = !typeName.startsWith("t");
+            properties['destType'] = typeName;
+        }
+    }]);
+})(Camel || (Camel = {}));
+
+var Camel;
+(function (Camel) {
+    Camel.jmsHeaderSchema = {
+        definitions: {
+            headers: {
+                properties: {
+                    JMSCorrelationID: {
+                        type: "java.lang.String"
+                    },
+                    JMSDeliveryMode: {
+                        "type": "string",
+                        "enum": [
+                            "PERSISTENT",
+                            "NON_PERSISTENT"
+                        ]
+                    },
+                    JMSDestination: {
+                        type: "javax.jms.Destination"
+                    },
+                    JMSExpiration: {
+                        type: "long"
+                    },
+                    JMSPriority: {
+                        type: "int"
+                    },
+                    JMSReplyTo: {
+                        type: "javax.jms.Destination"
+                    },
+                    JMSType: {
+                        type: "java.lang.String"
+                    },
+                    JMSXGroupId: {
+                        type: "java.lang.String"
+                    },
+                    AMQ_SCHEDULED_CRON: {
+                        type: "java.lang.String"
+                    },
+                    AMQ_SCHEDULED_DELAY: {
+                        type: "java.lang.String"
+                    },
+                    AMQ_SCHEDULED_PERIOD: {
+                        type: "java.lang.String"
+                    },
+                    AMQ_SCHEDULED_REPEAT: {
+                        type: "java.lang.String"
+                    }
+                }
+            },
+            "javax.jms.Destination": {
+                type: "java.lang.String"
+            }
+        }
+    };
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+/**
+ * @module Camel
+ */
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.PreferencesController", ["$scope", "localStorage", function ($scope, localStorage) {
+        Core.initPreferenceScope($scope, localStorage, {
+            'camelIgnoreIdForLabel': {
+                'value': false,
+                'converter': Core.parseBooleanValue
+            },
+            'camelMaximumLabelWidth': {
+                'value': Camel.defaultMaximumLabelWidth,
+                'converter': parseInt
+            },
+            'camelMaximumTraceOrDebugBodyLength': {
+                'value': Camel.defaultCamelMaximumTraceOrDebugBodyLength,
+                'converter': parseInt
+            },
+            'camelTraceOrDebugIncludeStreams': {
+                'value': Camel.defaultCamelTraceOrDebugIncludeStreams,
+                'converter': Core.parseBooleanValue
+            },
+            'camelRouteMetricMaxSeconds': {
+                'value': Camel.defaultCamelRouteMetricMaxSeconds,
+                'converter': parseInt
+            }
+        });
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.ProfileRouteController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.data = [];
+        $scope.calcManually = true;
+        $scope.icons = {};
+        $scope.selectedRouteId = "";
+        var columnDefs = [
+            {
+                field: 'id',
+                displayName: 'Id',
+                cellTemplate: '<div class="ngCellText" ng-bind-html-unsafe="rowIcon(row.entity.id)"></div>',
+                cellFilter: null,
+                width: "**",
+                resizable: true
+            },
+            {
+                field: 'count',
+                displayName: 'Count',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'last',
+                displayName: 'Last',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'delta',
+                displayName: 'Delta',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'mean',
+                displayName: 'Mean',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'min',
+                displayName: 'Min',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'max',
+                displayName: 'Max',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'total',
+                displayName: 'Total',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'self',
+                displayName: 'Self',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            }
+        ];
+        $scope.rowIcon = function (id) {
+            var entry = $scope.icons[id];
+            if (entry) {
+                return entry.img + " " + id;
+            }
+            else {
+                return id;
+            }
+        };
+        $scope.gridOptions = {
+            data: 'data',
+            displayFooter: true,
+            displaySelectionCheckbox: false,
+            canSelectRows: false,
+            enableSorting: false,
+            columnDefs: columnDefs,
+            filterOptions: {
+                filterText: ''
+            }
+        };
+        var populateProfileMessages = function (response) {
+            var updatedData = [];
+            // its xml structure so we need to parse it
+            var xml = response.value;
+            if (angular.isString(xml)) {
+                // lets parse the XML DOM here...
+                var doc = $.parseXML(xml);
+                var routeMessages = $(doc).find("routeStat");
+                routeMessages.each(function (idx, message) {
+                    var messageData = {
+                        id: {},
+                        count: {},
+                        last: {},
+                        delta: {},
+                        mean: {},
+                        min: {},
+                        max: {},
+                        total: {},
+                        self: {}
+                    };
+                    // compare counters, as we only update if we have new data
+                    messageData.id = message.getAttribute("id");
+                    var total = 0;
+                    total += +message.getAttribute("exchangesCompleted");
+                    total += +message.getAttribute("exchangesFailed");
+                    messageData.count = total;
+                    messageData.last = message.getAttribute("lastProcessingTime");
+                    // delta is only avail from Camel 2.11 onwards
+                    var delta = message.getAttribute("deltaProcessingTime");
+                    if (delta) {
+                        messageData.delta = delta;
+                    }
+                    else {
+                        messageData.delta = 0;
+                    }
+                    messageData.mean = message.getAttribute("meanProcessingTime");
+                    messageData.min = message.getAttribute("minProcessingTime");
+                    messageData.max = message.getAttribute("maxProcessingTime");
+                    messageData.total = message.getAttribute("totalProcessingTime");
+                    // self is pre calculated from Camel 2.11 onwards
+                    var self = message.getAttribute("selfProcessingTime");
+                    if (self) {
+                        messageData.self = self;
+                    }
+                    else {
+                        // we need to calculate this manually
+                        $scope.calcManually = true;
+                        messageData.self = "0";
+                    }
+                    updatedData.push(messageData);
+                });
+                var processorMessages = $(doc).find("processorStat");
+                processorMessages.each(function (idx, message) {
+                    var messageData = {
+                        id: {},
+                        count: {},
+                        last: {},
+                        delta: {},
+                        mean: {},
+                        min: {},
+                        max: {},
+                        total: {},
+                        self: {}
+                    };
+                    messageData.id = message.getAttribute("id");
+                    var total = 0;
+                    total += +message.getAttribute("exchangesCompleted");
+                    total += +message.getAttribute("exchangesFailed");
+                    messageData.count = total;
+                    messageData.last = message.getAttribute("lastProcessingTime");
+                    // delta is only avail from Camel 2.11 onwards
+                    var delta = message.getAttribute("deltaProcessingTime");
+                    if (delta) {
+                        messageData.delta = delta;
+                    }
+                    else {
+                        messageData.delta = 0;
+                    }
+                    messageData.mean = message.getAttribute("meanProcessingTime");
+                    messageData.min = message.getAttribute("minProcessingTime");
+                    messageData.max = message.getAttribute("maxProcessingTime");
+                    // total time for processors is pre calculated as accumulated from Camel 2.11 onwards
+                    var apt = message.getAttribute("accumulatedProcessingTime");
+                    if (apt) {
+                        messageData.total = apt;
+                    }
+                    else {
+                        messageData.total = "0";
+                    }
+                    // self time for processors is their total time
+                    messageData.self = message.getAttribute("totalProcessingTime");
+                    updatedData.push(messageData);
+                });
+            }
+            // for Camel 2.10 or older we need to run through the data and calculate the self/total times manually
+            if ($scope.calcManually) {
+                // sort the data accordingly to order in the icons map
+                updatedData.sort(function (e1, e2) {
+                    var entry1 = $scope.icons[e1.id];
+                    var entry2 = $scope.icons[e2.id];
+                    if (entry1 && entry2) {
+                        return entry1.index - entry2.index;
+                    }
+                    else {
+                        return 0;
+                    }
+                });
+                var accTotal = 0;
+                updatedData.reverse().forEach(function (data, idx) {
+                    // update accTotal with self time
+                    if (idx < updatedData.length - 1) {
+                        // each processor should have the total updated with the accumulated total
+                        accTotal += +data.self;
+                        data.total = accTotal;
+                    }
+                    else {
+                        // the last row is the route, which should have self calculated as follows
+                        data.self = +(data.total - accTotal);
+                        // just to be safe we dont want negative values self value for the route
+                        if (data.self < 0) {
+                            data.self = 0;
+                        }
+                    }
+                });
+                // reverse back again
+                updatedData.reverse();
+            }
+            // TODO: need a way to update data without flickering
+            // if we do as below with the forEach then the data does not update
+            // replace data with updated data
+            $scope.data = updatedData;
+            Core.$apply($scope);
+        };
+        // function to trigger reloading page
+        $scope.onResponse = function (response) {
+            //console.log("got response: " + response);
+            loadData();
+        };
+        $scope.$watch('workspace.tree', function () {
+            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
+            // so lets reload, asynchronously just in case
+            setTimeout(loadData, 50);
+        });
+        function initIdToIcon() {
+            console.log("initializing id and icons");
+            $scope.icons = {};
+            var routeXml = Core.pathGet(workspace.selection, ["routeXmlNode"]);
+            if (routeXml) {
+                // add route id first
+                var entry = {
+                    img: "",
+                    index: 0
+                };
+                entry.index = -1;
+                entry.img = "<img src='img/icons/camel/camel_route.png'>";
+                $scope.icons[$scope.selectedRouteId] = entry;
+                // then each processor id and icons
+                $(routeXml).find('*').each(function (idx, element) {
+                    var id = element.getAttribute("id");
+                    if (id) {
+                        var entry = {
+                            img: "",
+                            index: 0
+                        };
+                        entry.index = idx;
+                        var icon = Camel.getRouteNodeIcon(element);
+                        if (icon) {
+                            entry.img = "<img src='" + icon + "'>";
+                        }
+                        else {
+                            entry.img = "";
+                        }
+                        $scope.icons[id] = entry;
+                    }
+                });
+            }
+        }
+        function loadData() {
+            console.log("Loading Camel route profile data...");
+            $scope.selectedRouteId = Camel.getSelectedRouteId(workspace);
+            var routeMBean = Camel.getSelectionRouteMBean(workspace, $scope.selectedRouteId);
+            console.log("Selected route is " + $scope.selectedRouteId);
+            if (Camel.isCamelVersionEQGT(2, 11, workspace, jolokia)) {
+                // this is Camel 2.11 or better so we dont need to calculate data manually
+                console.log("Camel 2.11 or better detected");
+                $scope.calcManually = false;
+            }
+            else {
+                console.log("Camel 2.10 or older detected");
+                $scope.calcManually = true;
+            }
+            initIdToIcon();
+            console.log("Initialized icons, with " + $scope.icons.length + " icons");
+            // schedule update the profile data, based on the configured interval
+            // TOOD: the icons is not initialized the first time, for some reason, the routeXmlNode is empty/undefined
+            // TODO: have cellFilter with bar grey-scale for highlighting the scales between the numbers
+            // TODO: have the icons indent, there is some CSS ninja crack to do this
+            var query = { type: 'exec', mbean: routeMBean, operation: 'dumpRouteStatsAsXml(boolean,boolean)', arguments: [false, true] };
+            Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateProfileMessages, query));
+        }
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.PropertiesController", ["$scope", "workspace", function ($scope, workspace) {
+        $scope.viewTemplate = null;
+        $scope.schema = Camel._apacheCamelModel;
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            // lets do this asynchronously to avoid Error: $digest already in progress
+            setTimeout(updateData, 50);
+        });
+        $scope.$watch('workspace.selection', function () {
+            if (workspace.moveIfViewInvalid())
+                return;
+            updateData();
+        });
+        function updateData() {
+            var routeXmlNode = Camel.getSelectedRouteNode(workspace);
+            $scope.nodeData = Camel.getRouteNodeJSON(routeXmlNode);
+            if (routeXmlNode) {
+                var nodeName = routeXmlNode.nodeName;
+                $scope.model = Camel.getCamelSchema(nodeName);
+                if ($scope.model) {
+                    console.log("data is: " + JSON.stringify($scope.nodeData, null, "  "));
+                    console.log("model schema is: " + JSON.stringify($scope.model, null, "  "));
+                    $scope.viewTemplate = "plugins/camel/html/nodePropertiesView.html";
+                }
+            }
+        }
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.RestServiceController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.data = [];
+        $scope.selectedMBean = null;
+        $scope.mbeanAttributes = {};
+        var columnDefs = [
+            {
+                field: 'url',
+                displayName: 'Absolute Url',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'baseUrl',
+                displayName: 'Base Url',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'basePath',
+                displayName: 'Base Path',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'uriTemplate',
+                displayName: 'Uri Template',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'method',
+                displayName: 'Method',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'consumes',
+                displayName: 'Consumes',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'produces',
+                displayName: 'Produces',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'inType',
+                displayName: 'Input Type',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'outType',
+                displayName: 'Output Type',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'state',
+                displayName: 'State',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'routeId',
+                displayName: 'Route Id',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'description',
+                displayName: 'Description',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            }
+        ];
+        $scope.gridOptions = {
+            data: 'data',
+            displayFooter: true,
+            displaySelectionCheckbox: false,
+            canSelectRows: false,
+            enableSorting: true,
+            columnDefs: columnDefs,
+            selectedItems: [],
+            filterOptions: {
+                filterText: ''
+            }
+        };
+        function onRestRegistry(response) {
+            var obj = response.value;
+            if (obj) {
+                // the JMX tabular data has 2 indexes so we need to dive 2 levels down to grab the data
+                var arr = [];
+                for (var key in obj) {
+                    var values = obj[key];
+                    for (var v in values) {
+                        var entry = values[v];
+                        arr.push({
+                            url: entry.url,
+                            baseUrl: entry.baseUrl,
+                            basePath: entry.basePath,
+                            uriTemplate: entry.uriTemplate,
+                            method: entry.method,
+                            consumes: entry.consumes,
+                            produces: entry.produces,
+                            inType: entry.inType,
+                            outType: entry.outType,
+                            state: entry.state,
+                            routeId: entry.routeId,
+                            description: entry.description
+                        });
+                    }
+                }
+                arr = arr.sortBy("url");
+                $scope.data = arr;
+                // okay we have the data then set the selected mbean which allows UI to display data
+                $scope.selectedMBean = response.request.mbean;
+            }
+            else {
+                // set the mbean to a value so the ui can get updated
+                $scope.selectedMBean = "true";
+            }
+            // ensure web page is updated
+            Core.$apply($scope);
+        }
+        $scope.renderIcon = function (state) {
+            return Camel.iconClass(state);
+        };
+        function loadRestRegistry() {
+            console.log("Loading RestRegistry data...");
+            var mbean = Camel.getSelectionCamelRestRegistry(workspace);
+            if (mbean) {
+                jolokia.request({ type: 'exec', mbean: mbean, operation: 'listRestServices' }, Core.onSuccess(onRestRegistry));
+            }
+        }
+        // load data
+        loadRestRegistry();
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.RouteMetricsController", ["$scope", "$location", "workspace", "jolokia", "metricsWatcher", function ($scope, $location, workspace, jolokia, metricsWatcher) {
+        var log = Logger.get("Camel");
+        $scope.maxSeconds = Camel.routeMetricMaxSeconds(localStorage);
+        $scope.filterText = null;
+        $scope.initDone = false;
+        $scope.metricDivs = [];
+        $scope.filterByRoute = function (div) {
+            log.debug("Filter by route " + div);
+            var match = Core.matchFilterIgnoreCase(div.routeId, $scope.filterText);
+            if (!match) {
+                // hide using CSS style
+                return "display: none;";
+            }
+            else {
+                return "";
+            }
+        };
+        function populateRouteStatistics(response) {
+            var obj = response.value;
+            if (obj) {
+                // turn into json javascript object which metrics watcher requires
+                var json = JSON.parse(obj);
+                if (!$scope.initDone) {
+                    // figure out which routes we have
+                    var meters = json['timers'];
+                    var counter = 0;
+                    if (meters != null) {
+                        for (var v in meters) {
+                            var key = v;
+                            var lastDot = key.lastIndexOf(".");
+                            var className = key.substr(0, lastDot);
+                            var metricsName = key.substr(lastDot + 1);
+                            var firstColon = key.indexOf(":");
+                            // compute route id from the key, which is text after the 1st colon, and the last dot
+                            var routeId = key.substr(firstColon + 1);
+                            lastDot = routeId.lastIndexOf(".");
+                            if (lastDot > 0) {
+                                routeId = routeId.substr(0, lastDot);
+                            }
+                            var entry = meters[v];
+                            var div = "timer-" + counter;
+                            $scope.metricDivs.push({
+                                id: div,
+                                routeId: routeId
+                            });
+                            counter++;
+                            log.info("Added timer: " + div + " (" + className + "." + metricsName + ") for route: " + routeId + " with max seconds: " + $scope.maxSeconds);
+                            metricsWatcher.addTimer(div, className, metricsName, $scope.maxSeconds, routeId, "Histogram", $scope.maxSeconds * 1000);
+                        }
+                        // ensure web page is updated at this point, as we need the metricDivs in the HTML before we call init graphs later
+                        log.info("Pre-init graphs");
+                        Core.$apply($scope);
+                    }
+                    log.info("Init graphs");
+                    metricsWatcher.initGraphs();
+                }
+                $scope.initDone = true;
+                // update graphs
+                log.debug("Updating graphs: " + json);
+                metricsWatcher.updateGraphs(json);
+            }
+            $scope.initDone = true;
+            // ensure web page is updated
+            Core.$apply($scope);
+        }
+        // function to trigger reloading page
+        $scope.onResponse = function (response) {
+            loadData();
+        };
+        $scope.$watch('workspace.tree', function () {
+            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
+            // so lets reload, asynchronously just in case
+            setTimeout(loadData, 50);
+        });
+        function loadData() {
+            log.info("Loading RouteMetrics data...");
+            // pre-select filter if we have selected a route
+            var routeId = Camel.getSelectedRouteId(workspace);
+            if (routeId != null) {
+                $scope.filterText = routeId;
+            }
+            var mbean = Camel.getSelectionCamelRouteMetrics(workspace);
+            if (mbean) {
+                var query = { type: 'exec', mbean: mbean, operation: 'dumpStatisticsAsJson' };
+                Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateRouteStatistics, query));
+            }
+            else {
+                $scope.initDone = true;
+                // ensure web page is updated
+                Core.$apply($scope);
+            }
+        }
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.RouteController", ["$scope", "$routeParams", "$element", "$timeout", "workspace", "$location", "jolokia", "localStorage", function ($scope, $routeParams, $element, $timeout, workspace, $location, jolokia, localStorage) {
+        var log = Logger.get("Camel");
+        $scope.routes = [];
+        $scope.routeNodes = {};
+        // if we are in dashboard then $routeParams may be null
+        if ($routeParams != null) {
+            $scope.contextId = $routeParams["contextId"];
+            $scope.routeId = Core.trimQuotes($routeParams["routeId"]);
+            $scope.isJmxTab = !$routeParams["contextId"] || !$routeParams["routeId"];
+        }
+        $scope.camelIgnoreIdForLabel = Camel.ignoreIdForLabel(localStorage);
+        $scope.camelMaximumLabelWidth = Camel.maximumLabelWidth(localStorage);
+        var updateRoutes = Core.throttled(doUpdateRoutes, 1000);
+        // lets delay a little updating the routes to avoid timing issues where we've not yet
+        // fully loaded the workspace and/or the XML model
+        var delayUpdatingRoutes = 300;
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            // lets do this asynchronously to avoid Error: $digest already in progress
+            $timeout(updateRoutes, delayUpdatingRoutes);
+        });
+        $scope.$watch('workspace.selection', function () {
+            if ($scope.isJmxTab && workspace.moveIfViewInvalid())
+                return;
+            $timeout(updateRoutes, delayUpdatingRoutes);
+        });
+        $scope.$on('jmxTreeUpdated', function () {
+            $timeout(updateRoutes, delayUpdatingRoutes);
+        });
+        $scope.$watch('nodeXmlNode', function () {
+            if ($scope.isJmxTab && workspace.moveIfViewInvalid())
+                return;
+            $timeout(updateRoutes, delayUpdatingRoutes);
+        });
+        function doUpdateRoutes() {
+            var routeXmlNode = null;
+            if (!$scope.ignoreRouteXmlNode) {
+                routeXmlNode = Camel.getSelectedRouteNode(workspace);
+                if (!routeXmlNode) {
+                    routeXmlNode = $scope.nodeXmlNode;
+                }
+                if (routeXmlNode && routeXmlNode.localName !== "route") {
+                    var wrapper = document.createElement("route");
+                    wrapper.appendChild(routeXmlNode.cloneNode(true));
+                    routeXmlNode = wrapper;
+                }
+            }
+            $scope.mbean = Camel.getSelectionCamelContextMBean(workspace);
+            if (!$scope.mbean && $scope.contextId) {
+                $scope.mbean = Camel.getCamelContextMBean(workspace, $scope.contextId);
+            }
+            if (routeXmlNode) {
+                // lets show the remaining parts of the diagram of this route node
+                $scope.nodes = {};
+                var nodes = [];
+                var links = [];
+                $scope.processorTree = Camel.camelProcessorMBeansById(workspace);
+                Camel.addRouteXmlChildren($scope, routeXmlNode, nodes, links, null, 0, 0);
+                showGraph(nodes, links);
+            }
+            else if ($scope.mbean) {
+                jolokia.request({ type: 'exec', mbean: $scope.mbean, operation: 'dumpRoutesAsXml()' }, Core.onSuccess(populateTable));
+            }
+            else {
+                log.info("No camel context bean! Selection: " + workspace.selection);
+            }
+        }
+        var populateTable = function (response) {
+            var data = response.value;
+            // routes is the xml data of the routes
+            $scope.routes = data;
+            // nodes and routeNodes is the GUI nodes for the processors and routes shown in the diagram
+            $scope.nodes = {};
+            $scope.routeNodes = {};
+            var nodes = [];
+            var links = [];
+            var selectedRouteId = $scope.routeId;
+            if (!selectedRouteId) {
+                selectedRouteId = Camel.getSelectedRouteId(workspace);
+            }
+            if (data) {
+                var doc = $.parseXML(data);
+                $scope.processorTree = Camel.camelProcessorMBeansById(workspace);
+                Camel.loadRouteXmlNodes($scope, doc, selectedRouteId, nodes, links, getWidth());
+                showGraph(nodes, links);
+            }
+            else {
+                console.log("No data from route XML!");
+            }
+            Core.$apply($scope);
+        };
+        var postfix = " selected";
+        function isSelected(node) {
+            if (node) {
+                var className = node.getAttribute("class");
+                return className && className.endsWith(postfix);
+            }
+            return false;
+        }
+        function setSelected(node, flag) {
+            var answer = false;
+            if (node) {
+                var className = node.getAttribute("class");
+                var selected = className && className.endsWith(postfix);
+                if (selected) {
+                    className = className.substring(0, className.length - postfix.length);
+                }
+                else {
+                    if (!flag) {
+                        // no need to change!
+                        return answer;
+                    }
+                    className = className + postfix;
+                    answer = true;
+                }
+                node.setAttribute("class", className);
+            }
+            return answer;
+        }
+        function showGraph(nodes, links) {
+            var canvasDiv = $($element);
+            var width = getWidth();
+            var height = getHeight();
+            var svg = canvasDiv.children("svg")[0];
+            $scope.graphData = Core.dagreLayoutGraph(nodes, links, width, height, svg);
+            var gNodes = canvasDiv.find("g.node");
+            gNodes.click(function () {
+                var selected = isSelected(this);
+                // lets clear all selected flags
+                gNodes.each(function (idx, element) {
+                    setSelected(element, false);
+                });
+                var cid = null;
+                if (!selected) {
+                    cid = this.getAttribute("data-cid");
+                    setSelected(this, true);
+                }
+                $scope.$emit("camel.diagram.selectedNodeId", cid);
+                Core.$apply($scope);
+            });
+            // TODO: https://github.com/hawtio/hawtio/issues/1261
+            // we need some kind of right-click menu on d3
+            // disabled code below as its work in progress
+            /*      gNodes.dblclick(function() {
+                    //var allStats = $(doc).find("processorStat");
+                    var cid = this.getAttribute("data-cid");
+                    log.info("You double clicked " + cid);
+            
+                    // find the node of the cid we clicked, and then find the folder in the Camel tree
+                    // to grab the folder key, which is the nid for the location in the JMX plugin to
+                    // view the processor mbean
+                    var node = $scope.nodes[cid];
+                    if (node) {
+                      var pid = node.elementId;
+            
+                      var processors = camelProcessorMBeansById(workspace);
+                      var processor = processors[pid];
+                      if (processor) {
+                        var key = processor.key;
+                        // change url to jmx attributes so we can see the jmx stats for the selected processor
+                        $location.search("nid", key);
+                        var url = "/jmx/attributes";
+                        var href = Core.createHref($location, url);
+                        // change path to the jmx attributes page so we can see the processor mbean
+                        log.info("Changing to path: " + href);
+                        $location.url(href);
+                        Core.$apply($scope);
+                      }
+                    }
+                  });*/
+            if ($scope.mbean) {
+                Core.register(jolokia, $scope, {
+                    type: 'exec',
+                    mbean: $scope.mbean,
+                    operation: 'dumpRoutesStatsAsXml',
+                    arguments: [true, true]
+                }, Core.onSuccess(statsCallback, { silent: true, error: false }));
+            }
+            $scope.$emit("camel.diagram.layoutComplete");
+            return width;
+        }
+        function getWidth() {
+            var canvasDiv = $($element);
+            return canvasDiv.width();
+        }
+        function getHeight() {
+            var canvasDiv = $($element);
+            return Camel.getCanvasHeight(canvasDiv);
+        }
+        function statsCallback(response) {
+            var data = response.value;
+            if (data) {
+                var doc = $.parseXML(data);
+                var allStats = $(doc).find("routeStat");
+                allStats.each(function (idx, stat) {
+                    addTooltipToNode(true, stat);
+                });
+                var allStats = $(doc).find("processorStat");
+                allStats.each(function (idx, stat) {
+                    addTooltipToNode(false, stat);
+                });
+                // now lets try update the graph
+                Core.dagreUpdateGraphData($scope.graphData);
+            }
+            function addTooltipToNode(isRoute, stat) {
+                // we could have used a function instead of the boolean isRoute parameter (but sometimes that is easier)
+                var id = stat.getAttribute("id");
+                var completed = stat.getAttribute("exchangesCompleted");
+                var tooltip = "";
+                if (id && completed) {
+                    var container = isRoute ? $scope.routeNodes : $scope.nodes;
+                    var node = container[id];
+                    if (!node) {
+                        angular.forEach(container, function (value, key) {
+                            if (!node && id === value.elementId) {
+                                node = value;
+                            }
+                        });
+                    }
+                    if (node) {
+                        var total = 0 + parseInt(completed);
+                        var failed = stat.getAttribute("exchangesFailed");
+                        if (failed) {
+                            total += parseInt(failed);
+                        }
+                        var last = stat.getAttribute("lastProcessingTime");
+                        var mean = stat.getAttribute("meanProcessingTime");
+                        var min = stat.getAttribute("minProcessingTime");
+                        var max = stat.getAttribute("maxProcessingTime");
+                        tooltip = "last: " + last + " (ms)\nmean: " + mean + " (ms)\nmin: " + min + " (ms)\nmax: " + max + " (ms)";
+                        node["counter"] = total;
+                        var labelSummary = node["labelSummary"];
+                        if (labelSummary) {
+                            tooltip = labelSummary + "\n\n" + tooltip;
+                        }
+                        node["tooltip"] = tooltip;
+                    }
+                    else {
+                    }
+                }
+            }
+        }
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    var DELIVERY_PERSISTENT = "2";
+    Camel._module.controller("Camel.SendMessageController", ["$route", "$scope", "$element", "$timeout", "workspace", "jolokia", "localStorage", "$location", "activeMQMessage", function ($route, $scope, $element, $timeout, workspace, jolokia, localStorage, $location, activeMQMessage) {
+        var log = Logger.get("Camel");
+        log.info("Loaded page!");
+        $scope.noCredentials = false;
+        $scope.showChoose = false;
+        $scope.profileFileNames = [];
+        $scope.profileFileNameToProfileId = {};
+        $scope.selectedFiles = {};
+        $scope.container = {};
+        $scope.message = "\n\n\n\n";
+        $scope.headers = [];
+        // bind model values to search params...
+        Core.bindModelToSearchParam($scope, $location, "tab", "subtab", "compose");
+        Core.bindModelToSearchParam($scope, $location, "searchText", "q", "");
+        // only reload the page if certain search parameters change
+        Core.reloadWhenParametersChange($route, $scope, $location);
+        $scope.checkCredentials = function () {
+            $scope.noCredentials = (Core.isBlank(localStorage['activemqUserName']) || Core.isBlank(localStorage['activemqPassword']));
+        };
+        if ($location.path().has('activemq')) {
+            $scope.localStorage = localStorage;
+            $scope.$watch('localStorage.activemqUserName', $scope.checkCredentials);
+            $scope.$watch('localStorage.activemqPassword', $scope.checkCredentials);
+            //prefill if it's a resent
+            if (activeMQMessage.message !== null) {
+                $scope.message = activeMQMessage.message.bodyText;
+                if (activeMQMessage.message.PropertiesText !== null) {
+                    for (var p in activeMQMessage.message.StringProperties) {
+                        $scope.headers.push({ name: p, value: activeMQMessage.message.StringProperties[p] });
+                    }
+                }
+            }
+            // always reset at the end
+            activeMQMessage.message = null;
+        }
+        $scope.openPrefs = function () {
+            $location.search('pref', 'ActiveMQ');
+            $scope.$emit("hawtioOpenPrefs");
+        };
+        var LANGUAGE_FORMAT_PREFERENCE = "defaultLanguageFormat";
+        var sourceFormat = workspace.getLocalStorage(LANGUAGE_FORMAT_PREFERENCE) || "javascript";
+        // TODO Remove this if possible
+        $scope.codeMirror = undefined;
+        var options = {
+            mode: {
+                name: sourceFormat
+            },
+            // Quick hack to get the codeMirror instance.
+            onChange: function (codeMirror) {
+                if (!$scope.codeMirror) {
+                    $scope.codeMirror = codeMirror;
+                }
+            }
+        };
+        $scope.codeMirrorOptions = CodeEditor.createEditorSettings(options);
+        $scope.addHeader = function () {
+            $scope.headers.push({ name: "", value: "" });
+            // lets set the focus to the last header
+            if ($element) {
+                $timeout(function () {
+                    var lastHeader = $element.find("input.headerName").last();
+                    lastHeader.focus();
+                }, 100);
+            }
+        };
+        $scope.removeHeader = function (header) {
+            $scope.headers = $scope.headers.remove(header);
+        };
+        $scope.defaultHeaderNames = function () {
+            var answer = [];
+            function addHeaderSchema(schema) {
+                angular.forEach(schema.definitions.headers.properties, function (value, name) {
+                    answer.push(name);
+                });
+            }
+            if (isJmsEndpoint()) {
+                addHeaderSchema(Camel.jmsHeaderSchema);
+            }
+            if (isCamelEndpoint()) {
+                addHeaderSchema(Camel.camelHeaderSchema);
+            }
+            return answer;
+        };
+        $scope.$watch('workspace.selection', function () {
+            // if the current JMX selection does not support sending messages then lets redirect the page
+            workspace.moveIfViewInvalid();
+            loadProfileConfigurationFiles();
+        });
+        /* save the sourceFormat in preferences for later
+         * Note, this would be controller specific preferences and not the global, overriding, preferences */
+        // TODO Use ng-selected="changeSourceFormat()" - Although it seemed to fire multiple times..
+        $scope.$watch('codeMirrorOptions.mode.name', function (newValue, oldValue) {
+            workspace.setLocalStorage(LANGUAGE_FORMAT_PREFERENCE, newValue);
+        });
+        var sendWorked = function () {
+            $scope.message = "";
+            Core.notification("success", "Message sent!");
+        };
+        $scope.autoFormat = function () {
+            setTimeout(function () {
+                CodeEditor.autoFormatEditor($scope.codeMirror);
+            }, 50);
+        };
+        $scope.sendMessage = function () {
+            var body = $scope.message;
+            doSendMessage(body, sendWorked);
+        };
+        function doSendMessage(body, onSendCompleteFn) {
+            var selection = workspace.selection;
+            if (selection) {
+                var mbean = selection.objectName;
+                if (mbean) {
+                    var headers = null;
+                    if ($scope.headers.length) {
+                        headers = {};
+                        angular.forEach($scope.headers, function (object) {
+                            var key = object.name;
+                            if (key) {
+                                headers[key] = object.value;
+                            }
+                        });
+                        log.info("About to send headers: " + JSON.stringify(headers));
+                    }
+                    var callback = Core.onSuccess(onSendCompleteFn);
+                    if (selection.domain === "org.apache.camel") {
+                        var target = Camel.getContextAndTargetEndpoint(workspace);
+                        var uri = target['uri'];
+                        mbean = target['mbean'];
+                        if (mbean && uri) {
+                            // if we are running Camel 2.14 we can check if its posible to send to the endppoint
+                            var ok = true;
+                            if (Camel.isCamelVersionEQGT(2, 14, workspace, jolokia)) {
+                                var reply = jolokia.execute(mbean, "canSendToEndpoint(java.lang.String)", uri);
+                                if (!reply) {
+                                    Core.notification("warning", "Camel does not support sending to this endpoint.");
+                                    ok = false;
+                                }
+                            }
+                            if (ok) {
+                                if (headers) {
+                                    jolokia.execute(mbean, "sendBodyAndHeaders(java.lang.String, java.lang.Object, java.util.Map)", uri, body, headers, callback);
+                                }
+                                else {
+                                    jolokia.execute(mbean, "sendStringBody(java.lang.String, java.lang.String)", uri, body, callback);
+                                }
+                            }
+                        }
+                        else {
+                            if (!mbean) {
+                                Core.notification("error", "Could not find CamelContext MBean!");
+                            }
+                            else {
+                                Core.notification("error", "Failed to determine endpoint name!");
+                            }
+                            log.debug("Parsed context and endpoint: ", target);
+                        }
+                    }
+                    else {
+                        var user = localStorage["activemqUserName"];
+                        var pwd = localStorage["activemqPassword"];
+                        // AMQ is sending non persistent by default, so make sure we tell to sent persistent by default
+                        if (!headers) {
+                            headers = {};
+                        }
+                        if (!headers["JMSDeliveryMode"]) {
+                            headers["JMSDeliveryMode"] = DELIVERY_PERSISTENT;
+                        }
+                        jolokia.execute(mbean, "sendTextMessage(java.util.Map, java.lang.String, java.lang.String, java.lang.String)", headers, body, user, pwd, callback);
+                    }
+                }
+            }
+        }
+        $scope.fileSelection = function () {
+            var answer = [];
+            angular.forEach($scope.selectedFiles, function (value, key) {
+                if (value) {
+                    answer.push(key);
+                }
+            });
+            return answer;
+        };
+        $scope.sendSelectedFiles = function () {
+            var filesToSend = $scope.fileSelection();
+            var fileCount = filesToSend.length;
+            var version = $scope.container.versionId || "1.0";
+            function onSendFileCompleted(response) {
+                if (filesToSend.length) {
+                    var fileName = filesToSend.pop();
+                    if (fileName) {
+                        // lets load the file data...
+                        var profile = $scope.profileFileNameToProfileId[fileName];
+                        if (profile) {
+                        }
+                    }
+                }
+                else {
+                    var text = Core.maybePlural(fileCount, "Message") + " sent!";
+                    Core.notification("success", text);
+                }
+            }
+            // now lets start sending
+            onSendFileCompleted(null);
+        };
+        function isCamelEndpoint() {
+            // TODO check for the camel or if its an activemq endpoint
+            return true;
+        }
+        function isJmsEndpoint() {
+            // TODO check for the jms/activemq endpoint in camel or if its an activemq endpoint
+            return true;
+        }
+        function loadProfileConfigurationFiles() {
+            /*
+                  TODO
+                  if (Fabric.fabricCreated(workspace)) {
+                    $scope.container = Fabric.getCurrentContainer(jolokia, ['versionId', 'profileIds']);
+                    jolokia.execute(Fabric.managerMBean, "currentContainerConfigurationFiles", Core.onSuccess(onFabricConfigFiles));
+                  }
+            */
+        }
+        function onFabricConfigFiles(response) {
+            $scope.profileFileNameToProfileId = response;
+            // we only want files from the data dir
+            $scope.profileFileNames = Object.keys(response).filter(function (key) {
+                return key.toLowerCase().startsWith('data/');
+            }).sort();
+            $scope.showChoose = $scope.profileFileNames.length ? true : false;
+            $scope.selectedFiles = {};
+            Core.$apply($scope);
+        }
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.SourceController", ["$scope", "workspace", function ($scope, workspace) {
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            // lets do this asynchronously to avoid Error: $digest already in progress
+            setTimeout(updateRoutes, 50);
+        });
+        $scope.$watch('workspace.selection', function () {
+            if (workspace.moveIfViewInvalid())
+                return;
+            updateRoutes();
+        });
+        $scope.mode = 'xml';
+        function getSource(routeXmlNode) {
+            function removeCrappyHeaders(idx, e) {
+                var answer = e.getAttribute("customId");
+                if (e.nodeName === 'route') {
+                    // always keep id on <route> element
+                    answer = "true";
+                }
+                if (!answer || answer !== "true") {
+                    e.removeAttribute("id");
+                }
+                // just always remove customId, _cid, and group
+                e.removeAttribute("customId");
+                e.removeAttribute("_cid");
+                e.removeAttribute("group");
+            }
+            var copy = $(routeXmlNode).clone();
+            copy.each(removeCrappyHeaders);
+            copy.find("*").each(removeCrappyHeaders);
+            var newNode = (copy && copy.length) ? copy[0] : routeXmlNode;
+            return Core.xmlNodeToString(newNode);
+        }
+        function updateRoutes() {
+            // did we select a single route
+            var routeXmlNode = Camel.getSelectedRouteNode(workspace);
+            if (routeXmlNode) {
+                $scope.source = getSource(routeXmlNode);
+                Core.$apply($scope);
+            }
+            else {
+                // no then try to find the camel context and get all the routes code
+                $scope.mbean = Camel.getSelectionCamelContextMBean(workspace);
+                if (!$scope.mbean) {
+                    // maybe the parent is the camel context folder (when we have selected the routes folder),
+                    // then grab the object name from parent
+                    var parent = Core.pathGet(workspace, ["selection", "parent"]);
+                    if (parent && parent.title === "context") {
+                        $scope.mbean = parent.children[0].objectName;
+                    }
+                }
+                if ($scope.mbean) {
+                    var jolokia = workspace.jolokia;
+                    jolokia.request({ type: 'exec', mbean: $scope.mbean, operation: 'dumpRoutesAsXml()' }, Core.onSuccess(populateTable));
+                }
+            }
+        }
+        var populateTable = function (response) {
+            var data = response.value;
+            var selectedRouteId = Camel.getSelectedRouteId(workspace);
+            if (data && selectedRouteId) {
+                var doc = $.parseXML(data);
+                var routes = $(doc).find('route[id="' + selectedRouteId + '"]');
+                if (routes && routes.length) {
+                    var selectedRoute = routes[0];
+                    // TODO turn into XML?
+                    var routeXml = getSource(selectedRoute);
+                    if (routeXml) {
+                        data = routeXml;
+                    }
+                }
+            }
+            $scope.source = data;
+            Core.$apply($scope);
+        };
+        var saveWorked = function () {
+            Core.notification("success", "Route updated!");
+            // lets clear the cached route XML so we reload the new value
+            Camel.clearSelectedRouteNode(workspace);
+            updateRoutes();
+        };
+        $scope.saveRouteXml = function () {
+            var routeXml = $scope.source;
+            if (routeXml) {
+                var decoded = decodeURIComponent(routeXml);
+                Camel.log.debug("addOrUpdateRoutesFromXml xml decoded: " + decoded);
+                var jolokia = workspace.jolokia;
+                var mbean = Camel.getSelectionCamelContextMBean(workspace);
+                if (mbean) {
+                    jolokia.execute(mbean, "addOrUpdateRoutesFromXml(java.lang.String)", decoded, Core.onSuccess(saveWorked));
+                }
+                else {
+                    Core.notification("error", "Could not find CamelContext MBean!");
+                }
+            }
+        };
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.TraceRouteController", ["$scope", "workspace", "jolokia", "localStorage", "tracerStatus", function ($scope, workspace, jolokia, localStorage, tracerStatus) {
+        var log = Logger.get("CamelTracer");
+        $scope.tracing = false;
+        $scope.messages = [];
+        $scope.graphView = null;
+        $scope.tableView = null;
+        $scope.mode = 'text';
+        $scope.messageDialog = new UI.Dialog();
+        $scope.gridOptions = Camel.createBrowseGridOptions();
+        $scope.gridOptions.selectWithCheckboxOnly = false;
+        $scope.gridOptions.showSelectionCheckbox = false;
+        $scope.gridOptions.multiSelect = false;
+        $scope.gridOptions.afterSelectionChange = onSelectionChanged;
+        $scope.gridOptions.columnDefs.push({
+            field: 'toNode',
+            displayName: 'To Node'
+        });
+        $scope.startTracing = function () {
+            log.info("Start tracing");
+            setTracing(true);
+        };
+        $scope.stopTracing = function () {
+            log.info("Stop tracing");
+            setTracing(false);
+        };
+        $scope.clear = function () {
+            log.debug("Clear messages");
+            tracerStatus.messages = [];
+            $scope.messages = [];
+            Core.$apply($scope);
+        };
+        $scope.$watch('workspace.selection', function () {
+            if (workspace.moveIfViewInvalid()) {
+                return;
+            }
+            $scope.messages = tracerStatus.messages;
+            reloadTracingFlag();
+        });
+        // TODO can we share these 2 methods from activemq browse / camel browse / came trace?
+        $scope.openMessageDialog = function (message) {
+            var idx = Core.pathGet(message, ["rowIndex"]);
+            $scope.selectRowIndex(idx);
+            if ($scope.row) {
+                $scope.mode = CodeEditor.detectTextFormat($scope.row.body);
+                $scope.messageDialog.open();
+            }
+        };
+        $scope.selectRowIndex = function (idx) {
+            $scope.rowIndex = idx;
+            var selected = $scope.gridOptions.selectedItems;
+            selected.splice(0, selected.length);
+            if (idx >= 0 && idx < $scope.messages.length) {
+                $scope.row = $scope.messages[idx];
+                if ($scope.row) {
+                    selected.push($scope.row);
+                }
+            }
+            else {
+                $scope.row = null;
+            }
+            onSelectionChanged();
+        };
+        function reloadTracingFlag() {
+            $scope.tracing = false;
+            // clear any previous polls
+            if (tracerStatus.jhandle != null) {
+                log.debug("Unregistering jolokia handle");
+                jolokia.unregister(tracerStatus.jhandle);
+                tracerStatus.jhandle = null;
+            }
+            var mbean = Camel.getSelectionCamelTraceMBean(workspace);
+            if (mbean) {
+                $scope.tracing = jolokia.getAttribute(mbean, "Enabled", Core.onSuccess(null));
+                if ($scope.tracing) {
+                    var traceMBean = mbean;
+                    if (traceMBean) {
+                        // register callback for doing live update of tracing
+                        if (tracerStatus.jhandle === null) {
+                            log.debug("Registering jolokia handle");
+                            tracerStatus.jhandle = jolokia.register(populateRouteMessages, {
+                                type: 'exec',
+                                mbean: traceMBean,
+                                operation: 'dumpAllTracedMessagesAsXml()',
+                                ignoreErrors: true,
+                                arguments: []
+                            });
+                        }
+                    }
+                    $scope.graphView = "plugins/camel/html/routes.html";
+                    $scope.tableView = "plugins/camel/html/browseMessages.html";
+                }
+                else {
+                    tracerStatus.messages = [];
+                    $scope.messages = [];
+                    $scope.graphView = null;
+                    $scope.tableView = null;
+                }
+            }
+        }
+        function populateRouteMessages(response) {
+            log.debug("Populating response " + response);
+            // filter messages due CAMEL-7045 but in camel-core
+            // see https://github.com/hawtio/hawtio/issues/292
+            var selectedRouteId = Camel.getSelectedRouteId(workspace);
+            var xml = response.value;
+            if (angular.isString(xml)) {
+                // lets parse the XML DOM here...
+                var doc = $.parseXML(xml);
+                var allMessages = $(doc).find("fabricTracerEventMessage");
+                if (!allMessages || !allMessages.length) {
+                    // lets try find another element name
+                    allMessages = $(doc).find("backlogTracerEventMessage");
+                }
+                allMessages.each(function (idx, message) {
+                    var routeId = $(message).find("routeId").text();
+                    if (routeId === selectedRouteId) {
+                        var messageData = Camel.createMessageFromXml(message);
+                        var toNode = $(message).find("toNode").text();
+                        if (toNode) {
+                            messageData["toNode"] = toNode;
+                        }
+                        log.debug("Adding new message to trace table with id " + messageData["id"]);
+                        $scope.messages.push(messageData);
+                    }
+                });
+                // keep state of the traced messages on tracerStatus
+                tracerStatus.messages = $scope.messages;
+                Core.$apply($scope);
+            }
+        }
+        function onSelectionChanged() {
+            angular.forEach($scope.gridOptions.selectedItems, function (selected) {
+                if (selected) {
+                    var toNode = selected["toNode"];
+                    if (toNode) {
+                        // lets highlight the node in the diagram
+                        var nodes = d3.select("svg").selectAll("g .node");
+                        Camel.highlightSelectedNode(nodes, toNode);
+                    }
+                }
+            });
+        }
+        function tracingChanged(response) {
+            reloadTracingFlag();
+            Core.$apply($scope);
+        }
+        function setTracing(flag) {
+            var mbean = Camel.getSelectionCamelTraceMBean(workspace);
+            if (mbean) {
+                // set max only supported on BacklogTracer
+                // (the old fabric tracer does not support max length)
+                if (mbean.toString().endsWith("BacklogTracer")) {
+                    var max = Camel.maximumTraceOrDebugBodyLength(localStorage);
+                    var streams = Camel.traceOrDebugIncludeStreams(localStorage);
+                    jolokia.setAttribute(mbean, "BodyMaxChars", max);
+                    jolokia.setAttribute(mbean, "BodyIncludeStreams", streams);
+                    jolokia.setAttribute(mbean, "BodyIncludeFiles", streams);
+                }
+                jolokia.setAttribute(mbean, "Enabled", flag, Core.onSuccess(tracingChanged));
+            }
+        }
+        log.info("Re-activating tracer with " + tracerStatus.messages.length + " existing messages");
+        $scope.messages = tracerStatus.messages;
+        $scope.tracing = tracerStatus.jhandle != null;
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.TreeHeaderController", ["$scope", "$location", function ($scope, $location) {
+        $scope.contextFilterText = '';
+        $scope.$watch('contextFilterText', function (newValue, oldValue) {
+            if (newValue !== oldValue) {
+                $scope.$emit("camel-contextFilterText", newValue);
+            }
+        });
+        $scope.expandAll = function () {
+            Tree.expandAll("#cameltree");
+        };
+        $scope.contractAll = function () {
+            Tree.contractAll("#cameltree");
+        };
+    }]);
+    Camel._module.controller("Camel.TreeController", ["$scope", "$location", "$timeout", "workspace", "$rootScope", function ($scope, $location, $timeout, workspace, $rootScope) {
+        $scope.contextFilterText = $location.search()["cq"];
+        $scope.fullScreenViewLink = Camel.linkToFullScreenView(workspace);
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            // lets do this asynchronously to avoid Error: $digest already in progress
+            setTimeout(updateSelectionFromURL, 50);
+        });
+        var reloadThrottled = Core.throttled(reloadFunction, 500);
+        $scope.$watch('workspace.tree', function () {
+            reloadThrottled();
+        });
+        var reloadOnContextFilterThrottled = Core.throttled(function () {
+            reloadFunction(function () {
+                $("#camelContextIdFilter").focus();
+            });
+        }, 500);
+        $scope.$watch('contextFilterText', function () {
+            if ($scope.contextFilterText != $scope.lastContextFilterText) {
+                $timeout(reloadOnContextFilterThrottled, 250);
+            }
+        });
+        $rootScope.$on('camel-contextFilterText', function (event, value) {
+            $scope.contextFilterText = value;
+        });
+        $scope.$on('jmxTreeUpdated', function () {
+            reloadThrottled();
+        });
+        function reloadFunction(afterSelectionFn) {
+            if (afterSelectionFn === void 0) { afterSelectionFn = null; }
+            $scope.fullScreenViewLink = Camel.linkToFullScreenView(workspace);
+            var children = [];
+            var domainName = Camel.jmxDomain;
+            // lets pull out each context
+            var tree = workspace.tree;
+            if (tree) {
+                var rootFolder = new Folder("Camel Contexts");
+                rootFolder.addClass = "org-apache-camel-context-folder";
+                rootFolder.children = children;
+                rootFolder.typeName = "context";
+                rootFolder.key = "camelContexts";
+                rootFolder.domain = domainName;
+                var contextFilterText = $scope.contextFilterText;
+                $scope.lastContextFilterText = contextFilterText;
+                Camel.log.debug("Reloading the tree for filter: " + contextFilterText);
+                var folder = tree.get(domainName);
+                if (folder) {
+                    angular.forEach(folder.children, function (value, key) {
+                        var entries = value.map;
+                        if (entries) {
+                            var contextsFolder = entries["context"];
+                            var routesNode = entries["routes"];
+                            var endpointsNode = entries["endpoints"];
+                            if (contextsFolder) {
+                                var contextNode = contextsFolder.children[0];
+                                if (contextNode) {
+                                    var title = contextNode.title;
+                                    var match = Core.matchFilterIgnoreCase(title, contextFilterText);
+                                    if (match) {
+                                        var folder = new Folder(title);
+                                        folder.addClass = "org-apache-camel-context";
+                                        folder.domain = domainName;
+                                        folder.objectName = contextNode.objectName;
+                                        folder.entries = contextNode.entries;
+                                        folder.typeName = contextNode.typeName;
+                                        folder.key = contextNode.key;
+                                        folder.version = contextNode.version;
+                                        if (routesNode) {
+                                            var routesFolder = new Folder("Routes");
+                                            routesFolder.addClass = "org-apache-camel-routes-folder";
+                                            routesFolder.parent = contextsFolder;
+                                            routesFolder.children = routesNode.children;
+                                            angular.forEach(routesFolder.children, function (n) { return n.addClass = "org-apache-camel-routes"; });
+                                            folder.children.push(routesFolder);
+                                            routesFolder.typeName = "routes";
+                                            routesFolder.key = routesNode.key;
+                                            routesFolder.domain = routesNode.domain;
+                                        }
+                                        if (endpointsNode) {
+                                            var endpointsFolder = new Folder("Endpoints");
+                                            endpointsFolder.addClass = "org-apache-camel-endpoints-folder";
+                                            endpointsFolder.parent = contextsFolder;
+                                            endpointsFolder.children = endpointsNode.children;
+                                            angular.forEach(endpointsFolder.children, function (n) {
+                                                n.addClass = "org-apache-camel-endpoints";
+                                                if (!Camel.getContextId(n)) {
+                                                    n.entries["context"] = contextNode.entries["context"];
+                                                }
+                                            });
+                                            folder.children.push(endpointsFolder);
+                                            endpointsFolder.entries = contextNode.entries;
+                                            endpointsFolder.typeName = "endpoints";
+                                            endpointsFolder.key = endpointsNode.key;
+                                            endpointsFolder.domain = endpointsNode.domain;
+                                        }
+                                        var jmxNode = new Folder("MBeans");
+                                        // lets add all the entries which are not one context/routes/endpoints
+                                        angular.forEach(entries, function (jmxChild, name) {
+                                            if (name !== "context" && name !== "routes" && name !== "endpoints") {
+                                                jmxNode.children.push(jmxChild);
+                                            }
+                                        });
+                                        if (jmxNode.children.length > 0) {
+                                            jmxNode.sortChildren(false);
+                                            folder.children.push(jmxNode);
+                                        }
+                                        folder.parent = rootFolder;
+                                        children.push(folder);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+                var treeElement = $("#cameltree");
+                Jmx.enableTree($scope, $location, workspace, treeElement, [rootFolder], true);
+                // lets do this asynchronously to avoid Error: $digest already in progress
+                setTimeout(function () {
+                    updateSelectionFromURL();
+                    if (angular.isFunction(afterSelectionFn)) {
+                        afterSelectionFn();
+                    }
+                }, 50);
+            }
+        }
+        function updateSelectionFromURL() {
+            Jmx.updateTreeSelectionFromURLAndAutoSelect($location, $("#cameltree"), function (first) {
+                // use function to auto select first Camel context routes if there is only one Camel context
+                var contexts = first.getChildren();
+                if (contexts && contexts.length === 1) {
+                    first = contexts[0];
+                    first.expand(true);
+                    var children = first.getChildren();
+                    if (children && children.length) {
+                        var routes = children[0];
+                        if (routes.data.typeName === 'routes') {
+                            first = routes;
+                            return first;
+                        }
+                    }
+                }
+                return null;
+            }, true);
+            $scope.fullScreenViewLink = Camel.linkToFullScreenView(workspace);
+        }
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.TypeConverterController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.data = [];
+        $scope.selectedMBean = null;
+        $scope.mbeanAttributes = {};
+        var columnDefs = [
+            {
+                field: 'from',
+                displayName: 'From',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'to',
+                displayName: 'To',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            }
+        ];
+        $scope.gridOptions = {
+            data: 'data',
+            displayFooter: true,
+            displaySelectionCheckbox: false,
+            canSelectRows: false,
+            enableSorting: true,
+            columnDefs: columnDefs,
+            selectedItems: [],
+            filterOptions: {
+                filterText: ''
+            }
+        };
+        function onAttributes(response) {
+            var obj = response.value;
+            if (obj) {
+                $scope.mbeanAttributes = obj;
+                // ensure web page is updated
+                Core.$apply($scope);
+            }
+        }
+        function onConverters(response) {
+            var obj = response.value;
+            if (obj) {
+                // the JMX tabular data has 2 indexes so we need to dive 2 levels down to grab the data
+                var arr = [];
+                for (var key in obj) {
+                    var values = obj[key];
+                    for (var v in values) {
+                        arr.push({ from: key, to: v });
+                    }
+                }
+                arr = arr.sortBy("from");
+                $scope.data = arr;
+                // okay we have the data then set the selected mbean which allows UI to display data
+                $scope.selectedMBean = response.request.mbean;
+                // ensure web page is updated
+                Core.$apply($scope);
+            }
+        }
+        $scope.renderIcon = function (state) {
+            return Camel.iconClass(state);
+        };
+        $scope.disableStatistics = function () {
+            if ($scope.selectedMBean) {
+                jolokia.setAttribute($scope.selectedMBean, "StatisticsEnabled", false);
+            }
+        };
+        $scope.enableStatistics = function () {
+            if ($scope.selectedMBean) {
+                jolokia.setAttribute($scope.selectedMBean, "StatisticsEnabled", true);
+            }
+        };
+        $scope.resetStatistics = function () {
+            if ($scope.selectedMBean) {
+                jolokia.request({ type: 'exec', mbean: $scope.selectedMBean, operation: 'resetTypeConversionCounters' }, Core.onSuccess(null, { silent: true }));
+            }
+        };
+        function loadConverters() {
+            console.log("Loading TypeConverter data...");
+            var mbean = Camel.getSelectionCamelTypeConverter(workspace);
+            if (mbean) {
+                // grab attributes in real time
+                var query = { type: "read", mbean: mbean, attribute: ["AttemptCounter", "FailedCounter", "HitCounter", "MissCounter", "NumberOfTypeConverters", "StatisticsEnabled"] };
+                jolokia.request(query, Core.onSuccess(onAttributes));
+                Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(onAttributes, query));
+                // and list of converters
+                jolokia.request({ type: 'exec', mbean: mbean, operation: 'listTypeConverters' }, Core.onSuccess(onConverters));
+            }
+        }
+        // load converters
+        loadConverters();
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
 
 /// <reference path="../../includes.ts"/>
 /// <reference path="dockerRegistryInterfaces.ts"/>
@@ -3995,6 +9512,1018 @@ var Git;
     })();
     Git.JolokiaGit = JolokiaGit;
 })(Git || (Git = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf.log = Logger.get("Karaf");
+    function setSelect(selection, group) {
+        if (!angular.isDefined(selection)) {
+            return group[0];
+        }
+        var answer = group.findIndex(function (item) {
+            return item.id === selection.id;
+        });
+        if (answer !== -1) {
+            return group[answer];
+        }
+        else {
+            return group[0];
+        }
+    }
+    Karaf.setSelect = setSelect;
+    function installRepository(workspace, jolokia, uri, success, error) {
+        Karaf.log.info("installing URI: ", uri);
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionFeaturesMBean(workspace),
+            operation: 'addRepository(java.lang.String)',
+            arguments: [uri]
+        }, Core.onSuccess(success, { error: error }));
+    }
+    Karaf.installRepository = installRepository;
+    function uninstallRepository(workspace, jolokia, uri, success, error) {
+        Karaf.log.info("uninstalling URI: ", uri);
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionFeaturesMBean(workspace),
+            operation: 'removeRepository(java.lang.String)',
+            arguments: [uri]
+        }, Core.onSuccess(success, { error: error }));
+    }
+    Karaf.uninstallRepository = uninstallRepository;
+    function installFeature(workspace, jolokia, feature, version, success, error) {
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionFeaturesMBean(workspace),
+            operation: 'installFeature(java.lang.String, java.lang.String)',
+            arguments: [feature, version]
+        }, Core.onSuccess(success, { error: error }));
+    }
+    Karaf.installFeature = installFeature;
+    function uninstallFeature(workspace, jolokia, feature, version, success, error) {
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionFeaturesMBean(workspace),
+            operation: 'uninstallFeature(java.lang.String, java.lang.String)',
+            arguments: [feature, version]
+        }, Core.onSuccess(success, { error: error }));
+    }
+    Karaf.uninstallFeature = uninstallFeature;
+    // TODO move to core?
+    function toCollection(values) {
+        var collection = values;
+        if (!angular.isArray(values)) {
+            collection = [values];
+        }
+        return collection;
+    }
+    Karaf.toCollection = toCollection;
+    function featureLinks(workspace, name, version) {
+        return "<a href='" + Core.url("#/karaf/feature/" + name + "/" + version + workspace.hash()) + "'>" + version + "</a>";
+    }
+    Karaf.featureLinks = featureLinks;
+    function extractFeature(attributes, name, version) {
+        var features = [];
+        var repos = [];
+        populateFeaturesAndRepos(attributes, features, repos);
+        return features.find(function (feature) {
+            return feature.Name == name && feature.Version == version;
+        });
+        /*
+        var f = {};
+        angular.forEach(attributes["Features"], (feature) => {
+          angular.forEach(feature, (entry) => {
+            if (entry["Name"] === name && entry["Version"] === version) {
+              var deps = [];
+              populateDependencies(attributes, entry["Dependencies"], deps);
+              f["Name"] = entry["Name"];
+              f["Version"] = entry["Version"];
+              f["Bundles"] = entry["Bundles"];
+              f["Dependencies"] = deps;
+              f["Installed"] = entry["Installed"];
+              f["Configurations"] = entry["Configurations"];
+              f["Configuration Files"] = entry["Configuration Files"];
+              f["Files"] = entry["Configuration Files"];
+            }
+          });
+        });
+        return f;
+        */
+    }
+    Karaf.extractFeature = extractFeature;
+    var platformBundlePatterns = [
+        "^org.apache.aries",
+        "^org.apache.karaf",
+        "^activemq-karaf",
+        "^org.apache.commons",
+        "^org.apache.felix",
+        "^io.fabric8",
+        "^io.fabric8.fab",
+        "^io.fabric8.insight",
+        "^io.fabric8.mq",
+        "^io.fabric8.patch",
+        "^io.fabric8.runtime",
+        "^io.fabric8.security",
+        "^org.apache.geronimo.specs",
+        "^org.apache.servicemix.bundles",
+        "^org.objectweb.asm",
+        "^io.hawt",
+        "^javax.mail",
+        "^javax",
+        "^org.jvnet",
+        "^org.mvel2",
+        "^org.apache.mina.core",
+        "^org.apache.sshd.core",
+        "^org.apache.neethi",
+        "^org.apache.servicemix.specs",
+        "^org.apache.xbean",
+        "^org.apache.santuario.xmlsec",
+        "^biz.aQute.bndlib",
+        "^groovy-all",
+        "^com.google.guava",
+        "jackson-\\w+-asl",
+        "^com.fasterxml.jackson",
+        "^org.ops4j",
+        "^org.springframework",
+        "^bcprov$",
+        "^jline$",
+        "scala-library$",
+        "^org.scala-lang",
+        "^stax2-api$",
+        "^woodstox-core-asl",
+        "^org.jboss.amq.mq-fabric",
+        "^gravia-",
+        "^joda-time$",
+        "^org.apache.ws",
+        "-commands$",
+        "patch.patch",
+        "org.fusesource.insight",
+        "activeio-core",
+        "activemq-osgi",
+        "^org.eclipse.jetty",
+        "org.codehaus.jettison.jettison",
+        "org.jledit.core",
+        "org.fusesource.jansi",
+        "org.eclipse.equinox.region"
+    ];
+    var platformBundleRegex = new RegExp(platformBundlePatterns.join('|'));
+    var camelBundlePatterns = ["^org.apache.camel", "camel-karaf-commands$", "activemq-camel$"];
+    var camelBundleRegex = new RegExp(camelBundlePatterns.join('|'));
+    var cxfBundlePatterns = ["^org.apache.cxf"];
+    var cxfBundleRegex = new RegExp(cxfBundlePatterns.join('|'));
+    var activemqBundlePatterns = ["^org.apache.activemq", "activemq-camel$"];
+    var activemqBundleRegex = new RegExp(activemqBundlePatterns.join('|'));
+    function isPlatformBundle(symbolicName) {
+        return platformBundleRegex.test(symbolicName);
+    }
+    Karaf.isPlatformBundle = isPlatformBundle;
+    function isActiveMQBundle(symbolicName) {
+        return activemqBundleRegex.test(symbolicName);
+    }
+    Karaf.isActiveMQBundle = isActiveMQBundle;
+    function isCamelBundle(symbolicName) {
+        return camelBundleRegex.test(symbolicName);
+    }
+    Karaf.isCamelBundle = isCamelBundle;
+    function isCxfBundle(symbolicName) {
+        return cxfBundleRegex.test(symbolicName);
+    }
+    Karaf.isCxfBundle = isCxfBundle;
+    function populateFeaturesAndRepos(attributes, features, repositories) {
+        var fullFeatures = attributes["Features"];
+        angular.forEach(attributes["Repositories"], function (repo) {
+            repositories.push({
+                id: repo["Name"],
+                uri: repo["Uri"]
+            });
+            if (!fullFeatures) {
+                return;
+            }
+            angular.forEach(repo["Features"], function (feature) {
+                angular.forEach(feature, function (entry) {
+                    if (fullFeatures[entry['Name']] !== undefined) {
+                        var f = _.cloneDeep(fullFeatures[entry['Name']][entry['Version']]);
+                        f["Id"] = entry["Name"] + "/" + entry["Version"];
+                        f["RepositoryName"] = repo["Name"];
+                        f["RepositoryURI"] = repo["Uri"];
+                        features.push(f);
+                    }
+                });
+            });
+        });
+    }
+    Karaf.populateFeaturesAndRepos = populateFeaturesAndRepos;
+    function createScrComponentsView(workspace, jolokia, components) {
+        var result = [];
+        angular.forEach(components, function (component) {
+            result.push({
+                Name: component,
+                State: getComponentStateDescription(getComponentState(workspace, jolokia, component))
+            });
+        });
+        return result;
+    }
+    Karaf.createScrComponentsView = createScrComponentsView;
+    function getComponentStateDescription(state) {
+        switch (state) {
+            case 2:
+                return "Enabled";
+            case 4:
+                return "Unsatisfied";
+            case 8:
+                return "Activating";
+            case 16:
+                return "Active";
+            case 32:
+                return "Registered";
+            case 64:
+                return "Factory";
+            case 128:
+                return "Deactivating";
+            case 256:
+                return "Destroying";
+            case 1024:
+                return "Disabling";
+            case 2048:
+                return "Disposing";
+        }
+        return "Unknown";
+    }
+    Karaf.getComponentStateDescription = getComponentStateDescription;
+    ;
+    function getAllComponents(workspace, jolokia) {
+        var scrMBean = getSelectionScrMBean(workspace);
+        var response = jolokia.request({
+            type: 'read',
+            mbean: scrMBean,
+            arguments: []
+        });
+        //Check if the MBean provides the Components attribute.
+        if (!('Components' in response.value)) {
+            response = jolokia.request({
+                type: 'exec',
+                mbean: scrMBean,
+                operation: 'listComponents()'
+            });
+            return createScrComponentsView(workspace, jolokia, response.value);
+        }
+        return response.value['Components'].values;
+    }
+    Karaf.getAllComponents = getAllComponents;
+    function getComponentByName(workspace, jolokia, componentName) {
+        var components = getAllComponents(workspace, jolokia);
+        return components.find(function (c) {
+            return c.Name == componentName;
+        });
+    }
+    Karaf.getComponentByName = getComponentByName;
+    function isComponentActive(workspace, jolokia, component) {
+        var response = jolokia.request({
+            type: 'exec',
+            mbean: getSelectionScrMBean(workspace),
+            operation: 'isComponentActive(java.lang.String)',
+            arguments: [component]
+        });
+        return response.value;
+    }
+    Karaf.isComponentActive = isComponentActive;
+    function getComponentState(workspace, jolokia, component) {
+        var response = jolokia.request({
+            type: 'exec',
+            mbean: getSelectionScrMBean(workspace),
+            operation: 'componentState(java.lang.String)',
+            arguments: [component]
+        });
+        return response.value;
+    }
+    Karaf.getComponentState = getComponentState;
+    function activateComponent(workspace, jolokia, component, success, error) {
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionScrMBean(workspace),
+            operation: 'activateComponent(java.lang.String)',
+            arguments: [component]
+        }, Core.onSuccess(success, { error: error }));
+    }
+    Karaf.activateComponent = activateComponent;
+    function deactivateComponent(workspace, jolokia, component, success, error) {
+        jolokia.request({
+            type: 'exec',
+            mbean: getSelectionScrMBean(workspace),
+            operation: 'deactiveateComponent(java.lang.String)',
+            arguments: [component]
+        }, Core.onSuccess(success, { error: error }));
+    }
+    Karaf.deactivateComponent = deactivateComponent;
+    function populateDependencies(attributes, dependencies, features) {
+        angular.forEach(dependencies, function (feature) {
+            angular.forEach(feature, function (entry) {
+                var enhancedFeature = extractFeature(attributes, entry["Name"], entry["Version"]);
+                enhancedFeature["id"] = entry["Name"] + "/" + entry["Version"];
+                //enhancedFeature["repository"] = repo["Name"];
+                features.push(enhancedFeature);
+            });
+        });
+    }
+    Karaf.populateDependencies = populateDependencies;
+    function getSelectionFeaturesMBean(workspace) {
+        if (workspace) {
+            var featuresStuff = workspace.mbeanTypesToDomain["features"] || {};
+            var karaf = featuresStuff["org.apache.karaf"] || {};
+            var mbean = karaf.objectName;
+            if (mbean) {
+                return mbean;
+            }
+            // lets navigate to the tree item based on paths
+            var folder = workspace.tree.navigate("org.apache.karaf", "features");
+            if (!folder) {
+                // sometimes the features mbean is inside the 'root' folder
+                folder = workspace.tree.navigate("org.apache.karaf");
+                if (folder) {
+                    var children = folder.children;
+                    folder = null;
+                    angular.forEach(children, function (child) {
+                        if (!folder) {
+                            folder = child.navigate("features");
+                        }
+                    });
+                }
+            }
+            if (folder) {
+                var children = folder.children;
+                if (children) {
+                    var node = children[0];
+                    if (node) {
+                        return node.objectName;
+                    }
+                }
+                return folder.objectName;
+            }
+        }
+        return null;
+    }
+    Karaf.getSelectionFeaturesMBean = getSelectionFeaturesMBean;
+    function getSelectionScrMBean(workspace) {
+        if (workspace) {
+            var scrStuff = workspace.mbeanTypesToDomain["scr"] || {};
+            var karaf = scrStuff["org.apache.karaf"] || {};
+            var mbean = karaf.objectName;
+            if (mbean) {
+                return mbean;
+            }
+            // lets navigate to the tree item based on paths
+            var folder = workspace.tree.navigate("org.apache.karaf", "scr");
+            if (!folder) {
+                // sometimes the features mbean is inside the 'root' folder
+                folder = workspace.tree.navigate("org.apache.karaf");
+                if (folder) {
+                    var children = folder.children;
+                    folder = null;
+                    angular.forEach(children, function (child) {
+                        if (!folder) {
+                            folder = child.navigate("scr");
+                        }
+                    });
+                }
+            }
+            if (folder) {
+                var children = folder.children;
+                if (children) {
+                    var node = children[0];
+                    if (node) {
+                        return node.objectName;
+                    }
+                }
+                return folder.objectName;
+            }
+        }
+        return null;
+    }
+    Karaf.getSelectionScrMBean = getSelectionScrMBean;
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/**
+ * @module Karaf
+ * @main Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    var pluginName = 'karaf';
+    //export var _module = angular.module(pluginName, ['bootstrap', 'ngResource', 'hawtio-core']);
+    Karaf._module = angular.module(pluginName, ['ngResource', 'hawtio-core']);
+    Karaf._module.config(["$routeProvider", function ($routeProvider) {
+        $routeProvider.when('/osgi/server', { templateUrl: 'plugins/karaf/html/server.html' }).when('/osgi/features', { templateUrl: 'plugins/karaf/html/features.html', reloadOnSearch: false }).when('/osgi/scr-components', { templateUrl: 'plugins/karaf/html/scr-components.html' }).when('/osgi/scr-component/:name', { templateUrl: 'plugins/karaf/html/scr-component.html' }).when('/osgi/feature/:name/:version', { templateUrl: 'plugins/karaf/html/feature.html' });
+    }]);
+    Karaf._module.run(["workspace", "viewRegistry", "helpRegistry", function (workspace, viewRegistry, helpRegistry) {
+        helpRegistry.addUserDoc('karaf', 'plugins/karaf/doc/help.md', function () {
+            return workspace.treeContainsDomainAndProperties('org.apache.karaf');
+        });
+    }]);
+    hawtioPluginLoader.addModule(pluginName);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafPlugin.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.FeatureController", ["$scope", "jolokia", "workspace", "$routeParams", function ($scope, jolokia, workspace, $routeParams) {
+        $scope.hasFabric = Fabric.hasFabric(workspace);
+        $scope.name = $routeParams.name;
+        $scope.version = $routeParams.version;
+        $scope.bundlesByLocation = {};
+        $scope.props = "properties";
+        updateTableContents();
+        $scope.install = function () {
+            Karaf.installFeature(workspace, jolokia, $scope.name, $scope.version, function () {
+                Core.notification('success', 'Installed feature ' + $scope.name);
+            }, function (response) {
+                Core.notification('error', 'Failed to install feature ' + $scope.name + ' due to ' + response.error);
+            });
+        };
+        $scope.uninstall = function () {
+            Karaf.uninstallFeature(workspace, jolokia, $scope.name, $scope.version, function () {
+                Core.notification('success', 'Uninstalled feature ' + $scope.name);
+            }, function (response) {
+                Core.notification('error', 'Failed to uninstall feature ' + $scope.name + ' due to ' + response.error);
+            });
+        };
+        $scope.toProperties = function (elements) {
+            var answer = '';
+            angular.forEach(elements, function (value, name) {
+                answer += value['Key'] + " = " + value['Value'] + "\n";
+            });
+            return answer.trim();
+        };
+        function populateTable(response) {
+            $scope.row = Karaf.extractFeature(response.value, $scope.name, $scope.version);
+            if ($scope.row) {
+                addBundleDetails($scope.row);
+                var dependencies = [];
+                //TODO - if the version isn't set or is 0.0.0 then maybe we show the highest available?
+                angular.forEach($scope.row.Dependencies, function (version, name) {
+                    angular.forEach(version, function (data, version) {
+                        dependencies.push({
+                            Name: name,
+                            Version: version
+                        });
+                    });
+                });
+                $scope.row.Dependencies = dependencies;
+            }
+            //console.log("row: ", $scope.row);
+            Core.$apply($scope);
+        }
+        function setBundles(response) {
+            var bundleMap = {};
+            Osgi.defaultBundleValues(workspace, $scope, response.values);
+            angular.forEach(response.value, function (bundle) {
+                var location = bundle["Location"];
+                $scope.bundlesByLocation[location] = bundle;
+            });
+        }
+        ;
+        function updateTableContents() {
+            var featureMbean = Karaf.getSelectionFeaturesMBean(workspace);
+            var bundleMbean = Osgi.getSelectionBundleMBean(workspace);
+            var jolokia = workspace.jolokia;
+            if (bundleMbean) {
+                setBundles(jolokia.request({ type: 'exec', mbean: bundleMbean, operation: 'listBundles()' }));
+            }
+            if (featureMbean) {
+                jolokia.request({ type: 'read', mbean: featureMbean }, Core.onSuccess(populateTable));
+            }
+        }
+        function addBundleDetails(feature) {
+            var bundleDetails = [];
+            angular.forEach(feature["Bundles"], function (bundleLocation) {
+                var bundle = $scope.bundlesByLocation[bundleLocation];
+                if (bundle) {
+                    bundle["Installed"] = true;
+                    bundleDetails.push(bundle);
+                }
+                else {
+                    bundleDetails.push({
+                        "Location": bundleLocation,
+                        "Installed": false
+                    });
+                }
+            });
+            feature["BundleDetails"] = bundleDetails;
+        }
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafPlugin.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.FeaturesController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.hasFabric = Fabric.hasFabric(workspace);
+        $scope.responseJson = '';
+        $scope.filter = '';
+        $scope.installedFeatures = [];
+        $scope.features = [];
+        $scope.repositories = [];
+        $scope.selectedRepositoryId = '';
+        $scope.selectedRepository = {};
+        $scope.newRepositoryURI = '';
+        $scope.init = function () {
+            var selectedRepositoryId = $location.search()['repositoryId'];
+            if (selectedRepositoryId) {
+                $scope.selectedRepositoryId = selectedRepositoryId;
+            }
+            var filter = $location.search()['filter'];
+            if (filter) {
+                $scope.filter = filter;
+            }
+        };
+        $scope.init();
+        $scope.$watch('selectedRepository', function (newValue, oldValue) {
+            //log.debug("selectedRepository: ", $scope.selectedRepository);
+            if (newValue !== oldValue) {
+                if (!newValue) {
+                    $scope.selectedRepositoryId = '';
+                }
+                else {
+                    $scope.selectedRepositoryId = newValue['repository'];
+                }
+                $location.search('repositoryId', $scope.selectedRepositoryId);
+            }
+        }, true);
+        $scope.$watch('filter', function (newValue, oldValue) {
+            if (newValue !== oldValue) {
+                $location.search('filter', newValue);
+            }
+        });
+        var featuresMBean = Karaf.getSelectionFeaturesMBean(workspace);
+        Karaf.log.debug("Features mbean: ", featuresMBean);
+        if (featuresMBean) {
+            Core.register(jolokia, $scope, {
+                type: 'read',
+                mbean: featuresMBean
+            }, Core.onSuccess(render));
+        }
+        $scope.inSelectedRepository = function (feature) {
+            if (!$scope.selectedRepository || !('repository' in $scope.selectedRepository)) {
+                return "";
+            }
+            if (!feature || !('RepositoryName' in feature)) {
+                return "";
+            }
+            if (feature['RepositoryName'] === $scope.selectedRepository['repository']) {
+                return "in-selected-repository";
+            }
+            return "";
+        };
+        $scope.isValidRepository = function () {
+            return Core.isBlank($scope.newRepositoryURI);
+        };
+        $scope.installRepository = function () {
+            var repoURL = $scope.newRepositoryURI;
+            Core.notification('info', 'Adding feature repository URL');
+            Karaf.installRepository(workspace, jolokia, repoURL, function () {
+                Core.notification('success', 'Added feature repository URL');
+                $scope.selectedRepository = {};
+                $scope.selectedRepositoryId = '';
+                $scope.responseJson = null;
+                $scope.triggerRefresh();
+            }, function (response) {
+                Karaf.log.error('Failed to add feature repository URL ', repoURL, ' due to ', response.error);
+                Karaf.log.info('stack trace: ', response.stacktrace);
+                Core.$apply($scope);
+            });
+        };
+        $scope.uninstallRepository = function () {
+            var repoURI = $scope.selectedRepository['uri'];
+            Core.notification('info', 'Removing feature repository ' + repoURI);
+            Karaf.uninstallRepository(workspace, jolokia, repoURI, function () {
+                Core.notification('success', 'Removed feature repository ' + repoURI);
+                $scope.responseJson = null;
+                $scope.selectedRepositoryId = '';
+                $scope.selectedRepository = {};
+                $scope.triggerRefresh();
+            }, function (response) {
+                Karaf.log.error('Failed to remove feature repository ', repoURI, ' due to ', response.error);
+                Karaf.log.info('stack trace: ', response.stacktrace);
+                Core.$apply($scope);
+            });
+        };
+        $scope.triggerRefresh = function () {
+            jolokia.request({
+                type: 'read',
+                method: 'POST',
+                mbean: featuresMBean
+            }, Core.onSuccess(render));
+        };
+        $scope.install = function (feature) {
+            if ($scope.hasFabric) {
+                return;
+            }
+            //$('.popover').remove();
+            Core.notification('info', 'Installing feature ' + feature.Name);
+            Karaf.installFeature(workspace, jolokia, feature.Name, feature.Version, function () {
+                Core.notification('success', 'Installed feature ' + feature.Name);
+                $scope.installedFeatures.add(feature);
+                $scope.responseJson = null;
+                $scope.triggerRefresh();
+                //Core.$apply($scope);
+            }, function (response) {
+                Karaf.log.error('Failed to install feature ', feature.Name, ' due to ', response.error);
+                Karaf.log.info('stack trace: ', response.stacktrace);
+                Core.$apply($scope);
+            });
+        };
+        $scope.uninstall = function (feature) {
+            if ($scope.hasFabric) {
+                return;
+            }
+            //$('.popover').remove();
+            Core.notification('info', 'Uninstalling feature ' + feature.Name);
+            Karaf.uninstallFeature(workspace, jolokia, feature.Name, feature.Version, function () {
+                Core.notification('success', 'Uninstalled feature ' + feature.Name);
+                $scope.installedFeatures.remove(feature);
+                $scope.responseJson = null;
+                $scope.triggerRefresh();
+                //Core.$apply($scope);
+            }, function (response) {
+                Karaf.log.error('Failed to uninstall feature ', feature.Name, ' due to ', response.error);
+                Karaf.log.info('stack trace: ', response.stacktrace);
+                Core.$apply($scope);
+            });
+        };
+        $scope.filteredRows = ['Bundles', 'Configurations', 'Configuration Files', 'Dependencies'];
+        $scope.showRow = function (key, value) {
+            if ($scope.filteredRows.any(key)) {
+                return false;
+            }
+            if (angular.isArray(value)) {
+                if (value.length === 0) {
+                    return false;
+                }
+            }
+            if (angular.isString(value)) {
+                if (Core.isBlank(value)) {
+                    return false;
+                }
+            }
+            if (angular.isObject(value)) {
+                if (!value || angular.equals(value, {})) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        $scope.installed = function (installed) {
+            var answer = Core.parseBooleanValue(installed);
+            return answer;
+        };
+        $scope.showValue = function (value) {
+            if (angular.isArray(value)) {
+                var answer = ['<ul class="zebra-list">'];
+                value.forEach(function (v) {
+                    answer.push('<li>' + v + '</li>');
+                });
+                answer.push('</ul>');
+                return answer.join('\n');
+            }
+            if (angular.isObject(value)) {
+                var answer = ['<table class="table">', '<tbody>'];
+                angular.forEach(value, function (value, key) {
+                    answer.push('<tr>');
+                    answer.push('<td>' + key + '</td>');
+                    answer.push('<td>' + value + '</td>');
+                    answer.push('</tr>');
+                });
+                answer.push('</tbody>');
+                answer.push('</table>');
+                return answer.join('\n');
+            }
+            return "" + value;
+        };
+        $scope.getStateStyle = function (feature) {
+            if (Core.parseBooleanValue(feature.Installed)) {
+                return "badge badge-success";
+            }
+            return "badge";
+        };
+        $scope.filterFeature = function (feature) {
+            if (Core.isBlank($scope.filter)) {
+                return true;
+            }
+            if (feature.Id.has($scope.filter)) {
+                return true;
+            }
+            return false;
+        };
+        function render(response) {
+            var responseJson = angular.toJson(response.value);
+            if ($scope.responseJson !== responseJson) {
+                $scope.responseJson = responseJson;
+                //log.debug("Got response: ", response.value);
+                if (response['value']['Features'] === null) {
+                    $scope.featuresError = true;
+                }
+                else {
+                    $scope.featuresError = false;
+                }
+                $scope.features = [];
+                $scope.repositories = [];
+                var features = [];
+                var repositories = [];
+                Karaf.populateFeaturesAndRepos(response.value, features, repositories);
+                var installedFeatures = features.filter(function (f) {
+                    return Core.parseBooleanValue(f.Installed);
+                });
+                var uninstalledFeatures = features.filter(function (f) {
+                    return !Core.parseBooleanValue(f.Installed);
+                });
+                //log.debug("repositories: ", repositories);
+                $scope.installedFeatures = installedFeatures.sortBy(function (f) {
+                    return f['Name'];
+                });
+                uninstalledFeatures = uninstalledFeatures.sortBy(function (f) {
+                    return f['Name'];
+                });
+                repositories.sortBy('id').forEach(function (repo) {
+                    $scope.repositories.push({
+                        repository: repo['id'],
+                        uri: repo['uri'],
+                        features: uninstalledFeatures.filter(function (f) {
+                            return f['RepositoryName'] === repo['id'];
+                        })
+                    });
+                });
+                if (!Core.isBlank($scope.newRepositoryURI)) {
+                    var selectedRepo = repositories.find(function (r) {
+                        return r['uri'] === $scope.newRepositoryURI;
+                    });
+                    if (selectedRepo) {
+                        $scope.selectedRepositoryId = selectedRepo['id'];
+                    }
+                    $scope.newRepositoryURI = '';
+                }
+                if (Core.isBlank($scope.selectedRepositoryId)) {
+                    $scope.selectedRepository = $scope.repositories.first();
+                }
+                else {
+                    $scope.selectedRepository = $scope.repositories.find(function (r) {
+                        return r.repository === $scope.selectedRepositoryId;
+                    });
+                }
+                Core.$apply($scope);
+            }
+        }
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/// <reference path="karafPlugin.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.NavBarController", ["$scope", "workspace", function ($scope, workspace) {
+        $scope.hash = workspace.hash();
+        $scope.isKarafEnabled = workspace.treeContainsDomainAndProperties("org.apache.karaf");
+        $scope.isFeaturesEnabled = Karaf.getSelectionFeaturesMBean(workspace);
+        $scope.isScrEnabled = Karaf.getSelectionScrMBean(workspace);
+        $scope.$on('$routeChangeSuccess', function () {
+            $scope.hash = workspace.hash();
+        });
+        $scope.isActive = function (nav) {
+            return workspace.isLinkActive(nav);
+        };
+        $scope.isPrefixActive = function (nav) {
+            return workspace.isLinkPrefixActive(nav);
+        };
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/// <reference path="karafPlugin.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.ScrComponentController", ["$scope", "$location", "workspace", "jolokia", "$routeParams", function ($scope, $location, workspace, jolokia, $routeParams) {
+        $scope.name = $routeParams.name;
+        populateTable();
+        function populateTable() {
+            $scope.row = Karaf.getComponentByName(workspace, jolokia, $scope.name);
+            Core.$apply($scope);
+        }
+        $scope.activate = function () {
+            Karaf.activateComponent(workspace, jolokia, $scope.row['Name'], function () {
+                console.log("Activated!");
+            }, function () {
+                console.log("Failed to activate!");
+            });
+        };
+        $scope.deactivate = function () {
+            Karaf.deactivateComponent(workspace, jolokia, $scope.row['Name'], function () {
+                console.log("Deactivated!");
+            }, function () {
+                console.log("Failed to deactivate!");
+            });
+        };
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/// <reference path="karafPlugin.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.ScrComponentsController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.component = empty();
+        // caches last jolokia result
+        $scope.result = [];
+        // rows in components table
+        $scope.components = [];
+        // selected components
+        $scope.selectedComponents = [];
+        $scope.scrOptions = {
+            //plugins: [searchProvider],
+            data: 'components',
+            showFilter: false,
+            showColumnMenu: false,
+            filterOptions: {
+                useExternalFilter: false
+            },
+            sortInfo: { fields: ['Name'], directions: ['asc'] },
+            selectedItems: $scope.selectedComponents,
+            rowHeight: 32,
+            selectWithCheckboxOnly: true,
+            columnDefs: [
+                {
+                    field: 'Name',
+                    displayName: 'Name',
+                    cellTemplate: '<div class="ngCellText"><a href="#/osgi/scr-component/{{row.entity.Name}}?p=container">{{row.getProperty(col.field)}}</a></div>',
+                    width: 400
+                },
+                {
+                    field: 'State',
+                    displayName: 'State',
+                    cellTemplate: '<div class="ngCellText">{{row.getProperty(col.field)}}</div>',
+                    width: 200
+                }
+            ]
+        };
+        var scrMBean = Karaf.getSelectionScrMBean(workspace);
+        if (scrMBean) {
+            render(Karaf.getAllComponents(workspace, jolokia));
+        }
+        $scope.activate = function () {
+            $scope.selectedComponents.forEach(function (component) {
+                Karaf.activateComponent(workspace, jolokia, component.Name, function () {
+                    console.log("Activated!");
+                }, function () {
+                    console.log("Failed to activate!");
+                });
+            });
+        };
+        $scope.deactivate = function () {
+            $scope.selectedComponents.forEach(function (component) {
+                Karaf.deactivateComponent(workspace, jolokia, component.Name, function () {
+                    console.log("Deactivated!");
+                }, function () {
+                    console.log("Failed to deactivate!");
+                });
+            });
+        };
+        function empty() {
+            return [
+                { Name: "", Status: false }
+            ];
+        }
+        function render(components) {
+            if (!angular.equals($scope.result, components)) {
+                $scope.components = components;
+                $scope.result = $scope.components;
+                Core.$apply($scope);
+            }
+        }
+    }]);
+})(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="karafHelpers.ts"/>
+/// <reference path="karafPlugin.ts"/>
+/**
+ * @module Karaf
+ */
+var Karaf;
+(function (Karaf) {
+    Karaf._module.controller("Karaf.ServerController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.data = {
+            name: "",
+            version: "",
+            state: "",
+            root: "",
+            startLevel: "",
+            framework: "",
+            frameworkVersion: "",
+            location: "",
+            sshPort: "",
+            rmiRegistryPort: "",
+            rmiServerPort: "",
+            pid: ""
+        };
+        $scope.$on('jmxTreeUpdated', reloadFunction);
+        $scope.$watch('workspace.tree', reloadFunction);
+        function reloadFunction() {
+            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
+            // so lets reload, asynchronously just in case
+            setTimeout(loadData, 50);
+        }
+        function loadData() {
+            console.log("Loading Karaf data...");
+            jolokia.search("org.apache.karaf:type=admin,*", Core.onSuccess(render));
+        }
+        function render(response) {
+            // grab the first mbean as there should ideally only be one karaf in the JVM
+            if (angular.isArray(response)) {
+                var mbean = response[0];
+                if (mbean) {
+                    jolokia.getAttribute(mbean, "Instances", Core.onSuccess(function (response) {
+                        onInstances(response, mbean);
+                    }));
+                }
+            }
+        }
+        function onInstances(instances, mbean) {
+            if (instances) {
+                var parsedMBean = Core.parseMBean(mbean);
+                var instanceName = 'root';
+                if ('attributes' in parsedMBean) {
+                    if ('name' in parsedMBean['attributes']) {
+                        instanceName = parsedMBean['attributes']['name'];
+                    }
+                }
+                //log.debug("mbean: ", Core.parseMBean(mbean));
+                //log.debug("Instances: ", instances);
+                // the name is the first child
+                var rootInstance = instances[instanceName];
+                $scope.data.name = rootInstance.Name;
+                $scope.data.state = rootInstance.State;
+                $scope.data.root = rootInstance["Is Root"];
+                $scope.data.location = rootInstance.Location;
+                $scope.data.sshPort = rootInstance["SSH Port"];
+                $scope.data.rmiRegistryPort = rootInstance["RMI Registry Port"];
+                $scope.data.rmiServerPort = rootInstance["RMI Server Port"];
+                $scope.data.pid = rootInstance.Pid;
+                // we need to get these data from the system mbean
+                $scope.data.version = "?";
+                $scope.data.startLevel = "?";
+                $scope.data.framework = "?";
+                $scope.data.frameworkVersion = "?";
+                var systemMbean = "org.apache.karaf:type=system,name=" + rootInstance.Name;
+                // get more data, and its okay to do this synchronously
+                var response = jolokia.request({ type: "read", mbean: systemMbean, attribute: ["StartLevel", "Framework", "Version"] }, Core.onSuccess(null));
+                var obj = response.value;
+                if (obj) {
+                    $scope.data.version = obj.Version;
+                    $scope.data.startLevel = obj.StartLevel;
+                    $scope.data.framework = obj.Framework;
+                }
+                // and the osgi framework version is the bundle version
+                var response2 = jolokia.search("osgi.core:type=bundleState,*", Core.onSuccess(null));
+                if (angular.isArray(response2)) {
+                    var mbean = response2[0];
+                    if (mbean) {
+                        // get more data, and its okay to do this synchronously
+                        var response3 = jolokia.request({ type: 'exec', mbean: mbean, operation: 'getVersion(long)', arguments: [0] }, Core.onSuccess(null));
+                        var obj3 = response3.value;
+                        if (obj3) {
+                            $scope.data.frameworkVersion = obj3;
+                        }
+                    }
+                }
+            }
+            // ensure web page is updated
+            Core.$apply($scope);
+        }
+    }]);
+})(Karaf || (Karaf = {}));
 
 /// <reference path="../../includes.ts"/>
 /**
@@ -5199,399 +11728,6 @@ var Osgi;
     })();
     Osgi.OsgiDataService = OsgiDataService;
 })(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf.log = Logger.get("Karaf");
-    function setSelect(selection, group) {
-        if (!angular.isDefined(selection)) {
-            return group[0];
-        }
-        var answer = group.findIndex(function (item) {
-            return item.id === selection.id;
-        });
-        if (answer !== -1) {
-            return group[answer];
-        }
-        else {
-            return group[0];
-        }
-    }
-    Karaf.setSelect = setSelect;
-    function installRepository(workspace, jolokia, uri, success, error) {
-        Karaf.log.info("installing URI: ", uri);
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionFeaturesMBean(workspace),
-            operation: 'addRepository(java.lang.String)',
-            arguments: [uri]
-        }, Core.onSuccess(success, { error: error }));
-    }
-    Karaf.installRepository = installRepository;
-    function uninstallRepository(workspace, jolokia, uri, success, error) {
-        Karaf.log.info("uninstalling URI: ", uri);
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionFeaturesMBean(workspace),
-            operation: 'removeRepository(java.lang.String)',
-            arguments: [uri]
-        }, Core.onSuccess(success, { error: error }));
-    }
-    Karaf.uninstallRepository = uninstallRepository;
-    function installFeature(workspace, jolokia, feature, version, success, error) {
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionFeaturesMBean(workspace),
-            operation: 'installFeature(java.lang.String, java.lang.String)',
-            arguments: [feature, version]
-        }, Core.onSuccess(success, { error: error }));
-    }
-    Karaf.installFeature = installFeature;
-    function uninstallFeature(workspace, jolokia, feature, version, success, error) {
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionFeaturesMBean(workspace),
-            operation: 'uninstallFeature(java.lang.String, java.lang.String)',
-            arguments: [feature, version]
-        }, Core.onSuccess(success, { error: error }));
-    }
-    Karaf.uninstallFeature = uninstallFeature;
-    // TODO move to core?
-    function toCollection(values) {
-        var collection = values;
-        if (!angular.isArray(values)) {
-            collection = [values];
-        }
-        return collection;
-    }
-    Karaf.toCollection = toCollection;
-    function featureLinks(workspace, name, version) {
-        return "<a href='" + Core.url("#/karaf/feature/" + name + "/" + version + workspace.hash()) + "'>" + version + "</a>";
-    }
-    Karaf.featureLinks = featureLinks;
-    function extractFeature(attributes, name, version) {
-        var features = [];
-        var repos = [];
-        populateFeaturesAndRepos(attributes, features, repos);
-        return features.find(function (feature) {
-            return feature.Name == name && feature.Version == version;
-        });
-        /*
-        var f = {};
-        angular.forEach(attributes["Features"], (feature) => {
-          angular.forEach(feature, (entry) => {
-            if (entry["Name"] === name && entry["Version"] === version) {
-              var deps = [];
-              populateDependencies(attributes, entry["Dependencies"], deps);
-              f["Name"] = entry["Name"];
-              f["Version"] = entry["Version"];
-              f["Bundles"] = entry["Bundles"];
-              f["Dependencies"] = deps;
-              f["Installed"] = entry["Installed"];
-              f["Configurations"] = entry["Configurations"];
-              f["Configuration Files"] = entry["Configuration Files"];
-              f["Files"] = entry["Configuration Files"];
-            }
-          });
-        });
-        return f;
-        */
-    }
-    Karaf.extractFeature = extractFeature;
-    var platformBundlePatterns = [
-        "^org.apache.aries",
-        "^org.apache.karaf",
-        "^activemq-karaf",
-        "^org.apache.commons",
-        "^org.apache.felix",
-        "^io.fabric8",
-        "^io.fabric8.fab",
-        "^io.fabric8.insight",
-        "^io.fabric8.mq",
-        "^io.fabric8.patch",
-        "^io.fabric8.runtime",
-        "^io.fabric8.security",
-        "^org.apache.geronimo.specs",
-        "^org.apache.servicemix.bundles",
-        "^org.objectweb.asm",
-        "^io.hawt",
-        "^javax.mail",
-        "^javax",
-        "^org.jvnet",
-        "^org.mvel2",
-        "^org.apache.mina.core",
-        "^org.apache.sshd.core",
-        "^org.apache.neethi",
-        "^org.apache.servicemix.specs",
-        "^org.apache.xbean",
-        "^org.apache.santuario.xmlsec",
-        "^biz.aQute.bndlib",
-        "^groovy-all",
-        "^com.google.guava",
-        "jackson-\\w+-asl",
-        "^com.fasterxml.jackson",
-        "^org.ops4j",
-        "^org.springframework",
-        "^bcprov$",
-        "^jline$",
-        "scala-library$",
-        "^org.scala-lang",
-        "^stax2-api$",
-        "^woodstox-core-asl",
-        "^org.jboss.amq.mq-fabric",
-        "^gravia-",
-        "^joda-time$",
-        "^org.apache.ws",
-        "-commands$",
-        "patch.patch",
-        "org.fusesource.insight",
-        "activeio-core",
-        "activemq-osgi",
-        "^org.eclipse.jetty",
-        "org.codehaus.jettison.jettison",
-        "org.jledit.core",
-        "org.fusesource.jansi",
-        "org.eclipse.equinox.region"
-    ];
-    var platformBundleRegex = new RegExp(platformBundlePatterns.join('|'));
-    var camelBundlePatterns = ["^org.apache.camel", "camel-karaf-commands$", "activemq-camel$"];
-    var camelBundleRegex = new RegExp(camelBundlePatterns.join('|'));
-    var cxfBundlePatterns = ["^org.apache.cxf"];
-    var cxfBundleRegex = new RegExp(cxfBundlePatterns.join('|'));
-    var activemqBundlePatterns = ["^org.apache.activemq", "activemq-camel$"];
-    var activemqBundleRegex = new RegExp(activemqBundlePatterns.join('|'));
-    function isPlatformBundle(symbolicName) {
-        return platformBundleRegex.test(symbolicName);
-    }
-    Karaf.isPlatformBundle = isPlatformBundle;
-    function isActiveMQBundle(symbolicName) {
-        return activemqBundleRegex.test(symbolicName);
-    }
-    Karaf.isActiveMQBundle = isActiveMQBundle;
-    function isCamelBundle(symbolicName) {
-        return camelBundleRegex.test(symbolicName);
-    }
-    Karaf.isCamelBundle = isCamelBundle;
-    function isCxfBundle(symbolicName) {
-        return cxfBundleRegex.test(symbolicName);
-    }
-    Karaf.isCxfBundle = isCxfBundle;
-    function populateFeaturesAndRepos(attributes, features, repositories) {
-        var fullFeatures = attributes["Features"];
-        angular.forEach(attributes["Repositories"], function (repo) {
-            repositories.push({
-                id: repo["Name"],
-                uri: repo["Uri"]
-            });
-            if (!fullFeatures) {
-                return;
-            }
-            angular.forEach(repo["Features"], function (feature) {
-                angular.forEach(feature, function (entry) {
-                    if (fullFeatures[entry['Name']] !== undefined) {
-                        var f = _.cloneDeep(fullFeatures[entry['Name']][entry['Version']]);
-                        f["Id"] = entry["Name"] + "/" + entry["Version"];
-                        f["RepositoryName"] = repo["Name"];
-                        f["RepositoryURI"] = repo["Uri"];
-                        features.push(f);
-                    }
-                });
-            });
-        });
-    }
-    Karaf.populateFeaturesAndRepos = populateFeaturesAndRepos;
-    function createScrComponentsView(workspace, jolokia, components) {
-        var result = [];
-        angular.forEach(components, function (component) {
-            result.push({
-                Name: component,
-                State: getComponentStateDescription(getComponentState(workspace, jolokia, component))
-            });
-        });
-        return result;
-    }
-    Karaf.createScrComponentsView = createScrComponentsView;
-    function getComponentStateDescription(state) {
-        switch (state) {
-            case 2:
-                return "Enabled";
-            case 4:
-                return "Unsatisfied";
-            case 8:
-                return "Activating";
-            case 16:
-                return "Active";
-            case 32:
-                return "Registered";
-            case 64:
-                return "Factory";
-            case 128:
-                return "Deactivating";
-            case 256:
-                return "Destroying";
-            case 1024:
-                return "Disabling";
-            case 2048:
-                return "Disposing";
-        }
-        return "Unknown";
-    }
-    Karaf.getComponentStateDescription = getComponentStateDescription;
-    ;
-    function getAllComponents(workspace, jolokia) {
-        var scrMBean = getSelectionScrMBean(workspace);
-        var response = jolokia.request({
-            type: 'read',
-            mbean: scrMBean,
-            arguments: []
-        });
-        //Check if the MBean provides the Components attribute.
-        if (!('Components' in response.value)) {
-            response = jolokia.request({
-                type: 'exec',
-                mbean: scrMBean,
-                operation: 'listComponents()'
-            });
-            return createScrComponentsView(workspace, jolokia, response.value);
-        }
-        return response.value['Components'].values;
-    }
-    Karaf.getAllComponents = getAllComponents;
-    function getComponentByName(workspace, jolokia, componentName) {
-        var components = getAllComponents(workspace, jolokia);
-        return components.find(function (c) {
-            return c.Name == componentName;
-        });
-    }
-    Karaf.getComponentByName = getComponentByName;
-    function isComponentActive(workspace, jolokia, component) {
-        var response = jolokia.request({
-            type: 'exec',
-            mbean: getSelectionScrMBean(workspace),
-            operation: 'isComponentActive(java.lang.String)',
-            arguments: [component]
-        });
-        return response.value;
-    }
-    Karaf.isComponentActive = isComponentActive;
-    function getComponentState(workspace, jolokia, component) {
-        var response = jolokia.request({
-            type: 'exec',
-            mbean: getSelectionScrMBean(workspace),
-            operation: 'componentState(java.lang.String)',
-            arguments: [component]
-        });
-        return response.value;
-    }
-    Karaf.getComponentState = getComponentState;
-    function activateComponent(workspace, jolokia, component, success, error) {
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionScrMBean(workspace),
-            operation: 'activateComponent(java.lang.String)',
-            arguments: [component]
-        }, Core.onSuccess(success, { error: error }));
-    }
-    Karaf.activateComponent = activateComponent;
-    function deactivateComponent(workspace, jolokia, component, success, error) {
-        jolokia.request({
-            type: 'exec',
-            mbean: getSelectionScrMBean(workspace),
-            operation: 'deactiveateComponent(java.lang.String)',
-            arguments: [component]
-        }, Core.onSuccess(success, { error: error }));
-    }
-    Karaf.deactivateComponent = deactivateComponent;
-    function populateDependencies(attributes, dependencies, features) {
-        angular.forEach(dependencies, function (feature) {
-            angular.forEach(feature, function (entry) {
-                var enhancedFeature = extractFeature(attributes, entry["Name"], entry["Version"]);
-                enhancedFeature["id"] = entry["Name"] + "/" + entry["Version"];
-                //enhancedFeature["repository"] = repo["Name"];
-                features.push(enhancedFeature);
-            });
-        });
-    }
-    Karaf.populateDependencies = populateDependencies;
-    function getSelectionFeaturesMBean(workspace) {
-        if (workspace) {
-            var featuresStuff = workspace.mbeanTypesToDomain["features"] || {};
-            var karaf = featuresStuff["org.apache.karaf"] || {};
-            var mbean = karaf.objectName;
-            if (mbean) {
-                return mbean;
-            }
-            // lets navigate to the tree item based on paths
-            var folder = workspace.tree.navigate("org.apache.karaf", "features");
-            if (!folder) {
-                // sometimes the features mbean is inside the 'root' folder
-                folder = workspace.tree.navigate("org.apache.karaf");
-                if (folder) {
-                    var children = folder.children;
-                    folder = null;
-                    angular.forEach(children, function (child) {
-                        if (!folder) {
-                            folder = child.navigate("features");
-                        }
-                    });
-                }
-            }
-            if (folder) {
-                var children = folder.children;
-                if (children) {
-                    var node = children[0];
-                    if (node) {
-                        return node.objectName;
-                    }
-                }
-                return folder.objectName;
-            }
-        }
-        return null;
-    }
-    Karaf.getSelectionFeaturesMBean = getSelectionFeaturesMBean;
-    function getSelectionScrMBean(workspace) {
-        if (workspace) {
-            var scrStuff = workspace.mbeanTypesToDomain["scr"] || {};
-            var karaf = scrStuff["org.apache.karaf"] || {};
-            var mbean = karaf.objectName;
-            if (mbean) {
-                return mbean;
-            }
-            // lets navigate to the tree item based on paths
-            var folder = workspace.tree.navigate("org.apache.karaf", "scr");
-            if (!folder) {
-                // sometimes the features mbean is inside the 'root' folder
-                folder = workspace.tree.navigate("org.apache.karaf");
-                if (folder) {
-                    var children = folder.children;
-                    folder = null;
-                    angular.forEach(children, function (child) {
-                        if (!folder) {
-                            folder = child.navigate("scr");
-                        }
-                    });
-                }
-            }
-            if (folder) {
-                var children = folder.children;
-                if (children) {
-                    var node = children[0];
-                    if (node) {
-                        return node.objectName;
-                    }
-                }
-                return folder.objectName;
-            }
-        }
-        return null;
-    }
-    Karaf.getSelectionScrMBean = getSelectionScrMBean;
-})(Karaf || (Karaf = {}));
 
 /// <reference path="../../includes.ts"/>
 /// <reference path="osgiData.ts"/>
@@ -7918,1518 +14054,6 @@ var Osgi;
         $scope.updateGraph();
     }]);
 })(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Camel
- */
-var Camel;
-(function (Camel) {
-    Camel.log = Logger.get("Camel");
-    Camel.jmxDomain = 'org.apache.camel';
-    Camel.defaultMaximumLabelWidth = 34;
-    Camel.defaultCamelMaximumTraceOrDebugBodyLength = 5000;
-    Camel.defaultCamelTraceOrDebugIncludeStreams = true;
-    Camel.defaultCamelRouteMetricMaxSeconds = 10;
-    /**
-     * Looks up the route XML for the given context and selected route and
-     * processes the selected route's XML with the given function
-     * @method processRouteXml
-     * @param {Workspace} workspace
-     * @param {Object} jolokia
-     * @param {Folder} folder
-     * @param {Function} onRoute
-     */
-    function processRouteXml(workspace, jolokia, folder, onRoute) {
-        var selectedRouteId = getSelectedRouteId(workspace, folder);
-        var mbean = getSelectionCamelContextMBean(workspace);
-        function onRouteXml(response) {
-            var route = null;
-            var data = response ? response.value : null;
-            if (data) {
-                var doc = $.parseXML(data);
-                var routes = $(doc).find("route[id='" + selectedRouteId + "']");
-                if (routes && routes.length) {
-                    route = routes[0];
-                }
-            }
-            onRoute(route);
-        }
-        if (mbean && selectedRouteId) {
-            jolokia.request({ type: 'exec', mbean: mbean, operation: 'dumpRoutesAsXml()' }, Core.onSuccess(onRouteXml, { error: onRouteXml }));
-        }
-        else {
-            if (!selectedRouteId) {
-                console.log("No selectedRouteId when trying to lazy load the route!");
-            }
-            onRoute(null);
-        }
-    }
-    Camel.processRouteXml = processRouteXml;
-    /**
-     * Returns the URI string for the given EIP pattern node or null if it is not applicable
-     * @method getRouteNodeUri
-     * @param {Object} node
-     * @return {String}
-     */
-    function getRouteNodeUri(node) {
-        var uri = null;
-        if (node) {
-            uri = node.getAttribute("uri");
-            if (!uri) {
-                var ref = node.getAttribute("ref");
-                if (ref) {
-                    var method = node.getAttribute("method");
-                    if (method) {
-                        uri = ref + "." + method + "()";
-                    }
-                    else {
-                        uri = "ref:" + ref;
-                    }
-                }
-            }
-        }
-        return uri;
-    }
-    Camel.getRouteNodeUri = getRouteNodeUri;
-    /**
-     * Returns the JSON data for the camel folder; extracting it from the associated
-     * routeXmlNode or using the previously extracted and/or edited JSON
-     * @method getRouteFolderJSON
-     * @param {Folder} folder
-     * @param {Object} answer
-     * @return {Object}
-     */
-    function getRouteFolderJSON(folder, answer) {
-        if (answer === void 0) { answer = {}; }
-        var nodeData = folder["camelNodeData"];
-        if (!nodeData) {
-            var routeXmlNode = folder["routeXmlNode"];
-            if (routeXmlNode) {
-                nodeData = Camel.getRouteNodeJSON(routeXmlNode);
-            }
-            if (!nodeData) {
-                nodeData = answer;
-            }
-            folder["camelNodeData"] = nodeData;
-        }
-        return nodeData;
-    }
-    Camel.getRouteFolderJSON = getRouteFolderJSON;
-    function getRouteNodeJSON(routeXmlNode, answer) {
-        if (answer === void 0) { answer = {}; }
-        if (routeXmlNode) {
-            angular.forEach(routeXmlNode.attributes, function (attr) {
-                answer[attr.name] = attr.value;
-            });
-            // lets not iterate into routes or top level tags
-            var localName = routeXmlNode.localName;
-            if (localName !== "route" && localName !== "routes" && localName !== "camelContext") {
-                // lets look for nested elements and convert those
-                // explicitly looking for expressions
-                $(routeXmlNode).children("*").each(function (idx, element) {
-                    var nodeName = element.localName;
-                    var langSettings = Camel.camelLanguageSettings(nodeName);
-                    if (langSettings) {
-                        // TODO the expression key could be anything really; how should we know?
-                        answer["expression"] = {
-                            language: nodeName,
-                            expression: element.textContent
-                        };
-                    }
-                    else {
-                        if (!isCamelPattern(nodeName)) {
-                            var nested = getRouteNodeJSON(element);
-                            if (nested) {
-                                answer[nodeName] = nested;
-                            }
-                        }
-                    }
-                });
-            }
-        }
-        return answer;
-    }
-    Camel.getRouteNodeJSON = getRouteNodeJSON;
-    function increaseIndent(currentIndent, indentAmount) {
-        if (indentAmount === void 0) { indentAmount = "  "; }
-        return currentIndent + indentAmount;
-    }
-    Camel.increaseIndent = increaseIndent;
-    function setRouteNodeJSON(routeXmlNode, newData, indent) {
-        if (routeXmlNode) {
-            var childIndent = increaseIndent(indent);
-            function doUpdate(value, key, append) {
-                if (append === void 0) { append = false; }
-                if (angular.isArray(value)) {
-                    // remove previous nodes
-                    $(routeXmlNode).children(key).remove();
-                    angular.forEach(value, function (item) {
-                        doUpdate(item, key, true);
-                    });
-                }
-                else if (angular.isObject(value)) {
-                    // convert languages to the right xml
-                    var textContent = null;
-                    if (key === "expression") {
-                        var languageName = value["language"];
-                        if (languageName) {
-                            key = languageName;
-                            textContent = value["expression"];
-                            value = angular.copy(value);
-                            delete value["expression"];
-                            delete value["language"];
-                        }
-                    }
-                    // TODO deal with nested objects...
-                    var nested = $(routeXmlNode).children(key);
-                    var element = null;
-                    if (append || !nested || !nested.length) {
-                        var doc = routeXmlNode.ownerDocument || document;
-                        routeXmlNode.appendChild(doc.createTextNode("\n" + childIndent));
-                        element = doc.createElementNS(routeXmlNode.namespaceURI, key);
-                        if (textContent) {
-                            element.appendChild(doc.createTextNode(textContent));
-                        }
-                        routeXmlNode.appendChild(element);
-                    }
-                    else {
-                        element = nested[0];
-                    }
-                    setRouteNodeJSON(element, value, childIndent);
-                    if (textContent) {
-                        nested.text(textContent);
-                    }
-                }
-                else {
-                    if (value) {
-                        if (key.startsWith("_")) {
-                        }
-                        else {
-                            var text = value.toString();
-                            routeXmlNode.setAttribute(key, text);
-                        }
-                    }
-                    else {
-                        routeXmlNode.removeAttribute(key);
-                    }
-                }
-            }
-            angular.forEach(newData, function (value, key) { return doUpdate(value, key, false); });
-        }
-    }
-    Camel.setRouteNodeJSON = setRouteNodeJSON;
-    function getRouteNodeIcon(nodeSettingsOrXmlNode) {
-        var nodeSettings = null;
-        if (nodeSettingsOrXmlNode) {
-            var nodeName = nodeSettingsOrXmlNode.localName;
-            if (nodeName) {
-                nodeSettings = getCamelSchema(nodeName);
-            }
-            else {
-                nodeSettings = nodeSettingsOrXmlNode;
-            }
-        }
-        if (nodeSettings) {
-            var imageName = nodeSettings["icon"] || "generic24.png";
-            return Core.url("/img/icons/camel/" + imageName);
-        }
-        else {
-            return null;
-        }
-    }
-    Camel.getRouteNodeIcon = getRouteNodeIcon;
-    /**
-     * Parse out the currently selected endpoint's name to be used when invoking on a
-     * context operation that wants an endpoint name
-     * @method getSelectedEndpointName
-     * @param {Workspace} workspace
-     * @return {any} either a string that is the endpoint name or null if it couldn't be parsed
-     */
-    function getSelectedEndpointName(workspace) {
-        var selection = workspace.selection;
-        if (selection && selection['objectName'] && selection['typeName'] && selection['typeName'] === 'endpoints') {
-            var mbean = Core.parseMBean(selection['objectName']);
-            if (!mbean) {
-                return null;
-            }
-            var attributes = mbean['attributes'];
-            if (!attributes) {
-                return null;
-            }
-            if (!('name' in attributes)) {
-                return null;
-            }
-            var uri = attributes['name'];
-            uri = uri.replace("\\?", "?");
-            if (uri.startsWith("\"")) {
-                uri = uri.last(uri.length - 1);
-            }
-            if (uri.endsWith("\"")) {
-                uri = uri.first(uri.length - 1);
-            }
-            return uri;
-        }
-        else {
-            return null;
-        }
-    }
-    Camel.getSelectedEndpointName = getSelectedEndpointName;
-    /**
-     * Escapes the given URI text so it can be used in a JMX name
-     */
-    function escapeEndpointUriNameForJmx(uri) {
-        if (angular.isString(uri)) {
-            var answer = uri.replace("?", "\\?");
-            // lets ensure that we have a "//" after each ":"
-            answer = answer.replace(/\:(\/[^\/])/, "://$1");
-            answer = answer.replace(/\:([^\/])/, "://$1");
-            return answer;
-        }
-        else {
-            return uri;
-        }
-    }
-    Camel.escapeEndpointUriNameForJmx = escapeEndpointUriNameForJmx;
-    /**
-     * Returns the mbean for the currently selected camel context and the name of the currently
-     * selected endpoint for JMX operations on a context that require an endpoint name.
-     * @method
-     * @param workspace
-     * @return {{uri: string, mbean: string}} either value could be null if there's a parse failure
-     */
-    function getContextAndTargetEndpoint(workspace) {
-        return {
-            uri: Camel.getSelectedEndpointName(workspace),
-            mbean: Camel.getSelectionCamelContextMBean(workspace)
-        };
-    }
-    Camel.getContextAndTargetEndpoint = getContextAndTargetEndpoint;
-    /**
-     * Returns the cached Camel XML route node stored in the current tree selection Folder
-     * @method
-     */
-    function getSelectedRouteNode(workspace) {
-        var selection = workspace.selection;
-        return (selection && Camel.jmxDomain === selection.domain) ? selection["routeXmlNode"] : null;
-    }
-    Camel.getSelectedRouteNode = getSelectedRouteNode;
-    /**
-     * Flushes the cached Camel XML route node stored in the selected tree Folder
-     * @method
-     * @param workspace
-     */
-    function clearSelectedRouteNode(workspace) {
-        var selection = workspace.selection;
-        if (selection && Camel.jmxDomain === selection.domain) {
-            delete selection["routeXmlNode"];
-        }
-    }
-    Camel.clearSelectedRouteNode = clearSelectedRouteNode;
-    /**
-     * Looks up the given node name in the Camel schema
-     * @method
-     */
-    function getCamelSchema(nodeIdOrDefinition) {
-        return (angular.isObject(nodeIdOrDefinition)) ? nodeIdOrDefinition : Forms.lookupDefinition(nodeIdOrDefinition, Camel._apacheCamelModel);
-    }
-    Camel.getCamelSchema = getCamelSchema;
-    /**
-     * Returns true if the given nodeId is a route, endpoint or pattern
-     * (and not some nested type like a data format)
-     * @method
-     */
-    function isCamelPattern(nodeId) {
-        return Forms.isJsonType(nodeId, Camel._apacheCamelModel, "org.apache.camel.model.OptionalIdentifiedDefinition");
-    }
-    Camel.isCamelPattern = isCamelPattern;
-    /**
-     * Returns true if the given node type prefers adding the next sibling as a child
-     * @method
-     */
-    function isNextSiblingAddedAsChild(nodeIdOrDefinition) {
-        var definition = getCamelSchema(nodeIdOrDefinition);
-        if (definition) {
-            return definition["nextSiblingAddedAsChild"] || false;
-        }
-        return null;
-    }
-    Camel.isNextSiblingAddedAsChild = isNextSiblingAddedAsChild;
-    function acceptInput(nodeIdOrDefinition) {
-        var definition = getCamelSchema(nodeIdOrDefinition);
-        if (definition) {
-            return definition["acceptInput"] || false;
-        }
-        return null;
-    }
-    Camel.acceptInput = acceptInput;
-    function acceptOutput(nodeIdOrDefinition) {
-        var definition = getCamelSchema(nodeIdOrDefinition);
-        if (definition) {
-            return definition["acceptOutput"] || false;
-        }
-        return null;
-    }
-    Camel.acceptOutput = acceptOutput;
-    /**
-     * Looks up the Camel language settings for the given language name
-     * @method
-     */
-    function camelLanguageSettings(nodeName) {
-        return Camel._apacheCamelModel.languages[nodeName];
-    }
-    Camel.camelLanguageSettings = camelLanguageSettings;
-    function isCamelLanguage(nodeName) {
-        return (camelLanguageSettings(nodeName) || nodeName === "expression") ? true : false;
-    }
-    Camel.isCamelLanguage = isCamelLanguage;
-    /**
-     * Converts the XML string or DOM node to a camel tree
-     * @method
-     */
-    function loadCamelTree(xml, key) {
-        var doc = xml;
-        if (angular.isString(xml)) {
-            doc = $.parseXML(xml);
-        }
-        // TODO get id from camelContext
-        var id = "camelContext";
-        var folder = new Folder(id);
-        folder.addClass = "org-apache-camel-context";
-        folder.domain = Camel.jmxDomain;
-        folder.typeName = "context";
-        folder.key = Core.toSafeDomID(key);
-        var context = $(doc).find("camelContext");
-        if (!context || !context.length) {
-            context = $(doc).find("routes");
-        }
-        if (context && context.length) {
-            folder["xmlDocument"] = doc;
-            folder["routeXmlNode"] = context;
-            $(context).children("route").each(function (idx, route) {
-                var id = route.getAttribute("id");
-                if (!id) {
-                    id = "route" + idx;
-                    route.setAttribute("id", id);
-                }
-                var routeFolder = new Folder(id);
-                routeFolder.addClass = "org-apache-camel-route";
-                routeFolder.typeName = "routes";
-                routeFolder.domain = Camel.jmxDomain;
-                routeFolder.key = folder.key + "_" + Core.toSafeDomID(id);
-                routeFolder.parent = folder;
-                var nodeSettings = getCamelSchema("route");
-                if (nodeSettings) {
-                    var imageUrl = getRouteNodeIcon(nodeSettings);
-                    routeFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
-                    routeFolder.icon = imageUrl;
-                }
-                folder.children.push(routeFolder);
-                addRouteChildren(routeFolder, route);
-            });
-        }
-        return folder;
-    }
-    Camel.loadCamelTree = loadCamelTree;
-    /**
-     * Adds the route children to the given folder for each step in the route
-     * @method
-     */
-    function addRouteChildren(folder, route) {
-        folder.children = [];
-        folder["routeXmlNode"] = route;
-        route.setAttribute("_cid", folder.key);
-        $(route).children("*").each(function (idx, n) {
-            addRouteChild(folder, n);
-        });
-    }
-    Camel.addRouteChildren = addRouteChildren;
-    /**
-     * Adds a child to the given folder / route
-     * @method
-     */
-    function addRouteChild(folder, n) {
-        var nodeName = n.localName;
-        if (nodeName) {
-            var nodeSettings = getCamelSchema(nodeName);
-            if (nodeSettings) {
-                var imageUrl = getRouteNodeIcon(nodeSettings);
-                var child = new Folder(nodeName);
-                child.domain = Camel.jmxDomain;
-                child.typeName = "routeNode";
-                updateRouteNodeLabelAndTooltip(child, n, nodeSettings);
-                // TODO should maybe auto-generate these?
-                child.parent = folder;
-                child.folderNames = folder.folderNames;
-                var id = n.getAttribute("id") || nodeName;
-                var key = folder.key + "_" + Core.toSafeDomID(id);
-                // lets find the next key thats unique
-                var counter = 1;
-                var notFound = true;
-                while (notFound) {
-                    var tmpKey = key + counter;
-                    if (folder.children.some({ key: tmpKey })) {
-                        counter += 1;
-                    }
-                    else {
-                        notFound = false;
-                        key = tmpKey;
-                    }
-                }
-                child.key = key;
-                child.icon = imageUrl;
-                child["routeXmlNode"] = n;
-                if (!folder.children) {
-                    folder.children = [];
-                }
-                folder.children.push(child);
-                addRouteChildren(child, n);
-                return child;
-            }
-        }
-        return null;
-    }
-    Camel.addRouteChild = addRouteChild;
-    /**
-     * Returns the root JMX Folder of the camel mbeans
-     */
-    function getRootCamelFolder(workspace) {
-        var tree = workspace ? workspace.tree : null;
-        if (tree) {
-            return tree.get(Camel.jmxDomain);
-        }
-        return null;
-    }
-    Camel.getRootCamelFolder = getRootCamelFolder;
-    /**
-     * Returns the JMX folder for the camel context
-     */
-    function getCamelContextFolder(workspace, camelContextId) {
-        var answer = null;
-        var root = getRootCamelFolder(workspace);
-        if (root && camelContextId) {
-            angular.forEach(root.children, function (contextFolder) {
-                if (!answer && camelContextId === contextFolder.title) {
-                    answer = contextFolder;
-                }
-            });
-        }
-        return answer;
-    }
-    Camel.getCamelContextFolder = getCamelContextFolder;
-    /**
-     * Returns the mbean for the given camel context ID or null if it cannot be found
-     */
-    function getCamelContextMBean(workspace, camelContextId) {
-        var contextsFolder = getCamelContextFolder(workspace, camelContextId);
-        if (contextsFolder) {
-            var contextFolder = contextsFolder.navigate("context");
-            if (contextFolder && contextFolder.children && contextFolder.children.length) {
-                var contextItem = contextFolder.children[0];
-                return contextItem.objectName;
-            }
-        }
-        return null;
-    }
-    Camel.getCamelContextMBean = getCamelContextMBean;
-    /**
-     * Given a selection in the workspace try figure out the URL to the
-     * full screen view
-     */
-    function linkToFullScreenView(workspace) {
-        var answer = null;
-        var selection = workspace.selection;
-        if (selection) {
-            var entries = selection.entries;
-            if (entries) {
-                var contextId = entries["context"];
-                var name = entries["name"];
-                var type = entries["type"];
-                if ("endpoints" === type) {
-                    return linkToBrowseEndpointFullScreen(contextId, name);
-                }
-                if ("routes" === type) {
-                    return linkToRouteDiagramFullScreen(contextId, name);
-                }
-            }
-        }
-        return answer;
-    }
-    Camel.linkToFullScreenView = linkToFullScreenView;
-    /**
-     * Returns the link to browse the endpoint full screen
-     */
-    function linkToBrowseEndpointFullScreen(contextId, endpointPath) {
-        var answer = null;
-        if (contextId && endpointPath) {
-            answer = "#/camel/endpoint/browse/" + contextId + "/" + endpointPath;
-        }
-        return answer;
-    }
-    Camel.linkToBrowseEndpointFullScreen = linkToBrowseEndpointFullScreen;
-    /**
-     * Returns the link to the route diagram full screen
-     */
-    function linkToRouteDiagramFullScreen(contextId, routeId) {
-        var answer = null;
-        if (contextId && routeId) {
-            answer = "#/camel/route/diagram/" + contextId + "/" + routeId;
-        }
-        return answer;
-    }
-    Camel.linkToRouteDiagramFullScreen = linkToRouteDiagramFullScreen;
-    function getFolderCamelNodeId(folder) {
-        var answer = Core.pathGet(folder, ["routeXmlNode", "localName"]);
-        return ("from" === answer || "to" === answer) ? "endpoint" : answer;
-    }
-    Camel.getFolderCamelNodeId = getFolderCamelNodeId;
-    /**
-     * Rebuilds the DOM tree from the tree node and performs all the various hacks
-     * to turn the folder / JSON / model into valid camel XML
-     * such as renaming language elements from <language expression="foo" language="bar/>
-     * to <bar>foo</bar>
-     * and changing <endpoint> into either <from> or <to>
-     * @method
-     * @param treeNode is either the Node from the tree widget (with the real Folder in the data property) or a Folder
-     */
-    function createFolderXmlTree(treeNode, xmlNode, indent) {
-        if (indent === void 0) { indent = Camel.increaseIndent(""); }
-        var folder = treeNode.data || treeNode;
-        var count = 0;
-        var parentName = getFolderCamelNodeId(folder);
-        if (folder) {
-            if (!xmlNode) {
-                xmlNode = document.createElement(parentName);
-                var rootJson = Camel.getRouteFolderJSON(folder);
-                if (rootJson) {
-                    Camel.setRouteNodeJSON(xmlNode, rootJson, indent);
-                }
-            }
-            var doc = xmlNode.ownerDocument || document;
-            var namespaceURI = xmlNode.namespaceURI;
-            var from = parentName !== "route";
-            var childIndent = Camel.increaseIndent(indent);
-            angular.forEach(treeNode.children || treeNode.getChildren(), function (childTreeNode) {
-                var childFolder = childTreeNode.data || childTreeNode;
-                var name = Camel.getFolderCamelNodeId(childFolder);
-                var json = Camel.getRouteFolderJSON(childFolder);
-                if (name && json) {
-                    var language = false;
-                    if (name === "endpoint") {
-                        if (from) {
-                            name = "to";
-                        }
-                        else {
-                            name = "from";
-                            from = true;
-                        }
-                    }
-                    if (name === "expression") {
-                        var languageName = json["language"];
-                        if (languageName) {
-                            name = languageName;
-                            language = true;
-                        }
-                    }
-                    // lets create the XML
-                    xmlNode.appendChild(doc.createTextNode("\n" + childIndent));
-                    var newNode = doc.createElementNS(namespaceURI, name);
-                    Camel.setRouteNodeJSON(newNode, json, childIndent);
-                    xmlNode.appendChild(newNode);
-                    count += 1;
-                    createFolderXmlTree(childTreeNode, newNode, childIndent);
-                }
-            });
-            if (count) {
-                xmlNode.appendChild(doc.createTextNode("\n" + indent));
-            }
-        }
-        return xmlNode;
-    }
-    Camel.createFolderXmlTree = createFolderXmlTree;
-    function updateRouteNodeLabelAndTooltip(folder, routeXmlNode, nodeSettings) {
-        var localName = routeXmlNode.localName;
-        var id = routeXmlNode.getAttribute("id");
-        var label = nodeSettings["title"] || localName;
-        // lets use the ID for routes and other things we give an id
-        var tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || label;
-        if (id) {
-            label = id;
-        }
-        else {
-            var uri = getRouteNodeUri(routeXmlNode);
-            if (uri) {
-                // Don't use from/to as it gets odd if you drag/drop and reorder
-                // label += " " + uri;
-                label = uri;
-                var split = uri.split("?");
-                if (split && split.length > 1) {
-                    label = split[0];
-                }
-                tooltip += " " + uri;
-            }
-            else {
-                var children = $(routeXmlNode).children("*");
-                if (children && children.length) {
-                    var child = children[0];
-                    var childName = child.localName;
-                    var expression = null;
-                    if (Camel.isCamelLanguage(childName)) {
-                        expression = child.textContent;
-                        if (!expression) {
-                            expression = child.getAttribute("expression");
-                        }
-                    }
-                    if (expression) {
-                        label += " " + expression;
-                        tooltip += " " + childName + " expression";
-                    }
-                }
-            }
-        }
-        folder.title = label;
-        folder.tooltip = tooltip;
-        return label;
-    }
-    Camel.updateRouteNodeLabelAndTooltip = updateRouteNodeLabelAndTooltip;
-    /**
-     * Returns the selected camel context mbean for the given selection or null if it cannot be found
-     * @method
-     */
-    // TODO should be a service
-    function getSelectionCamelContextMBean(workspace) {
-        if (workspace) {
-            var contextId = getContextId(workspace);
-            var selection = workspace.selection;
-            var tree = workspace.tree;
-            if (tree && selection) {
-                var domain = selection.domain;
-                if (domain && contextId) {
-                    var result = tree.navigate(domain, contextId, "context");
-                    if (result && result.children) {
-                        var contextBean = result.children.first();
-                        if (contextBean.title) {
-                            var contextName = contextBean.title;
-                            return "" + domain + ":context=" + contextId + ',type=context,name="' + contextName + '"';
-                        }
-                    }
-                }
-            }
-        }
-        return null;
-    }
-    Camel.getSelectionCamelContextMBean = getSelectionCamelContextMBean;
-    function getSelectionCamelContextEndpoints(workspace) {
-        if (workspace) {
-            var contextId = getContextId(workspace);
-            var selection = workspace.selection;
-            var tree = workspace.tree;
-            if (tree && selection) {
-                var domain = selection.domain;
-                if (domain && contextId) {
-                    return tree.navigate(domain, contextId, "endpoints");
-                }
-            }
-        }
-        return null;
-    }
-    Camel.getSelectionCamelContextEndpoints = getSelectionCamelContextEndpoints;
-    /**
-     * Returns the selected camel trace mbean for the given selection or null if it cannot be found
-     * @method
-     */
-    // TODO Should be a service
-    function getSelectionCamelTraceMBean(workspace) {
-        if (workspace) {
-            var contextId = getContextId(workspace);
-            var selection = workspace.selection;
-            var tree = workspace.tree;
-            if (tree && selection) {
-                var domain = selection.domain;
-                if (domain && contextId) {
-                    // look for the Camel 2.11 mbean which we prefer
-                    var result = tree.navigate(domain, contextId, "tracer");
-                    if (result && result.children) {
-                        var mbean = result.children.find(function (m) { return m.title.startsWith("BacklogTracer"); });
-                        if (mbean) {
-                            return mbean.objectName;
-                        }
-                    }
-                    // look for the fuse camel fabric mbean
-                    var fabricResult = tree.navigate(domain, contextId, "fabric");
-                    if (fabricResult && fabricResult.children) {
-                        var mbean = fabricResult.children.first();
-                        return mbean.objectName;
-                    }
-                }
-            }
-        }
-        return null;
-    }
-    Camel.getSelectionCamelTraceMBean = getSelectionCamelTraceMBean;
-    function getSelectionCamelDebugMBean(workspace) {
-        if (workspace) {
-            var contextId = getContextId(workspace);
-            var selection = workspace.selection;
-            var tree = workspace.tree;
-            if (tree && selection) {
-                var domain = selection.domain;
-                if (domain && contextId) {
-                    var result = tree.navigate(domain, contextId, "tracer");
-                    if (result && result.children) {
-                        var mbean = result.children.find(function (m) { return m.title.startsWith("BacklogDebugger"); });
-                        if (mbean) {
-                            return mbean.objectName;
-                        }
-                    }
-                }
-            }
-        }
-        return null;
-    }
-    Camel.getSelectionCamelDebugMBean = getSelectionCamelDebugMBean;
-    function getSelectionCamelTypeConverter(workspace) {
-        if (workspace) {
-            var contextId = getContextId(workspace);
-            var selection = workspace.selection;
-            var tree = workspace.tree;
-            if (tree && selection) {
-                var domain = selection.domain;
-                if (domain && contextId) {
-                    var result = tree.navigate(domain, contextId, "services");
-                    if (result && result.children) {
-                        var mbean = result.children.find(function (m) { return m.title.startsWith("DefaultTypeConverter"); });
-                        if (mbean) {
-                            return mbean.objectName;
-                        }
-                    }
-                }
-            }
-        }
-        return null;
-    }
-    Camel.getSelectionCamelTypeConverter = getSelectionCamelTypeConverter;
-    function getSelectionCamelRestRegistry(workspace) {
-        if (workspace) {
-            var contextId = getContextId(workspace);
-            var selection = workspace.selection;
-            var tree = workspace.tree;
-            if (tree && selection) {
-                var domain = selection.domain;
-                if (domain && contextId) {
-                    var result = tree.navigate(domain, contextId, "services");
-                    if (result && result.children) {
-                        var mbean = result.children.find(function (m) { return m.title.startsWith("DefaultRestRegistry"); });
-                        if (mbean) {
-                            return mbean.objectName;
-                        }
-                    }
-                }
-            }
-        }
-        return null;
-    }
-    Camel.getSelectionCamelRestRegistry = getSelectionCamelRestRegistry;
-    function getSelectionCamelRouteMetrics(workspace) {
-        if (workspace) {
-            var contextId = getContextId(workspace);
-            var selection = workspace.selection;
-            var tree = workspace.tree;
-            if (tree && selection) {
-                var domain = selection.domain;
-                if (domain && contextId) {
-                    var result = tree.navigate(domain, contextId, "services");
-                    if (result && result.children) {
-                        var mbean = result.children.find(function (m) { return m.title.startsWith("MetricsRegistryService"); });
-                        if (mbean) {
-                            return mbean.objectName;
-                        }
-                    }
-                }
-            }
-        }
-        return null;
-    }
-    Camel.getSelectionCamelRouteMetrics = getSelectionCamelRouteMetrics;
-    // TODO should be a service
-    function getContextId(workspace) {
-        var selection = workspace.selection;
-        if (selection) {
-            // find the camel context and find ancestors in the tree until we find the camel context selection
-            // this is either if the title is 'context' or if the parent title is 'org.apache.camel' (the Camel tree is a bit special)
-            selection = selection.findAncestor(function (s) { return s.title === 'context' || s.parent != null && s.parent.title === 'org.apache.camel'; });
-            if (selection) {
-                var tree = workspace.tree;
-                var folderNames = selection.folderNames;
-                var entries = selection.entries;
-                var contextId;
-                if (tree) {
-                    if (folderNames && folderNames.length > 1) {
-                        contextId = folderNames[1];
-                    }
-                    else if (entries) {
-                        contextId = entries["context"];
-                    }
-                }
-            }
-        }
-        return contextId;
-    }
-    Camel.getContextId = getContextId;
-    /**
-     * Returns true if the state of the item begins with the given state - or one of the given states
-     * @method
-     * @param item the item which has a State
-     * @param state a value or an array of states
-     */
-    function isState(item, state) {
-        var value = (item.State || "").toLowerCase();
-        if (angular.isArray(state)) {
-            return state.any(function (stateText) { return value.startsWith(stateText); });
-        }
-        else {
-            return value.startsWith(state);
-        }
-    }
-    Camel.isState = isState;
-    function iconClass(state) {
-        if (state) {
-            switch (state.toLowerCase()) {
-                case 'started':
-                    return "green fa fa-play-circle";
-                case 'suspended':
-                    return "fa fa-pause";
-            }
-        }
-        return "orange fa fa-off";
-    }
-    Camel.iconClass = iconClass;
-    function getSelectedRouteId(workspace, folder) {
-        if (folder === void 0) { folder = null; }
-        var selection = folder || workspace.selection;
-        var selectedRouteId = null;
-        if (selection) {
-            if (selection && selection.entries) {
-                var typeName = selection.entries["type"];
-                var name = selection.entries["name"];
-                if ("routes" === typeName && name) {
-                    selectedRouteId = Core.trimQuotes(name);
-                }
-            }
-        }
-        return selectedRouteId;
-    }
-    Camel.getSelectedRouteId = getSelectedRouteId;
-    /**
-     * Returns the selected camel route mbean for the given route id
-     * @method
-     */
-    // TODO Should be a service
-    function getSelectionRouteMBean(workspace, routeId) {
-        if (workspace) {
-            var contextId = getContextId(workspace);
-            var selection = workspace.selection;
-            var tree = workspace.tree;
-            if (tree && selection) {
-                var domain = selection.domain;
-                if (domain && contextId) {
-                    var result = tree.navigate(domain, contextId, "routes");
-                    if (result && result.children) {
-                        var mbean = result.children.find(function (m) { return m.title === routeId; });
-                        if (mbean) {
-                            return mbean.objectName;
-                        }
-                    }
-                }
-            }
-        }
-        return null;
-    }
-    Camel.getSelectionRouteMBean = getSelectionRouteMBean;
-    function getCamelVersion(workspace, jolokia) {
-        if (workspace) {
-            var contextId = getContextId(workspace);
-            var selection = workspace.selection;
-            var tree = workspace.tree;
-            if (tree && selection) {
-                var domain = selection.domain;
-                if (domain && contextId) {
-                    var result = tree.navigate(domain, contextId, "context");
-                    if (result && result.children) {
-                        var contextBean = result.children.first();
-                        if (contextBean.version) {
-                            // read the cached version
-                            return contextBean.version;
-                        }
-                        if (contextBean.title) {
-                            // okay no version cached, so need to get the version using jolokia
-                            var contextName = contextBean.title;
-                            var mbean = "" + domain + ":context=" + contextId + ',type=context,name="' + contextName + '"';
-                            // must use Core.onSuccess(null) that means sync as we need the version asap
-                            var version = jolokia.getAttribute(mbean, "CamelVersion", Core.onSuccess(null));
-                            // cache version so we do not need to read it again using jolokia
-                            contextBean.version = version;
-                            return version;
-                        }
-                    }
-                }
-            }
-        }
-        return null;
-    }
-    Camel.getCamelVersion = getCamelVersion;
-    function createMessageFromXml(exchange) {
-        var exchangeElement = $(exchange);
-        var uid = exchangeElement.children("uid").text();
-        var timestamp = exchangeElement.children("timestamp").text();
-        var messageData = {
-            headers: {},
-            headerTypes: {},
-            id: null,
-            uid: uid,
-            timestamp: timestamp,
-            headerHtml: ""
-        };
-        var message = exchangeElement.children("message")[0];
-        if (!message) {
-            message = exchange;
-        }
-        var messageElement = $(message);
-        var headers = messageElement.find("header");
-        var headerHtml = "";
-        headers.each(function (idx, header) {
-            var key = header.getAttribute("key");
-            var typeName = header.getAttribute("type");
-            var value = header.textContent;
-            if (key) {
-                if (value)
-                    messageData.headers[key] = value;
-                if (typeName)
-                    messageData.headerTypes[key] = typeName;
-                headerHtml += "<tr><td class='property-name'>" + key + "</td>" + "<td class='property-value'>" + (humanizeJavaType(typeName)) + "</td>" + "<td class='property-value'>" + (value || "") + "</td></tr>";
-            }
-        });
-        messageData.headerHtml = headerHtml;
-        var id = messageData.headers["breadcrumbId"];
-        if (!id) {
-            var postFixes = ["MessageID", "ID", "Path", "Name"];
-            angular.forEach(postFixes, function (postfix) {
-                if (!id) {
-                    angular.forEach(messageData.headers, function (value, key) {
-                        if (!id && key.endsWith(postfix)) {
-                            id = value;
-                        }
-                    });
-                }
-            });
-            // lets find the first header with a name or Path in it
-            // if still no value, lets use the first :)
-            angular.forEach(messageData.headers, function (value, key) {
-                if (!id)
-                    id = value;
-            });
-        }
-        messageData.id = id;
-        var body = messageElement.children("body")[0];
-        if (body) {
-            var bodyText = body.textContent;
-            var bodyType = body.getAttribute("type");
-            messageData["body"] = bodyText;
-            messageData["bodyType"] = humanizeJavaType(bodyType);
-        }
-        return messageData;
-    }
-    Camel.createMessageFromXml = createMessageFromXml;
-    function humanizeJavaType(type) {
-        if (!type) {
-            return "";
-        }
-        // skip leading java.lang
-        if (type.startsWith("java.lang")) {
-            return type.substr(10);
-        }
-        return type;
-    }
-    Camel.humanizeJavaType = humanizeJavaType;
-    function createBrowseGridOptions() {
-        return {
-            selectedItems: [],
-            data: 'messages',
-            displayFooter: false,
-            showFilter: false,
-            showColumnMenu: true,
-            enableColumnResize: true,
-            enableColumnReordering: true,
-            filterOptions: {
-                filterText: ''
-            },
-            selectWithCheckboxOnly: true,
-            showSelectionCheckbox: true,
-            maintainColumnRatios: false,
-            columnDefs: [
-                {
-                    field: 'id',
-                    displayName: 'ID',
-                    // for ng-grid
-                    //width: '50%',
-                    // for hawtio-datatable
-                    // width: "22em",
-                    cellTemplate: '<div class="ngCellText"><a ng-click="openMessageDialog(row)">{{row.entity.id}}</a></div>'
-                }
-            ]
-        };
-    }
-    Camel.createBrowseGridOptions = createBrowseGridOptions;
-    function loadRouteXmlNodes($scope, doc, selectedRouteId, nodes, links, width) {
-        var allRoutes = $(doc).find("route");
-        var routeDelta = width / allRoutes.length;
-        var rowX = 0;
-        allRoutes.each(function (idx, route) {
-            var routeId = route.getAttribute("id");
-            if (!selectedRouteId || !routeId || selectedRouteId === routeId) {
-                Camel.addRouteXmlChildren($scope, route, nodes, links, null, rowX, 0);
-                rowX += routeDelta;
-            }
-        });
-    }
-    Camel.loadRouteXmlNodes = loadRouteXmlNodes;
-    function addRouteXmlChildren($scope, parent, nodes, links, parentId, parentX, parentY, parentNode) {
-        if (parentNode === void 0) { parentNode = null; }
-        var delta = 150;
-        var x = parentX;
-        var y = parentY + delta;
-        var rid = parent.getAttribute("id");
-        var siblingNodes = [];
-        var parenNodeName = parent.localName;
-        $(parent).children().each(function (idx, route) {
-            var id = nodes.length;
-            // from acts as a parent even though its a previous sibling :)
-            var nodeId = route.localName;
-            if (nodeId === "from" && !parentId) {
-                parentId = id;
-            }
-            var nodeSettings = getCamelSchema(nodeId);
-            var node = null;
-            if (nodeSettings) {
-                var label = nodeSettings["title"] || nodeId;
-                var uri = getRouteNodeUri(route);
-                if (uri) {
-                    label += " " + uri.split("?")[0];
-                }
-                var tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || label;
-                if (uri) {
-                    tooltip += " " + uri;
-                }
-                var elementID = route.getAttribute("id");
-                var labelSummary = label;
-                if (elementID) {
-                    var customId = route.getAttribute("customId");
-                    if ($scope.camelIgnoreIdForLabel || (!customId || customId === "false")) {
-                        labelSummary = "id: " + elementID;
-                    }
-                    else {
-                        label = elementID;
-                    }
-                }
-                // lets check if we need to trim the label
-                var labelLimit = $scope.camelMaximumLabelWidth || Camel.defaultMaximumLabelWidth;
-                var length = label.length;
-                if (length > labelLimit) {
-                    labelSummary = label + "\n\n" + labelSummary;
-                    label = label.substring(0, labelLimit) + "..";
-                }
-                var imageUrl = getRouteNodeIcon(nodeSettings);
-                if ((nodeId === "from" || nodeId === "to") && uri) {
-                    var uriIdx = uri.indexOf(":");
-                    if (uriIdx > 0) {
-                        var componentScheme = uri.substring(0, uriIdx);
-                        //console.log("lets find the endpoint icon for " + componentScheme);
-                        if (componentScheme) {
-                            var value = Camel.getEndpointIcon(componentScheme);
-                            if (value) {
-                                imageUrl = Core.url(value);
-                            }
-                        }
-                    }
-                }
-                //console.log("Image URL is " + imageUrl);
-                var cid = route.getAttribute("_cid") || route.getAttribute("id");
-                node = { "name": name, "label": label, "labelSummary": labelSummary, "group": 1, "id": id, "elementId": elementID, "x": x, "y:": y, "imageUrl": imageUrl, "cid": cid, "tooltip": tooltip, "type": nodeId };
-                if (rid) {
-                    node["rid"] = rid;
-                    if (!$scope.routeNodes)
-                        $scope.routeNodes = {};
-                    $scope.routeNodes[rid] = node;
-                }
-                if (!cid) {
-                    cid = nodeId + (nodes.length + 1);
-                }
-                if (cid) {
-                    node["cid"] = cid;
-                    if (!$scope.nodes)
-                        $scope.nodes = {};
-                    $scope.nodes[cid] = node;
-                }
-                // only use the route id on the first from node
-                rid = null;
-                nodes.push(node);
-                if (parentId !== null && parentId !== id) {
-                    if (siblingNodes.length === 0 || parenNodeName === "choice") {
-                        links.push({ "source": parentId, "target": id, "value": 1 });
-                    }
-                    else {
-                        siblingNodes.forEach(function (nodeId) {
-                            links.push({ "source": nodeId, "target": id, "value": 1 });
-                        });
-                        siblingNodes.length = 0;
-                    }
-                }
-            }
-            else {
-                // ignore non EIP nodes, though we should add expressions...
-                var langSettings = Camel.camelLanguageSettings(nodeId);
-                if (langSettings && parentNode) {
-                    // lets add the language kind
-                    var name = langSettings["name"] || nodeId;
-                    var text = route.textContent;
-                    if (text) {
-                        parentNode["tooltip"] = parentNode["label"] + " " + name + " " + text;
-                        parentNode["label"] = text;
-                    }
-                    else {
-                        parentNode["label"] = parentNode["label"] + " " + name;
-                    }
-                }
-            }
-            var siblings = addRouteXmlChildren($scope, route, nodes, links, id, x, y, node);
-            if (parenNodeName === "choice") {
-                siblingNodes = siblingNodes.concat(siblings);
-                x += delta;
-            }
-            else if (nodeId === "choice") {
-                siblingNodes = siblings;
-                y += delta;
-            }
-            else {
-                siblingNodes = [nodes.length - 1];
-                y += delta;
-            }
-        });
-        return siblingNodes;
-    }
-    Camel.addRouteXmlChildren = addRouteXmlChildren;
-    function getCanvasHeight(canvasDiv) {
-        var height = canvasDiv.height();
-        if (height < 300) {
-            console.log("browse thinks the height is only " + height + " so calculating offset from doc height");
-            var offset = canvasDiv.offset();
-            height = $(document).height() - 5;
-            if (offset) {
-                var top = offset['top'];
-                if (top) {
-                    height -= top;
-                }
-            }
-        }
-        return height;
-    }
-    Camel.getCanvasHeight = getCanvasHeight;
-    /**
-     * Recursively add all the folders which have a cid value into the given map
-     * @method
-     */
-    function addFoldersToIndex(folder, map) {
-        if (map === void 0) { map = {}; }
-        if (folder) {
-            var key = folder.key;
-            if (key) {
-                map[key] = folder;
-            }
-            angular.forEach(folder.children, function (child) { return addFoldersToIndex(child, map); });
-        }
-        return map;
-    }
-    Camel.addFoldersToIndex = addFoldersToIndex;
-    /**
-     * Re-generates the XML document using the given Tree widget Node or Folder as the source
-     * @method
-     */
-    function generateXmlFromFolder(treeNode) {
-        var folder = (treeNode && treeNode.data) ? treeNode.data : treeNode;
-        if (!folder)
-            return null;
-        var doc = folder["xmlDocument"];
-        var context = folder["routeXmlNode"];
-        if (context && context.length) {
-            var element = context[0];
-            var children = element.childNodes;
-            var routeIndices = [];
-            for (var i = 0; i < children.length; i++) {
-                var node = children[i];
-                var name = node.localName;
-                if ("route" === name && parent) {
-                    routeIndices.push(i);
-                }
-            }
-            while (routeIndices.length) {
-                var idx = routeIndices.pop();
-                var nextIndex = idx + 1;
-                while (true) {
-                    var node = element.childNodes[nextIndex];
-                    if (Core.isTextNode(node)) {
-                        element.removeChild(node);
-                    }
-                    else {
-                        break;
-                    }
-                }
-                if (idx < element.childNodes.length) {
-                    element.removeChild(element.childNodes[idx]);
-                }
-                for (var i = idx - 1; i >= 0; i--) {
-                    var node = element.childNodes[i];
-                    if (Core.isTextNode(node)) {
-                        element.removeChild(node);
-                    }
-                    else {
-                        break;
-                    }
-                }
-            }
-            Camel.createFolderXmlTree(treeNode, context[0]);
-        }
-        return doc;
-    }
-    Camel.generateXmlFromFolder = generateXmlFromFolder;
-    /**
-     * Returns an object of all the CamelContext MBeans keyed by their id
-     * @method
-     */
-    function camelContextMBeansById(workspace) {
-        var answer = {};
-        var tree = workspace.tree;
-        if (tree) {
-            var camelTree = tree.navigate(Camel.jmxDomain);
-            if (camelTree) {
-                angular.forEach(camelTree.children, function (contextsFolder) {
-                    var contextFolder = contextsFolder.navigate("context");
-                    if (contextFolder && contextFolder.children && contextFolder.children.length) {
-                        var contextItem = contextFolder.children[0];
-                        var id = Core.pathGet(contextItem, ["entries", "name"]) || contextItem.key;
-                        if (id) {
-                            answer[id] = {
-                                folder: contextItem,
-                                mbean: contextItem.objectName
-                            };
-                        }
-                    }
-                });
-            }
-        }
-        return answer;
-    }
-    Camel.camelContextMBeansById = camelContextMBeansById;
-    /**
-     * Returns an object of all the CamelContext MBeans keyed by the component name
-     * @method
-     */
-    function camelContextMBeansByComponentName(workspace) {
-        return camelContextMBeansByRouteOrComponentId(workspace, "components");
-    }
-    Camel.camelContextMBeansByComponentName = camelContextMBeansByComponentName;
-    /**
-     * Returns an object of all the CamelContext MBeans keyed by the route ID
-     * @method
-     */
-    function camelContextMBeansByRouteId(workspace) {
-        return camelContextMBeansByRouteOrComponentId(workspace, "routes");
-    }
-    Camel.camelContextMBeansByRouteId = camelContextMBeansByRouteId;
-    function camelContextMBeansByRouteOrComponentId(workspace, componentsOrRoutes) {
-        var answer = {};
-        var tree = workspace.tree;
-        if (tree) {
-            var camelTree = tree.navigate(Camel.jmxDomain);
-            if (camelTree) {
-                angular.forEach(camelTree.children, function (contextsFolder) {
-                    var contextFolder = contextsFolder.navigate("context");
-                    var componentsFolder = contextsFolder.navigate(componentsOrRoutes);
-                    if (contextFolder && componentsFolder && contextFolder.children && contextFolder.children.length) {
-                        var contextItem = contextFolder.children[0];
-                        var mbean = contextItem.objectName;
-                        if (mbean) {
-                            var contextValues = {
-                                folder: contextItem,
-                                mbean: mbean
-                            };
-                            angular.forEach(componentsFolder.children, function (componentFolder) {
-                                var id = componentFolder.title;
-                                if (id) {
-                                    answer[id] = contextValues;
-                                }
-                            });
-                        }
-                    }
-                });
-            }
-        }
-        return answer;
-    }
-    /**
-     * Returns an object for the given processor from the Camel tree
-     * @method
-     */
-    function camelProcessorMBeansById(workspace) {
-        var answer = {};
-        var tree = workspace.tree;
-        if (tree) {
-            var camelTree = tree.navigate(Camel.jmxDomain);
-            if (camelTree) {
-                angular.forEach(camelTree.children, function (contextsFolder) {
-                    var processorsFolder = contextsFolder.navigate("processors");
-                    if (processorsFolder && processorsFolder.children && processorsFolder.children.length) {
-                        angular.forEach(processorsFolder.children, function (processorFolder) {
-                            var id = processorFolder.title;
-                            if (id) {
-                                var processorValues = {
-                                    folder: processorsFolder,
-                                    key: processorFolder.key
-                                };
-                                answer[id] = processorValues;
-                            }
-                        });
-                    }
-                });
-            }
-        }
-        return answer;
-    }
-    Camel.camelProcessorMBeansById = camelProcessorMBeansById;
-    /**
-     * Returns true if we should ignore ID values for labels in camel diagrams
-     * @method
-     */
-    function ignoreIdForLabel(localStorage) {
-        var value = localStorage["camelIgnoreIdForLabel"];
-        return Core.parseBooleanValue(value);
-    }
-    Camel.ignoreIdForLabel = ignoreIdForLabel;
-    /**
-     * Returns the maximum width of a label before we start to truncate
-     * @method
-     */
-    function maximumLabelWidth(localStorage) {
-        var value = localStorage["camelMaximumLabelWidth"];
-        if (angular.isString(value)) {
-            value = parseInt(value);
-        }
-        if (!value) {
-            value = Camel.defaultMaximumLabelWidth;
-        }
-        return value;
-    }
-    Camel.maximumLabelWidth = maximumLabelWidth;
-    /**
-     * Returns the max body length for tracer and debugger
-     * @method
-     */
-    function maximumTraceOrDebugBodyLength(localStorage) {
-        var value = localStorage["camelMaximumTraceOrDebugBodyLength"];
-        if (angular.isString(value)) {
-            value = parseInt(value);
-        }
-        if (!value) {
-            value = Camel.defaultCamelMaximumTraceOrDebugBodyLength;
-        }
-        return value;
-    }
-    Camel.maximumTraceOrDebugBodyLength = maximumTraceOrDebugBodyLength;
-    /**
-     * Returns whether to include streams body for tracer and debugger
-     * @method
-     */
-    function traceOrDebugIncludeStreams(localStorage) {
-        var value = localStorage["camelTraceOrDebugIncludeStreams"];
-        return Core.parseBooleanValue(value, Camel.defaultCamelTraceOrDebugIncludeStreams);
-    }
-    Camel.traceOrDebugIncludeStreams = traceOrDebugIncludeStreams;
-    /**
-     * Returns the max value for seconds in the route metrics UI
-     * @method
-     */
-    function routeMetricMaxSeconds(localStorage) {
-        var value = localStorage["camelRouteMetricMaxSeconds"];
-        if (angular.isString(value)) {
-            value = parseInt(value);
-        }
-        if (!value) {
-            value = Camel.defaultCamelRouteMetricMaxSeconds;
-        }
-        return value;
-    }
-    Camel.routeMetricMaxSeconds = routeMetricMaxSeconds;
-    /**
-     * Function to highlight the selected toNode in the nodes graph
-     *
-     * @param nodes the nodes
-     * @param toNode the node to highlight
-     */
-    function highlightSelectedNode(nodes, toNode) {
-        // lets clear the selected node first
-        nodes.attr("class", "node");
-        nodes.filter(function (item) {
-            if (item) {
-                var cid = item["cid"];
-                var rid = item["rid"];
-                var type = item["type"];
-                var elementId = item["elementId"];
-                // if its from then match on rid
-                if ("from" === type) {
-                    return toNode === rid;
-                }
-                // okay favor using element id as the cids can become
-                // undefined or mangled with mbean object names, causing this to not work
-                // where as elementId when present works fine
-                if (elementId) {
-                    // we should match elementId if defined
-                    return toNode === elementId;
-                }
-                // then fallback to cid
-                if (cid) {
-                    return toNode === cid;
-                }
-                else {
-                    // and last rid
-                    return toNode === rid;
-                }
-            }
-            return null;
-        }).attr("class", "node selected");
-    }
-    Camel.highlightSelectedNode = highlightSelectedNode;
-    /**
-     * Is the currently selected Camel version equal or greater than
-     *
-     * @param major   major version as number
-     * @param minor   minor version as number
-     */
-    function isCamelVersionEQGT(major, minor, workspace, jolokia) {
-        var camelVersion = getCamelVersion(workspace, jolokia);
-        if (camelVersion) {
-            console.log("Camel version " + camelVersion);
-            camelVersion += "camel-";
-            var numbers = Core.parseVersionNumbers(camelVersion);
-            if (Core.compareVersionNumberArrays(numbers, [major, minor]) >= 0) {
-                return true;
-            }
-            else {
-                return false;
-            }
-        }
-        return false;
-    }
-    Camel.isCamelVersionEQGT = isCamelVersionEQGT;
-})(Camel || (Camel = {}));
 
 /// <reference path="../../includes.ts"/>
 /// <reference path="../../git/ts/gitHelpers.ts"/>
@@ -12997,4628 +17621,6 @@ var Wiki;
     }]);
 })(Wiki || (Wiki = {}));
 
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelHelpers.ts"/>
-/**
- *
- * @module Camel
- * @main Camel
- */
-var Camel;
-(function (Camel) {
-    var jmxModule = Jmx;
-    Camel.pluginName = 'camel';
-    var routeToolBar = "plugins/camel/html/attributeToolBarRoutes.html";
-    var contextToolBar = "plugins/camel/html/attributeToolBarContext.html";
-    Camel._module = angular.module(Camel.pluginName, []);
-    Camel._module.config(["$routeProvider", function ($routeProvider) {
-        $routeProvider.when('/camel/browseEndpoint', { templateUrl: 'plugins/camel/html/browseEndpoint.html' }).when('/camel/endpoint/browse/:contextId/*endpointPath', { templateUrl: 'plugins/camel/html/browseEndpoint.html' }).when('/camel/createEndpoint', { templateUrl: 'plugins/camel/html/createEndpoint.html' }).when('/camel/route/diagram/:contextId/:routeId', { templateUrl: 'plugins/camel/html/routes.html' }).when('/camel/routes', { templateUrl: 'plugins/camel/html/routes.html' }).when('/camel/fabricDiagram', { templateUrl: 'plugins/camel/html/fabricDiagram.html', reloadOnSearch: false }).when('/camel/typeConverter', { templateUrl: 'plugins/camel/html/typeConverter.html', reloadOnSearch: false }).when('/camel/restRegistry', { templateUrl: 'plugins/camel/html/restRegistry.html', reloadOnSearch: false }).when('/camel/routeMetrics', { templateUrl: 'plugins/camel/html/routeMetrics.html', reloadOnSearch: false }).when('/camel/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html', reloadOnSearch: false }).when('/camel/source', { templateUrl: 'plugins/camel/html/source.html' }).when('/camel/traceRoute', { templateUrl: 'plugins/camel/html/traceRoute.html' }).when('/camel/debugRoute', { templateUrl: 'plugins/camel/html/debug.html' }).when('/camel/profileRoute', { templateUrl: 'plugins/camel/html/profileRoute.html' }).when('/camel/properties', { templateUrl: 'plugins/camel/html/properties.html' });
-    }]);
-    Camel._module.factory('tracerStatus', function () {
-        return {
-            jhandle: null,
-            messages: []
-        };
-    });
-    Camel._module.filter('camelIconClass', function () { return Camel.iconClass; });
-    Camel._module.factory('activeMQMessage', function () {
-        return { 'message': null };
-    });
-    Camel._module.run(["HawtioNav", "workspace", "jolokia", "viewRegistry", "layoutFull", "helpRegistry", "preferencesRegistry", "$templateCache", function (nav, workspace, jolokia, viewRegistry, layoutFull, helpRegistry, preferencesRegistry, $templateCache) {
-        viewRegistry['camel/endpoint/'] = layoutFull;
-        viewRegistry['camel/route/'] = layoutFull;
-        viewRegistry['camel/fabricDiagram'] = layoutFull;
-        viewRegistry['camel'] = 'plugins/camel/html/layoutCamelTree.html';
-        helpRegistry.addUserDoc('camel', 'plugins/camel/doc/help.md', function () {
-            return workspace.treeContainsDomainAndProperties(Camel.jmxDomain);
-        });
-        preferencesRegistry.addTab('Camel', 'plugins/camel/html/preferences.html', function () {
-            return workspace.treeContainsDomainAndProperties(Camel.jmxDomain);
-        });
-        // TODO should really do this via a service that the JMX plugin exposes
-        Jmx.addAttributeToolBar(Camel.pluginName, Camel.jmxDomain, function (selection) {
-            // TODO there should be a nicer way to do this!
-            var typeName = selection.typeName;
-            if (typeName) {
-                if (typeName.startsWith("context"))
-                    return contextToolBar;
-                if (typeName.startsWith("route"))
-                    return routeToolBar;
-            }
-            var folderNames = selection.folderNames;
-            if (folderNames && selection.domain === Camel.jmxDomain) {
-                var last = folderNames.last();
-                if ("routes" === last)
-                    return routeToolBar;
-                if ("context" === last)
-                    return contextToolBar;
-            }
-            return null;
-        });
-        // register default attribute views
-        var stateField = 'State';
-        var stateTemplate = '<div class="ngCellText pagination-centered" title="{{row.getProperty(col.field)}}"><i class="{{row.getProperty(\'' + stateField + '\') | camelIconClass}}"></i></div>';
-        var stateColumn = { field: stateField, displayName: stateField, cellTemplate: stateTemplate, width: 56, minWidth: 56, maxWidth: 56, resizable: false, defaultSort: false };
-        var attributes = workspace.attributeColumnDefs;
-        attributes[Camel.jmxDomain + "/context/folder"] = [
-            stateColumn,
-            { field: 'CamelId', displayName: 'Context' },
-            { field: 'Uptime', displayName: 'Uptime', visible: false },
-            { field: 'CamelVersion', displayName: 'Version', visible: false },
-            { field: 'ExchangesCompleted', displayName: 'Completed #' },
-            { field: 'ExchangesFailed', displayName: 'Failed #' },
-            { field: 'FailuresHandled', displayName: 'Failed Handled #' },
-            { field: 'ExchangesTotal', displayName: 'Total #', visible: false },
-            { field: 'InflightExchanges', displayName: 'Inflight #' },
-            { field: 'MeanProcessingTime', displayName: 'Mean Time' },
-            { field: 'MinProcessingTime', displayName: 'Min Time' },
-            { field: 'MaxProcessingTime', displayName: 'Max Time' },
-            { field: 'TotalProcessingTime', displayName: 'Total Time', visible: false },
-            { field: 'LastProcessingTime', displayName: 'Last Time', visible: false },
-            { field: 'LastExchangeCompletedTimestamp', displayName: 'Last completed', visible: false },
-            { field: 'LastExchangeFailedTimestamp', displayName: 'Last failed', visible: false },
-            { field: 'Redeliveries', displayName: 'Redelivery #', visible: false },
-            { field: 'ExternalRedeliveries', displayName: 'External Redelivery #', visible: false }
-        ];
-        attributes[Camel.jmxDomain + "/routes/folder"] = [
-            stateColumn,
-            { field: 'CamelId', displayName: 'Context' },
-            { field: 'RouteId', displayName: 'Route' },
-            { field: 'ExchangesCompleted', displayName: 'Completed #' },
-            { field: 'ExchangesFailed', displayName: 'Failed #' },
-            { field: 'FailuresHandled', displayName: 'Failed Handled #' },
-            { field: 'ExchangesTotal', displayName: 'Total #', visible: false },
-            { field: 'InflightExchanges', displayName: 'Inflight #' },
-            { field: 'MeanProcessingTime', displayName: 'Mean Time' },
-            { field: 'MinProcessingTime', displayName: 'Min Time' },
-            { field: 'MaxProcessingTime', displayName: 'Max Time' },
-            { field: 'TotalProcessingTime', displayName: 'Total Time', visible: false },
-            { field: 'DeltaProcessingTime', displayName: 'Delta Time', visible: false },
-            { field: 'LastProcessingTime', displayName: 'Last Time', visible: false },
-            { field: 'LastExchangeCompletedTimestamp', displayName: 'Last completed', visible: false },
-            { field: 'LastExchangeFailedTimestamp', displayName: 'Last failed', visible: false },
-            { field: 'Redeliveries', displayName: 'Redelivery #', visible: false },
-            { field: 'ExternalRedeliveries', displayName: 'External Redelivery #', visible: false }
-        ];
-        attributes[Camel.jmxDomain + "/processors/folder"] = [
-            stateColumn,
-            { field: 'CamelId', displayName: 'Context' },
-            { field: 'RouteId', displayName: 'Route' },
-            { field: 'ProcessorId', displayName: 'Processor' },
-            { field: 'ExchangesCompleted', displayName: 'Completed #' },
-            { field: 'ExchangesFailed', displayName: 'Failed #' },
-            { field: 'FailuresHandled', displayName: 'Failed Handled #' },
-            { field: 'ExchangesTotal', displayName: 'Total #', visible: false },
-            { field: 'InflightExchanges', displayName: 'Inflight #' },
-            { field: 'MeanProcessingTime', displayName: 'Mean Time' },
-            { field: 'MinProcessingTime', displayName: 'Min Time' },
-            { field: 'MaxProcessingTime', displayName: 'Max Time' },
-            { field: 'TotalProcessingTime', displayName: 'Total Time', visible: false },
-            { field: 'LastProcessingTime', displayName: 'Last Time', visible: false },
-            { field: 'LastExchangeCompletedTimestamp', displayName: 'Last completed', visible: false },
-            { field: 'LastExchangeFailedTimestamp', displayName: 'Last failed', visible: false },
-            { field: 'Redeliveries', displayName: 'Redelivery #', visible: false },
-            { field: 'ExternalRedeliveries', displayName: 'External Redelivery #', visible: false }
-        ];
-        attributes[Camel.jmxDomain + "/components/folder"] = [
-            stateColumn,
-            { field: 'CamelId', displayName: 'Context' },
-            { field: 'ComponentName', displayName: 'Name' }
-        ];
-        attributes[Camel.jmxDomain + "/consumers/folder"] = [
-            stateColumn,
-            { field: 'CamelId', displayName: 'Context' },
-            { field: 'RouteId', displayName: 'Route' },
-            { field: 'EndpointUri', displayName: 'Endpoint URI', width: "**" },
-            { field: 'Suspended', displayName: 'Suspended', resizable: false },
-            { field: 'InflightExchanges', displayName: 'Inflight #' }
-        ];
-        attributes[Camel.jmxDomain + "/services/folder"] = [
-            stateColumn,
-            { field: 'CamelId', displayName: 'Context' },
-            { field: 'RouteId', displayName: 'Route' },
-            { field: 'Suspended', displayName: 'Suspended', resizable: false },
-            { field: 'SupportsSuspended', displayName: 'Can Suspend', resizable: false }
-        ];
-        attributes[Camel.jmxDomain + "/endpoints/folder"] = [
-            stateColumn,
-            { field: 'CamelId', displayName: 'Context' },
-            { field: 'EndpointUri', displayName: 'Endpoint URI', width: "***" },
-            { field: 'Singleton', displayName: 'Singleton', resizable: false }
-        ];
-        attributes[Camel.jmxDomain + "/threadpools/folder"] = [
-            { field: 'Id', displayName: 'Id', width: "**" },
-            { field: 'ActiveCount', displayName: 'Active #' },
-            { field: 'PoolSize', displayName: 'Pool Size' },
-            { field: 'CorePoolSize', displayName: 'Core Pool Size' },
-            { field: 'TaskQueueSize', displayName: 'Task Queue Size' },
-            { field: 'TaskCount', displayName: 'Task #' },
-            { field: 'CompletedTaskCount', displayName: 'Completed Task #' }
-        ];
-        attributes[Camel.jmxDomain + "/errorhandlers/folder"] = [
-            { field: 'CamelId', displayName: 'Context' },
-            { field: 'DeadLetterChannel', displayName: 'Dead Letter' },
-            { field: 'DeadLetterChannelEndpointUri', displayName: 'Endpoint URI', width: "**", resizable: true },
-            { field: 'MaximumRedeliveries', displayName: 'Max Redeliveries' },
-            { field: 'RedeliveryDelay', displayName: 'Redelivery Delay' },
-            { field: 'MaximumRedeliveryDelay', displayName: 'Max Redeliveries Delay' }
-        ];
-        var builder = nav.builder();
-        var tab = builder.id('camel').title(function () { return 'Camel'; }).href(function () { return '/jmx/attributes?tab=camel'; }).isSelected(function () { return workspace.isTopTabActive('camel'); }).isValid(function () { return workspace.treeContainsDomainAndProperties(Camel.jmxDomain); }).build();
-        // add sub level tabs
-        tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
-        // special for route diagram as we want this to be the 1st
-        tab.tabs.push({
-            id: 'camel-route-diagram',
-            title: function () { return 'Route Diagram'; },
-            //title: "View a diagram of the Camel routes",
-            show: function () { return workspace.isRoute() && workspace.hasInvokeRightsForName(Camel.getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"); },
-            isSelected: function () { return workspace.isLinkActive('camel/routes'); },
-            href: function () { return "/camel/routes" + workspace.hash(); },
-            // make sure we have route diagram shown first
-            index: -2
-        });
-        tab.tabs.push({
-            id: 'camel-route-metrics',
-            title: function () { return '<i class="fa fa-bar-chart"></i> Route Metrics'; },
-            //title: "View the entire JVMs Camel route metrics",
-            show: function () { return !workspace.isEndpointsFolder() && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext()) && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelRouteMetrics(workspace), "dumpStatisticsAsJson"); },
-            isSelected: function () { return workspace.isLinkActive('camel/routeMetrics'); },
-            href: function () { return "/camel/routeMetrics" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-source',
-            title: function () { return '<i class=" fa fa-file-alt"></i> Source'; },
-            //title: "View the source of the Camel routes",
-            show: function () { return !workspace.isEndpointsFolder() && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext()) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"); },
-            isSelected: function () { return workspace.isLinkActive('camel/source'); },
-            href: function () { return "/camel/source" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-properties',
-            title: function () { return '<i class=" fa fa-edit"></i> Properties'; },
-            //title: "View the pattern properties",
-            show: function () { return Camel.getSelectedRouteNode(workspace); },
-            isSelected: function () { return workspace.isLinkActive('camel/properties'); },
-            href: function () { return "/camel/properties" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-type-converters',
-            title: function () { return '<i class="fa fa-list"></i> Type Converters'; },
-            //title: "List all the type converters registered in the context",
-            show: function () { return workspace.isTopTabActive("camel") && !workspace.isEndpointsFolder() && !workspace.isRoute() && Camel.isCamelVersionEQGT(2, 13, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTypeConverter(workspace), "listTypeConverters"); },
-            isSelected: function () { return workspace.isLinkActive('camel/typeConverter'); },
-            href: function () { return "/camel/typeConverter" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-rest-services',
-            title: function () { return '<i class="fa fa-list"></i> Rest Services'; },
-            //title: "List all the REST services registered in the context",
-            show: function () { return workspace.isTopTabActive("camel") && !workspace.isEndpointsFolder() && !workspace.isRoute() && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelRestRegistry(workspace), "listRestServices"); },
-            isSelected: function () { return workspace.isLinkActive('camel/restRegistry'); },
-            href: function () { return "/camel/restRegistry" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-browser',
-            title: function () { return '<i class="fa fa-envelope"></i> Browse'; },
-            //title: "Browse the messages on the endpoint",
-            show: function () { return workspace.isEndpoint() && workspace.hasInvokeRights(workspace.selection, "browseAllMessagesAsXml"); },
-            isSelected: function () { return workspace.isLinkActive('camel/browseEndpoint'); },
-            href: function () { return "/camel/browseEndpoint" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-debug',
-            title: function () { return '<i class="fa fa-stethoscope"></i> Debug'; },
-            //title: "Debug the Camel route",
-            show: function () { return workspace.isRoute() && Camel.getSelectionCamelDebugMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelDebugMBean(workspace), "getBreakpoints"); },
-            isSelected: function () { return workspace.isLinkActive('camel/debugRoute'); },
-            href: function () { return "/camel/debugRoute" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-trace',
-            title: function () { return '<i class="fa fa-envelope"></i> Trace'; },
-            //title: "Trace the messages flowing through the Camel route",
-            show: function () { return workspace.isRoute() && Camel.getSelectionCamelTraceMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"); },
-            isSelected: function () { return workspace.isLinkActive('camel/traceRoute'); },
-            href: function () { return "/camel/traceRoute" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-profile',
-            title: function () { return '<i class="fa fa-bar-chart"></i> Profile'; },
-            //title: "Profile the messages flowing through the Camel route",
-            show: function () { return workspace.isRoute() && Camel.getSelectionCamelTraceMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"); },
-            isSelected: function () { return workspace.isLinkActive('camel/profileRoute'); },
-            href: function () { return "/camel/profileRoute" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-send',
-            title: function () { return '<i class="fa fa-pencil"></i> Send'; },
-            //title: "Send a message to this endpoint",
-            show: function () { return workspace.isEndpoint() && workspace.hasInvokeRights(workspace.selection, workspace.selection.domain === "org.apache.camel" ? "sendBodyAndHeaders" : "sendTextMessage"); },
-            isSelected: function () { return workspace.isLinkActive('camel/sendMessage'); },
-            href: function () { return "/camel/sendMessage" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-endpoint',
-            title: function () { return '<i class="fa fa-plus"></i> Endpoint'; },
-            //title: "Create a new endpoint",
-            show: function () { return workspace.isEndpointsFolder() && workspace.hasInvokeRights(workspace.selection, "createEndpoint"); },
-            isSelected: function () { return workspace.isLinkActive('camel/createEndpoint'); },
-            href: function () { return "/camel/createEndpoint" + workspace.hash(); }
-        });
-        nav.add(tab);
-    }]);
-    hawtioPluginLoader.addModule(Camel.pluginName);
-    // register the jmx lazy loader here as it won't have been invoked in the run method
-    hawtioPluginLoader.registerPreBootstrapTask(function (task) {
-        jmxModule.registerLazyLoadHandler(Camel.jmxDomain, function (folder) {
-            if (Camel.jmxDomain === folder.domain && "routes" === folder.typeName) {
-                return function (workspace, folder, onComplete) {
-                    if ("routes" === folder.typeName) {
-                        Camel.processRouteXml(workspace, workspace.jolokia, folder, function (route) {
-                            if (route) {
-                                Camel.addRouteChildren(folder, route);
-                            }
-                            onComplete();
-                        });
-                    }
-                    else {
-                        onComplete();
-                    }
-                };
-            }
-            return null;
-        });
-        task();
-    });
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.AttributesToolBarController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
-        $scope.deleteDialog = false;
-        $scope.start = function () {
-            $scope.invokeSelectedMBeans(function (item) {
-                return Camel.isState(item, "suspend") ? "resume()" : "start()";
-            });
-        };
-        $scope.pause = function () {
-            $scope.invokeSelectedMBeans("suspend()");
-        };
-        $scope.stop = function () {
-            $scope.invokeSelectedMBeans("stop()", function () {
-                // lets navigate to the parent folder!
-                // as this will be going way
-                workspace.removeAndSelectParentNode();
-            });
-        };
-        /*
-         * Only for routes!
-         */
-        $scope.delete = function () {
-            $scope.invokeSelectedMBeans("remove()", function () {
-                // force a reload of the tree
-                $scope.workspace.operationCounter += 1;
-                Core.$apply($scope);
-            });
-        };
-        $scope.anySelectionHasState = function (state) {
-            var selected = $scope.selectedItems || [];
-            return selected.length && selected.any(function (s) { return Camel.isState(s, state); });
-        };
-        $scope.everySelectionHasState = function (state) {
-            var selected = $scope.selectedItems || [];
-            return selected.length && selected.every(function (s) { return Camel.isState(s, state); });
-        };
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.BreadcrumbBarController", ["$scope", "$routeParams", "workspace", "jolokia", function ($scope, $routeParams, workspace, jolokia) {
-        $scope.workspace = workspace;
-        // if we are in dashboard then $routeParams may be null
-        if ($routeParams != null) {
-            $scope.contextId = $routeParams["contextId"];
-            $scope.endpointPath = $routeParams["endpointPath"];
-            $scope.endpointName = tidyJmxName($scope.endpointPath);
-            $scope.routeId = $routeParams["routeId"];
-        }
-        $scope.treeViewLink = linkToTreeView();
-        var defaultChildEntity = $scope.endpointPath ? "endpoints" : "routes";
-        var childEntityToolTips = {
-            "endpoints": "Camel Endpoint",
-            "routes": "Camel Route"
-        };
-        /**
-         * The array of breadcrumbs so that each item in the list of bookmarks can be switched for fast navigation and
-         * we can easily render the navigation path
-         */
-        $scope.breadcrumbs = [
-            {
-                name: $scope.contextId,
-                items: findContexts(),
-                tooltip: "Camel Context"
-            },
-            {
-                name: defaultChildEntity,
-                items: findChildEntityTypes($scope.contextId),
-                tooltip: "Entity inside a Camel Context"
-            },
-            {
-                name: $scope.endpointName || tidyJmxName($scope.routeId),
-                items: findChildEntityLinks($scope.contextId, currentChildEntity()),
-                tooltip: childEntityToolTips[defaultChildEntity]
-            }
-        ];
-        // lets find all the camel contexts
-        function findContexts() {
-            var answer = [];
-            var rootFolder = Camel.getRootCamelFolder(workspace);
-            if (rootFolder) {
-                angular.forEach(rootFolder.children, function (contextFolder) {
-                    var id = contextFolder.title;
-                    if (id && id !== $scope.contextId) {
-                        var name = id;
-                        var link = createLinkToFirstChildEntity(id, currentChildEntity());
-                        answer.push({
-                            name: name,
-                            tooltip: "Camel Context",
-                            link: link
-                        });
-                    }
-                });
-            }
-            return answer;
-        }
-        // lets find all the the child entities of a camel context
-        function findChildEntityTypes(contextId) {
-            var answer = [];
-            angular.forEach(["endpoints", "routes"], function (childEntityName) {
-                if (childEntityName && childEntityName !== currentChildEntity()) {
-                    var link = createLinkToFirstChildEntity(contextId, childEntityName);
-                    answer.push({
-                        name: childEntityName,
-                        tooltip: "Entity inside a Camel Context",
-                        link: link
-                    });
-                }
-            });
-            return answer;
-        }
-        function currentChildEntity() {
-            var answer = Core.pathGet($scope, ["breadcrumbs", "childEntity"]);
-            return answer || defaultChildEntity;
-        }
-        /**
-         * Based on the current child entity type, find the child links for the given context id and
-         * generate a link to the first child; used when changing context or child entity type
-         */
-        function createLinkToFirstChildEntity(id, childEntityValue) {
-            var links = findChildEntityLinks(id, childEntityValue);
-            // TODO here we should switch to a default context view if there's no endpoints available...
-            var link = links.length > 0 ? links[0].link : Camel.linkToBrowseEndpointFullScreen(id, "noEndpoints");
-            return link;
-        }
-        function findChildEntityLinks(contextId, childEntityValue) {
-            if ("endpoints" === childEntityValue) {
-                return findEndpoints(contextId);
-            }
-            else {
-                return findRoutes(contextId);
-            }
-        }
-        // lets find all the endpoints for the given context id
-        function findEndpoints(contextId) {
-            var answer = [];
-            var contextFolder = Camel.getCamelContextFolder(workspace, contextId);
-            if (contextFolder) {
-                var endpoints = (contextFolder["children"] || []).find(function (n) { return "endpoints" === n.title; });
-                if (endpoints) {
-                    angular.forEach(endpoints.children, function (endpointFolder) {
-                        var entries = endpointFolder ? endpointFolder.entries : null;
-                        if (entries) {
-                            var endpointPath = entries["name"];
-                            if (endpointPath) {
-                                var name = tidyJmxName(endpointPath);
-                                var link = Camel.linkToBrowseEndpointFullScreen(contextId, endpointPath);
-                                answer.push({
-                                    contextId: contextId,
-                                    path: endpointPath,
-                                    name: name,
-                                    tooltip: "Endpoint",
-                                    link: link
-                                });
-                            }
-                        }
-                    });
-                }
-            }
-            return answer;
-        }
-        // lets find all the routes for the given context id
-        function findRoutes(contextId) {
-            var answer = [];
-            var contextFolder = Camel.getCamelContextFolder(workspace, contextId);
-            if (contextFolder) {
-                var folders = (contextFolder["children"] || []).find(function (n) { return "routes" === n.title; });
-                if (folders) {
-                    angular.forEach(folders.children, function (folder) {
-                        var entries = folder ? folder.entries : null;
-                        if (entries) {
-                            var routeId = entries["name"];
-                            if (routeId) {
-                                var name = tidyJmxName(routeId);
-                                var link = Camel.linkToRouteDiagramFullScreen(contextId, routeId);
-                                answer.push({
-                                    contextId: contextId,
-                                    path: routeId,
-                                    name: name,
-                                    tooltip: "Camel Route",
-                                    link: link
-                                });
-                            }
-                        }
-                    });
-                }
-            }
-            return answer;
-        }
-        /**
-         * Creates a link to the tree view version of this view
-         */
-        function linkToTreeView() {
-            var answer = null;
-            if ($scope.contextId) {
-                var node = null;
-                var tab = null;
-                if ($scope.endpointPath) {
-                    tab = "browseEndpoint";
-                    node = workspace.findMBeanWithProperties(Camel.jmxDomain, {
-                        context: $scope.contextId,
-                        type: "endpoints",
-                        name: $scope.endpointPath
-                    });
-                }
-                else if ($scope.routeId) {
-                    tab = "routes";
-                    node = workspace.findMBeanWithProperties(Camel.jmxDomain, {
-                        context: $scope.contextId,
-                        type: "routes",
-                        name: $scope.routeId
-                    });
-                }
-                var key = node ? node["key"] : null;
-                if (key && tab) {
-                    answer = "#/camel/" + tab + "?tab=camel&nid=" + key;
-                }
-            }
-            return answer;
-        }
-        function tidyJmxName(jmxName) {
-            return jmxName ? Core.trimQuotes(jmxName) : jmxName;
-        }
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel.BrowseEndpointController = Camel._module.controller("Camel.BrowseEndpointController", ["$scope", "$routeParams", "workspace", "jolokia", function ($scope, $routeParams, workspace, jolokia) {
-        $scope.workspace = workspace;
-        $scope.forwardDialog = new UI.Dialog();
-        $scope.showMessageDetails = false;
-        $scope.mode = 'text';
-        $scope.gridOptions = Camel.createBrowseGridOptions();
-        $scope.contextId = $routeParams["contextId"];
-        $scope.endpointPath = $routeParams["endpointPath"];
-        $scope.isJmxTab = !$routeParams["contextId"] || !$routeParams["endpointPath"];
-        $scope.$watch('workspace.selection', function () {
-            if ($scope.isJmxTab && workspace.moveIfViewInvalid())
-                return;
-            loadData();
-        });
-        // TODO can we share these 2 methods from activemq browse / camel browse / came trace?
-        $scope.openMessageDialog = function (message) {
-            ActiveMQ.selectCurrentMessage(message, "id", $scope);
-            if ($scope.row) {
-                $scope.mode = CodeEditor.detectTextFormat($scope.row.body);
-                $scope.showMessageDetails = true;
-            }
-        };
-        ActiveMQ.decorate($scope);
-        $scope.forwardMessagesAndCloseForwardDialog = function () {
-            var mbean = Camel.getSelectionCamelContextMBean(workspace);
-            var selectedItems = $scope.gridOptions.selectedItems;
-            var uri = $scope.endpointUri;
-            if (mbean && uri && selectedItems && selectedItems.length) {
-                //console.log("Creating a new endpoint called: " + uri + " just in case!");
-                jolokia.execute(mbean, "createEndpoint(java.lang.String)", uri, Core.onSuccess(intermediateResult));
-                $scope.message = "Forwarded " + Core.maybePlural(selectedItems.length, "message" + " to " + uri);
-                angular.forEach(selectedItems, function (item, idx) {
-                    var callback = (idx + 1 < selectedItems.length) ? intermediateResult : operationSuccess;
-                    var body = item.body;
-                    var headers = item.headers;
-                    //console.log("sending to uri " + uri + " headers: " + JSON.stringify(headers) + " body: " + body);
-                    jolokia.execute(mbean, "sendBodyAndHeaders(java.lang.String, java.lang.Object, java.util.Map)", uri, body, headers, Core.onSuccess(callback));
-                });
-            }
-            $scope.forwardDialog.close();
-        };
-        $scope.endpointUris = function () {
-            var endpointFolder = Camel.getSelectionCamelContextEndpoints(workspace);
-            return (endpointFolder) ? endpointFolder.children.map(function (n) { return n.title; }) : [];
-        };
-        $scope.refresh = loadData;
-        function intermediateResult() {
-        }
-        function operationSuccess() {
-            if ($scope.messageDialog) {
-                $scope.messageDialog.close();
-            }
-            $scope.gridOptions.selectedItems.splice(0);
-            Core.notification("success", $scope.message);
-            setTimeout(loadData, 50);
-        }
-        function loadData() {
-            var mbean = null;
-            if ($scope.contextId && $scope.endpointPath) {
-                var node = workspace.findMBeanWithProperties(Camel.jmxDomain, {
-                    context: $scope.contextId,
-                    type: "endpoints",
-                    name: $scope.endpointPath
-                });
-                if (node) {
-                    mbean = node.objectName;
-                }
-            }
-            if (!mbean) {
-                mbean = workspace.getSelectedMBeanName();
-            }
-            if (mbean) {
-                Camel.log.info("MBean: " + mbean);
-                var options = Core.onSuccess(populateTable);
-                jolokia.execute(mbean, 'browseAllMessagesAsXml(java.lang.Boolean)', true, options);
-            }
-        }
-        function populateTable(response) {
-            var data = [];
-            if (angular.isString(response)) {
-                // lets parse the XML DOM here...
-                var doc = $.parseXML(response);
-                var allMessages = $(doc).find("message");
-                allMessages.each(function (idx, message) {
-                    var messageData = Camel.createMessageFromXml(message);
-                    data.push(messageData);
-                });
-            }
-            $scope.messages = data;
-            Core.$apply($scope);
-        }
-    }]);
-})(Camel || (Camel = {}));
-
-var Camel;
-(function (Camel) {
-    // NOTE this file is code generated by the ide-codegen module in Fuse IDE
-    Camel.camelHeaderSchema = {
-        definitions: {
-            headers: {
-                properties: {
-                    "CamelAuthentication": {
-                        type: "java.lang.String"
-                    },
-                    "CamelAuthenticationFailurePolicyId": {
-                        type: "java.lang.String"
-                    },
-                    "CamelAcceptContentType": {
-                        type: "java.lang.String"
-                    },
-                    "CamelAggregatedSize": {
-                        type: "java.lang.String"
-                    },
-                    "CamelAggregatedTimeout": {
-                        type: "java.lang.String"
-                    },
-                    "CamelAggregatedCompletedBy": {
-                        type: "java.lang.String"
-                    },
-                    "CamelAggregatedCorrelationKey": {
-                        type: "java.lang.String"
-                    },
-                    "CamelAggregationStrategy": {
-                        type: "java.lang.String"
-                    },
-                    "CamelAggregationCompleteAllGroups": {
-                        type: "java.lang.String"
-                    },
-                    "CamelAggregationCompleteAllGroupsInclusive": {
-                        type: "java.lang.String"
-                    },
-                    "CamelAsyncWait": {
-                        type: "java.lang.String"
-                    },
-                    "CamelBatchIndex": {
-                        type: "java.lang.String"
-                    },
-                    "CamelBatchSize": {
-                        type: "java.lang.String"
-                    },
-                    "CamelBatchComplete": {
-                        type: "java.lang.String"
-                    },
-                    "CamelBeanMethodName": {
-                        type: "java.lang.String"
-                    },
-                    "CamelBeanMultiParameterArray": {
-                        type: "java.lang.String"
-                    },
-                    "CamelBinding": {
-                        type: "java.lang.String"
-                    },
-                    "breadcrumbId": {
-                        type: "java.lang.String"
-                    },
-                    "CamelCharsetName": {
-                        type: "java.lang.String"
-                    },
-                    "CamelCreatedTimestamp": {
-                        type: "java.lang.String"
-                    },
-                    "Content-Encoding": {
-                        type: "java.lang.String"
-                    },
-                    "Content-Length": {
-                        type: "java.lang.String"
-                    },
-                    "Content-Type": {
-                        type: "java.lang.String"
-                    },
-                    "CamelCorrelationId": {
-                        type: "java.lang.String"
-                    },
-                    "CamelDataSetIndex": {
-                        type: "java.lang.String"
-                    },
-                    "org.apache.camel.default.charset": {
-                        type: "java.lang.String"
-                    },
-                    "CamelDestinationOverrideUrl": {
-                        type: "java.lang.String"
-                    },
-                    "CamelDisableHttpStreamCache": {
-                        type: "java.lang.String"
-                    },
-                    "CamelDuplicateMessage": {
-                        type: "java.lang.String"
-                    },
-                    "CamelExceptionCaught": {
-                        type: "java.lang.String"
-                    },
-                    "CamelExceptionHandled": {
-                        type: "java.lang.String"
-                    },
-                    "CamelEvaluateExpressionResult": {
-                        type: "java.lang.String"
-                    },
-                    "CamelErrorHandlerHandled": {
-                        type: "java.lang.String"
-                    },
-                    "CamelExternalRedelivered": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFailureHandled": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFailureEndpoint": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFailureRouteId": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFilterNonXmlChars": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFileLocalWorkPath": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFileName": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFileNameOnly": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFileNameProduced": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFileNameConsumed": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFilePath": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFileParent": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFileLastModified": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFileLength": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFilterMatched": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFileLockFileAcquired": {
-                        type: "java.lang.String"
-                    },
-                    "CamelFileLockFileName": {
-                        type: "java.lang.String"
-                    },
-                    "CamelGroupedExchange": {
-                        type: "java.lang.String"
-                    },
-                    "CamelHttpBaseUri": {
-                        type: "java.lang.String"
-                    },
-                    "CamelHttpCharacterEncoding": {
-                        type: "java.lang.String"
-                    },
-                    "CamelHttpMethod": {
-                        type: "java.lang.String"
-                    },
-                    "CamelHttpPath": {
-                        type: "java.lang.String"
-                    },
-                    "CamelHttpProtocolVersion": {
-                        type: "java.lang.String"
-                    },
-                    "CamelHttpQuery": {
-                        type: "java.lang.String"
-                    },
-                    "CamelHttpResponseCode": {
-                        type: "java.lang.String"
-                    },
-                    "CamelHttpUri": {
-                        type: "java.lang.String"
-                    },
-                    "CamelHttpUrl": {
-                        type: "java.lang.String"
-                    },
-                    "CamelHttpChunked": {
-                        type: "java.lang.String"
-                    },
-                    "CamelHttpServletRequest": {
-                        type: "java.lang.String"
-                    },
-                    "CamelHttpServletResponse": {
-                        type: "java.lang.String"
-                    },
-                    "CamelInterceptedEndpoint": {
-                        type: "java.lang.String"
-                    },
-                    "CamelInterceptSendToEndpointWhenMatched": {
-                        type: "java.lang.String"
-                    },
-                    "CamelLanguageScript": {
-                        type: "java.lang.String"
-                    },
-                    "CamelLogDebugBodyMaxChars": {
-                        type: "java.lang.String"
-                    },
-                    "CamelLogDebugStreams": {
-                        type: "java.lang.String"
-                    },
-                    "CamelLoopIndex": {
-                        type: "java.lang.String"
-                    },
-                    "CamelLoopSize": {
-                        type: "java.lang.String"
-                    },
-                    "CamelMaximumCachePoolSize": {
-                        type: "java.lang.String"
-                    },
-                    "CamelMaximumEndpointCacheSize": {
-                        type: "java.lang.String"
-                    },
-                    "CamelMessageHistory": {
-                        type: "java.lang.String"
-                    },
-                    "CamelMulticastIndex": {
-                        type: "java.lang.String"
-                    },
-                    "CamelMulticastComplete": {
-                        type: "java.lang.String"
-                    },
-                    "CamelNotifyEvent": {
-                        type: "java.lang.String"
-                    },
-                    "CamelOnCompletion": {
-                        type: "java.lang.String"
-                    },
-                    "CamelOverruleFileName": {
-                        type: "java.lang.String"
-                    },
-                    "CamelParentUnitOfWork": {
-                        type: "java.lang.String"
-                    },
-                    "CamelRecipientListEndpoint": {
-                        type: "java.lang.String"
-                    },
-                    "CamelReceivedTimestamp": {
-                        type: "java.lang.String"
-                    },
-                    "CamelRedelivered": {
-                        type: "java.lang.String"
-                    },
-                    "CamelRedeliveryCounter": {
-                        type: "java.lang.String"
-                    },
-                    "CamelRedeliveryMaxCounter": {
-                        type: "java.lang.String"
-                    },
-                    "CamelRedeliveryExhausted": {
-                        type: "java.lang.String"
-                    },
-                    "CamelRedeliveryDelay": {
-                        type: "java.lang.String"
-                    },
-                    "CamelRollbackOnly": {
-                        type: "java.lang.String"
-                    },
-                    "CamelRollbackOnlyLast": {
-                        type: "java.lang.String"
-                    },
-                    "CamelRouteStop": {
-                        type: "java.lang.String"
-                    },
-                    "CamelSoapAction": {
-                        type: "java.lang.String"
-                    },
-                    "CamelSkipGzipEncoding": {
-                        type: "java.lang.String"
-                    },
-                    "CamelSlipEndpoint": {
-                        type: "java.lang.String"
-                    },
-                    "CamelSplitIndex": {
-                        type: "java.lang.String"
-                    },
-                    "CamelSplitComplete": {
-                        type: "java.lang.String"
-                    },
-                    "CamelSplitSize": {
-                        type: "java.lang.String"
-                    },
-                    "CamelTimerCounter": {
-                        type: "java.lang.String"
-                    },
-                    "CamelTimerFiredTime": {
-                        type: "java.lang.String"
-                    },
-                    "CamelTimerName": {
-                        type: "java.lang.String"
-                    },
-                    "CamelTimerPeriod": {
-                        type: "java.lang.String"
-                    },
-                    "CamelTimerTime": {
-                        type: "java.lang.String"
-                    },
-                    "CamelToEndpoint": {
-                        type: "java.lang.String"
-                    },
-                    "CamelTraceEvent": {
-                        type: "java.lang.String"
-                    },
-                    "CamelTraceEventNodeId": {
-                        type: "java.lang.String"
-                    },
-                    "CamelTraceEventTimestamp": {
-                        type: "java.lang.String"
-                    },
-                    "CamelTraceEventExchange": {
-                        type: "java.lang.String"
-                    },
-                    "Transfer-Encoding": {
-                        type: "java.lang.String"
-                    },
-                    "CamelUnitOfWorkExhausted": {
-                        type: "java.lang.String"
-                    },
-                    "CamelUnitOfWorkProcessSync": {
-                        type: "java.lang.String"
-                    },
-                    "CamelXsltFileName": {
-                        type: "java.lang.String"
-                    }
-                }
-            }
-        }
-    };
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.DebugRouteController", ["$scope", "$element", "workspace", "jolokia", "localStorage", function ($scope, $element, workspace, jolokia, localStorage) {
-        // ignore the cached stuff in camel.ts as it seems to bork the node ids for some reason...
-        $scope.ignoreRouteXmlNode = true;
-        $scope.startDebugging = function () {
-            setDebugging(true);
-        };
-        $scope.stopDebugging = function () {
-            setDebugging(false);
-        };
-        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
-            // lets do this asynchronously to avoid Error: $digest already in progress
-            setTimeout(reloadData, 50);
-        });
-        $scope.$on("camel.diagram.selectedNodeId", function (event, value) {
-            $scope.selectedDiagramNodeId = value;
-            updateBreakpointFlag();
-        });
-        $scope.$on("camel.diagram.layoutComplete", function (event, value) {
-            updateBreakpointIcons();
-            $($element).find("g.node").dblclick(function (n) {
-                var id = this.getAttribute("data-cid");
-                $scope.toggleBreakpoint(id);
-            });
-        });
-        $scope.$watch('workspace.selection', function () {
-            if (workspace.moveIfViewInvalid())
-                return;
-            reloadData();
-        });
-        $scope.toggleBreakpoint = function (id) {
-            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
-            if (mbean && id) {
-                var method = isBreakpointSet(id) ? "removeBreakpoint" : "addBreakpoint";
-                jolokia.execute(mbean, method, id, Core.onSuccess(breakpointsChanged));
-            }
-        };
-        $scope.addBreakpoint = function () {
-            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
-            if (mbean && $scope.selectedDiagramNodeId) {
-                jolokia.execute(mbean, "addBreakpoint", $scope.selectedDiagramNodeId, Core.onSuccess(breakpointsChanged));
-            }
-        };
-        $scope.removeBreakpoint = function () {
-            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
-            if (mbean && $scope.selectedDiagramNodeId) {
-                jolokia.execute(mbean, "removeBreakpoint", $scope.selectedDiagramNodeId, Core.onSuccess(breakpointsChanged));
-            }
-        };
-        $scope.resume = function () {
-            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
-            if (mbean) {
-                jolokia.execute(mbean, "resumeAll", Core.onSuccess(clearStoppedAndResume));
-            }
-        };
-        $scope.suspend = function () {
-            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
-            if (mbean) {
-                jolokia.execute(mbean, "suspendAll", Core.onSuccess(clearStoppedAndResume));
-            }
-        };
-        $scope.step = function () {
-            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
-            var stepNode = getStoppedBreakpointId();
-            if (mbean && stepNode) {
-                jolokia.execute(mbean, "stepBreakpoint(java.lang.String)", stepNode, Core.onSuccess(clearStoppedAndResume));
-            }
-        };
-        // TODO refactor into common code with trace.ts?
-        // START
-        $scope.messages = [];
-        $scope.mode = 'text';
-        $scope.messageDialog = new UI.Dialog();
-        $scope.gridOptions = Camel.createBrowseGridOptions();
-        $scope.gridOptions.selectWithCheckboxOnly = false;
-        $scope.gridOptions.showSelectionCheckbox = false;
-        $scope.gridOptions.multiSelect = false;
-        $scope.gridOptions.afterSelectionChange = onSelectionChanged;
-        $scope.gridOptions.columnDefs.push({
-            field: 'toNode',
-            displayName: 'To Node'
-        });
-        $scope.openMessageDialog = function (message) {
-            var idx = Core.pathGet(message, ["rowIndex"]);
-            $scope.selectRowIndex(idx);
-            if ($scope.row) {
-                var body = $scope.row.body;
-                $scope.mode = angular.isString(body) ? CodeEditor.detectTextFormat(body) : "text";
-                $scope.messageDialog.open();
-            }
-        };
-        $scope.selectRowIndex = function (idx) {
-            $scope.rowIndex = idx;
-            var selected = $scope.gridOptions.selectedItems;
-            selected.splice(0, selected.length);
-            if (idx >= 0 && idx < $scope.messages.length) {
-                $scope.row = $scope.messages[idx];
-                if ($scope.row) {
-                    selected.push($scope.row);
-                }
-            }
-            else {
-                $scope.row = null;
-            }
-            onSelectionChanged();
-        };
-        // END
-        function onSelectionChanged() {
-            var toNode = getStoppedBreakpointId();
-            if (toNode) {
-                // lets highlight the node in the diagram
-                var nodes = getDiagramNodes();
-                Camel.highlightSelectedNode(nodes, toNode);
-            }
-        }
-        function reloadData() {
-            $scope.debugging = false;
-            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
-            if (mbean) {
-                $scope.debugging = jolokia.getAttribute(mbean, "Enabled", Core.onSuccess(null));
-                if ($scope.debugging) {
-                    jolokia.execute(mbean, "getBreakpoints", Core.onSuccess(onBreakpoints));
-                    // get the breakpoints...
-                    $scope.graphView = "plugins/camel/html/routes.html";
-                    $scope.tableView = "plugins/camel/html/browseMessages.html";
-                    Core.register(jolokia, $scope, {
-                        type: 'exec',
-                        mbean: mbean,
-                        operation: 'getDebugCounter'
-                    }, Core.onSuccess(onBreakpointCounter));
-                }
-                else {
-                    $scope.graphView = null;
-                    $scope.tableView = null;
-                }
-            }
-        }
-        function onBreakpointCounter(response) {
-            var counter = response.value;
-            if (counter && counter !== $scope.breakpointCounter) {
-                $scope.breakpointCounter = counter;
-                loadCurrentStack();
-            }
-        }
-        /*
-         * lets load current 'stack' of which breakpoints are active
-         * and what is the current message content
-         */
-        function loadCurrentStack() {
-            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
-            if (mbean) {
-                console.log("getting suspended breakpoints!");
-                jolokia.execute(mbean, "getSuspendedBreakpointNodeIds", Core.onSuccess(onSuspendedBreakpointNodeIds));
-            }
-        }
-        function onSuspendedBreakpointNodeIds(response) {
-            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
-            $scope.suspendedBreakpoints = response;
-            $scope.stopped = response && response.length;
-            var stopNodeId = getStoppedBreakpointId();
-            if (mbean && stopNodeId) {
-                jolokia.execute(mbean, 'dumpTracedMessagesAsXml', stopNodeId, Core.onSuccess(onMessages));
-                // lets update the diagram selection to the newly stopped node
-                $scope.selectedDiagramNodeId = stopNodeId;
-            }
-            updateBreakpointIcons();
-            Core.$apply($scope);
-        }
-        function onMessages(response) {
-            console.log("onMessage! ");
-            $scope.messages = [];
-            if (response) {
-                var xml = response;
-                if (angular.isString(xml)) {
-                    // lets parse the XML DOM here...
-                    var doc = $.parseXML(xml);
-                    var allMessages = $(doc).find("fabricTracerEventMessage");
-                    if (!allMessages || !allMessages.length) {
-                        // lets try find another element name
-                        allMessages = $(doc).find("backlogTracerEventMessage");
-                    }
-                    allMessages.each(function (idx, message) {
-                        var messageData = Camel.createMessageFromXml(message);
-                        var toNode = $(message).find("toNode").text();
-                        if (toNode) {
-                            messageData["toNode"] = toNode;
-                        }
-                        $scope.messages.push(messageData);
-                    });
-                }
-            }
-            else {
-                console.log("WARNING: dumpTracedMessagesAsXml() returned no results!");
-            }
-            // lets update the selection and selected row for the message detail view
-            updateMessageSelection();
-            console.log("has messages " + $scope.messages.length + " selected row " + $scope.row + " index " + $scope.rowIndex);
-            Core.$apply($scope);
-            updateBreakpointIcons();
-        }
-        function updateMessageSelection() {
-            $scope.selectRowIndex($scope.rowIndex);
-            if (!$scope.row && $scope.messageDialog.show) {
-                // lets make a dummy empty row
-                // so we can keep the detail view while resuming
-                $scope.row = {
-                    headers: {},
-                    body: ""
-                };
-            }
-        }
-        function clearStoppedAndResume() {
-            $scope.messages = [];
-            $scope.suspendedBreakpoints = [];
-            $scope.stopped = false;
-            updateMessageSelection();
-            Core.$apply($scope);
-            updateBreakpointIcons();
-        }
-        /*
-         * Return the current node id we are stopped at
-         */
-        function getStoppedBreakpointId() {
-            var stepNode = null;
-            var stepNodes = $scope.suspendedBreakpoints;
-            if (stepNodes && stepNodes.length) {
-                stepNode = stepNodes[0];
-                if (stepNodes.length > 1 && isSuspendedAt($scope.selectedDiagramNodeId)) {
-                    // TODO should consider we stepping from different nodes based on the call thread or selection?
-                    stepNode = $scope.selectedDiagramNodeId;
-                }
-            }
-            return stepNode;
-        }
-        /*
-         * Returns true if the execution is currently suspended at the given node
-         */
-        function isSuspendedAt(nodeId) {
-            return containsNodeId($scope.suspendedBreakpoints, nodeId);
-        }
-        function onBreakpoints(response) {
-            $scope.breakpoints = response;
-            updateBreakpointFlag();
-            // update the breakpoint icons...
-            var nodes = getDiagramNodes();
-            if (nodes.length) {
-                updateBreakpointIcons(nodes);
-            }
-            Core.$apply($scope);
-        }
-        /*
-         * Returns true if there is a breakpoint set at the given node id
-         */
-        function isBreakpointSet(nodeId) {
-            return containsNodeId($scope.breakpoints, nodeId);
-        }
-        function updateBreakpointFlag() {
-            $scope.hasBreakpoint = isBreakpointSet($scope.selectedDiagramNodeId);
-        }
-        function containsNodeId(breakpoints, nodeId) {
-            return nodeId && breakpoints && breakpoints.some(nodeId);
-        }
-        function getDiagramNodes() {
-            var svg = d3.select("svg");
-            return svg.selectAll("g .node");
-        }
-        var breakpointImage = Core.url("/plugins/camel/doc/img/debug/breakpoint.gif");
-        var suspendedBreakpointImage = Core.url("/plugins/camel/doc/img/debug/breakpoint-suspended.gif");
-        function updateBreakpointIcons(nodes) {
-            if (nodes === void 0) { nodes = getDiagramNodes(); }
-            nodes.each(function (object) {
-                // add breakpoint icon
-                var nodeId = object.cid;
-                var thisNode = d3.select(this);
-                var icons = thisNode.selectAll("image.breakpoint");
-                var isSuspended = isSuspendedAt(nodeId);
-                var isBreakpoint = isBreakpointSet(nodeId);
-                if (isBreakpoint || isSuspended) {
-                    var imageUrl = isSuspended ? suspendedBreakpointImage : breakpointImage;
-                    // lets add an icon image if we don't already have one
-                    if (!icons.length || !icons[0].length) {
-                        thisNode.append("image").attr("xlink:href", function (d) {
-                            return imageUrl;
-                        }).attr("class", "breakpoint").attr("x", -12).attr("y", -20).attr("height", 24).attr("width", 24);
-                    }
-                    else {
-                        icons.attr("xlink:href", function (d) {
-                            return imageUrl;
-                        });
-                    }
-                }
-                else {
-                    icons.remove();
-                }
-            });
-        }
-        function breakpointsChanged(response) {
-            reloadData();
-            Core.$apply($scope);
-        }
-        function setDebugging(flag) {
-            var mbean = Camel.getSelectionCamelDebugMBean(workspace);
-            if (mbean) {
-                var method = flag ? "enableDebugger" : "disableDebugger";
-                var max = Camel.maximumTraceOrDebugBodyLength(localStorage);
-                var streams = Camel.traceOrDebugIncludeStreams(localStorage);
-                jolokia.setAttribute(mbean, "BodyMaxChars", max);
-                jolokia.setAttribute(mbean, "BodyIncludeStreams", streams);
-                jolokia.setAttribute(mbean, "BodyIncludeFiles", streams);
-                jolokia.execute(mbean, method, Core.onSuccess(breakpointsChanged));
-            }
-        }
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.EndpointController", ["$scope", "$location", "localStorage", "workspace", "jolokia", function ($scope, $location, localStorage, workspace, jolokia) {
-        Camel.initEndpointChooserScope($scope, $location, localStorage, workspace, jolokia);
-        $scope.workspace = workspace;
-        $scope.message = "";
-        $scope.createEndpoint = function (name) {
-            var jolokia = workspace.jolokia;
-            if (jolokia) {
-                var mbean = Camel.getSelectionCamelContextMBean(workspace);
-                if (mbean) {
-                    $scope.message = "Creating endpoint " + name;
-                    var operation = "createEndpoint(java.lang.String)";
-                    jolokia.execute(mbean, operation, name, Core.onSuccess(operationSuccess));
-                }
-                else {
-                    Core.notification("error", "Could not find the CamelContext MBean!");
-                }
-            }
-        };
-        $scope.createEndpointFromData = function () {
-            if ($scope.selectedComponentName && $scope.endpointPath) {
-                var name = $scope.selectedComponentName + "://" + $scope.endpointPath;
-                console.log("Have endpoint data " + JSON.stringify($scope.endpointParameters));
-                var params = "";
-                angular.forEach($scope.endpointParameters, function (value, key) {
-                    var prefix = params ? "&" : "";
-                    params += prefix + key + "=" + value;
-                });
-                if (params) {
-                    name += "?" + params;
-                }
-                // TODO use form data too for URIs parameters...
-                $scope.createEndpoint(name);
-            }
-        };
-        $scope.deleteEndpoint = function () {
-            var jolokia = workspace.jolokia;
-            var selection = workspace.selection;
-            var entries = selection.entries;
-            if (selection && jolokia && entries) {
-                var domain = selection.domain;
-                var brokerName = entries["BrokerName"];
-                var name = entries["Destination"];
-                var isQueue = "Topic" !== entries["Type"];
-                if (domain && brokerName) {
-                    var mbean = "" + domain + ":BrokerName=" + brokerName + ",Type=Broker";
-                    $scope.message = "Deleting " + (isQueue ? "queue" : "topic") + " " + name;
-                    var operation = "removeEndpoint(java.lang.String)";
-                    jolokia.execute(mbean, operation, name, Core.onSuccess(deleteSuccess));
-                }
-            }
-        };
-        function operationSuccess() {
-            $scope.endpointName = "";
-            $scope.workspace.operationCounter += 1;
-            Core.$apply($scope);
-            Core.notification("success", $scope.message);
-        }
-        function deleteSuccess() {
-            // lets set the selection to the parent
-            if (workspace.selection) {
-                var parent = Core.pathGet(workspace, ["selection", "parent"]);
-                if (parent) {
-                    $scope.workspace.updateSelectionNode(parent);
-                }
-            }
-            $scope.workspace.operationCounter += 1;
-            Core.$apply($scope);
-            Core.notification("success", $scope.message);
-        }
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Camel
- */
-var Camel;
-(function (Camel) {
-    /**
-     * Define the default categories for endpoints and map them to endpoint names
-     * @property
-     * @for Camel
-     * @type {ObjecT}
-     */
-    Camel.endpointCategories = {
-        bigdata: {
-            label: "Big Data",
-            endpoints: ["hdfs", "hbase", "lucene", "solr"],
-            endpointIcon: "/img/icons/camel/endpointRepository24.png"
-        },
-        database: {
-            label: "Database",
-            endpoints: ["couchdb", "elasticsearch", "hbase", "jdbc", "jpa", "hibernate", "mongodb", "mybatis", "sql"],
-            endpointIcon: "/img/icons/camel/endpointRepository24.png"
-        },
-        cloud: {
-            label: "Cloud",
-            endpoints: [
-                "aws-cw",
-                "aws-ddb",
-                "aws-sdb",
-                "aws-ses",
-                "aws-sns",
-                "aws-sqs",
-                "aws-s3",
-                "gauth",
-                "ghhtp",
-                "glogin",
-                "gtask",
-                "jclouds"
-            ]
-        },
-        core: {
-            label: "Core",
-            endpoints: ["bean", "direct", "seda"]
-        },
-        messaging: {
-            label: "Messaging",
-            endpoints: ["jms", "activemq", "amqp", "cometd", "cometds", "mqtt", "netty", "vertx", "websocket"],
-            endpointIcon: "/img/icons/camel/endpointQueue24.png"
-        },
-        mobile: {
-            label: "Mobile",
-            endpoints: ["apns"]
-        },
-        sass: {
-            label: "SaaS",
-            endpoints: ["salesforce", "sap-netweaver"]
-        },
-        social: {
-            label: "Social",
-            endpoints: ["atom", "facebook", "irc", "ircs", "rss", "smpp", "twitter", "weather"]
-        },
-        storage: {
-            label: "Storage",
-            endpointIcon: "/img/icons/camel/endpointFolder24.png",
-            endpoints: ["file", "ftp", "sftp", "scp", "jsch"]
-        },
-        template: {
-            label: "Templating",
-            endpoints: ["freemarker", "velocity", "xquery", "xslt", "scalate", "string-template"]
-        }
-    };
-    /**
-     * Maps endpoint names to a category object
-     * @property
-     * @for Camel
-     * @type {ObjecT}
-     */
-    Camel.endpointToCategory = {};
-    Camel.endpointIcon = "/img/icons/camel/endpoint24.png";
-    /**
-     *  specify custom label & icon properties for endpoint names
-     * @property
-     * @for Camel
-     * @type {ObjecT}
-     */
-    Camel.endpointConfigurations = {
-        drools: {
-            icon: "/img/icons/camel/endpointQueue24.png"
-        },
-        quartz: {
-            icon: "/img/icons/camel/endpointTimer24.png"
-        },
-        facebook: {
-            icon: "/img/icons/camel/endpoints/facebook24.jpg"
-        },
-        salesforce: {
-            icon: "/img/icons/camel/endpoints/salesForce24.png"
-        },
-        sap: {
-            icon: "/img/icons/camel/endpoints/SAPe24.png"
-        },
-        "sap-netweaver": {
-            icon: "/img/icons/camel/endpoints/SAPNetweaver24.jpg"
-        },
-        timer: {
-            icon: "/img/icons/camel/endpointTimer24.png"
-        },
-        twitter: {
-            icon: "/img/icons/camel/endpoints/twitter24.png"
-        },
-        weather: {
-            icon: "/img/icons/camel/endpoints/weather24.jpg"
-        }
-    };
-    /**
-     * Define the default form configurations
-     * @property
-     * @for Camel
-     * @type {ObjecT}
-     */
-    Camel.endpointForms = {
-        file: {
-            tabs: {
-                //'Core': ['key', 'value'],
-                'Options': ['*']
-            }
-        },
-        activemq: {
-            tabs: {
-                'Connection': ['clientId', 'transacted', 'transactedInOut', 'transactionName', 'transactionTimeout'],
-                'Producer': ['timeToLive', 'priority', 'allowNullBody', 'pubSubNoLocal', 'preserveMessageQos'],
-                'Consumer': ['concurrentConsumers', 'acknowledgementModeName', 'selector', 'receiveTimeout'],
-                'Reply': ['replyToDestination', 'replyToDeliveryPersistent', 'replyToCacheLevelName', 'replyToDestinationSelectorName'],
-                'Options': ['*']
-            }
-        }
-    };
-    Camel.endpointForms["jms"] = Camel.endpointForms.activemq;
-    angular.forEach(Camel.endpointCategories, function (category, catKey) {
-        category.id = catKey;
-        angular.forEach(category.endpoints, function (endpoint) {
-            Camel.endpointToCategory[endpoint] = category;
-        });
-    });
-    /**
-     * Override the EIP pattern tabs...
-     * @property
-     * @for Camel
-     * @type {ObjecT}
-     */
-    var camelModelTabExtensions = {
-        route: {
-            'Overview': ['id', 'description'],
-            'Advanced': ['*']
-        }
-    };
-    function getEndpointIcon(endpointName) {
-        var value = Camel.getEndpointConfig(endpointName, null);
-        var answer = Core.pathGet(value, ["icon"]);
-        if (!answer) {
-            var category = getEndpointCategory(endpointName);
-            answer = Core.pathGet(category, ["endpointIcon"]);
-        }
-        return answer || Camel.endpointIcon;
-    }
-    Camel.getEndpointIcon = getEndpointIcon;
-    function getEndpointConfig(endpointName, category) {
-        var answer = Camel.endpointConfigurations[endpointName];
-        if (!answer) {
-            answer = {};
-            Camel.endpointConfigurations[endpointName] = answer;
-        }
-        if (!answer.label) {
-            answer.label = endpointName;
-        }
-        if (!answer.icon) {
-            answer.icon = Core.pathGet(category, ["endpointIcon"]) || Camel.endpointIcon;
-        }
-        if (!answer.category) {
-            answer.category = category;
-        }
-        return answer;
-    }
-    Camel.getEndpointConfig = getEndpointConfig;
-    function getEndpointCategory(endpointName) {
-        return Camel.endpointToCategory[endpointName] || Camel.endpointCategories.core;
-    }
-    Camel.getEndpointCategory = getEndpointCategory;
-    function getConfiguredCamelModel() {
-        var schema = Camel._apacheCamelModel;
-        var definitions = schema["definitions"];
-        if (definitions) {
-            angular.forEach(camelModelTabExtensions, function (tabs, name) {
-                var model = definitions[name];
-                if (model) {
-                    if (!model["tabs"]) {
-                        model["tabs"] = tabs;
-                    }
-                }
-            });
-        }
-        return schema;
-    }
-    Camel.getConfiguredCamelModel = getConfiguredCamelModel;
-    function initEndpointChooserScope($scope, $location, localStorage, workspace, jolokia) {
-        $scope.selectedComponentName = null;
-        $scope.endpointParameters = {};
-        $scope.endpointPath = "";
-        $scope.schema = {
-            definitions: {}
-        };
-        $scope.jolokia = jolokia;
-        // lets see if we need to use a remote jolokia container
-        var versionId = $scope.branch;
-        var profileId = Fabric.pagePathToProfileId($scope.pageId);
-        if (profileId && versionId) {
-            Fabric.profileJolokia(jolokia, profileId, versionId, function (profileJolokia) {
-                if (!profileJolokia) {
-                    // TODO we should expose this to the user somewhere nicely!
-                    Camel.log.info("No container is running for profile " + profileId + " and version " + versionId + " so using current container for endpoint completion");
-                    profileJolokia = jolokia;
-                }
-                $scope.jolokia = profileJolokia;
-                // force a reload
-                $scope.profileWorkspace = null;
-                $scope.loadEndpointNames();
-            });
-        }
-        var silentOptions = { silent: true };
-        $scope.$watch('workspace.selection', function () {
-            $scope.loadEndpointNames();
-        });
-        $scope.$watch('selectedComponentName', function () {
-            if ($scope.selectedComponentName !== $scope.loadedComponentName) {
-                $scope.endpointParameters = {};
-                $scope.loadEndpointSchema($scope.selectedComponentName);
-                $scope.loadedComponentName = $scope.selectedComponentName;
-            }
-        });
-        $scope.endpointCompletions = function (completionText) {
-            var answer = null;
-            var mbean = findCamelContextMBean();
-            var componentName = $scope.selectedComponentName;
-            var endpointParameters = {};
-            if (mbean && componentName && completionText) {
-                answer = $scope.jolokia.execute(mbean, 'completeEndpointPath', componentName, endpointParameters, completionText, Core.onSuccess(null, silentOptions));
-            }
-            return answer || [];
-        };
-        $scope.loadEndpointNames = function () {
-            $scope.componentNames = null;
-            var mbean = findCamelContextMBean();
-            if (mbean) {
-                //$scope.jolokia.execute(mbean, 'findComponentNames', Core.onSuccess(onComponents, silentOptions));
-                $scope.jolokia.execute(mbean, 'findComponentNames', Core.onSuccess(onComponents, { silent: true }));
-            }
-            else {
-                console.log("WARNING: No camel context mbean so cannot load component names");
-            }
-        };
-        $scope.loadEndpointSchema = function (componentName) {
-            var mbean = findCamelContextMBean();
-            if (mbean && componentName && componentName !== $scope.loadedEndpointSchema) {
-                $scope.selectedComponentName = componentName;
-                $scope.jolokia.execute(mbean, 'componentParameterJsonSchema', componentName, Core.onSuccess(onEndpointSchema, silentOptions));
-            }
-        };
-        function onComponents(response) {
-            $scope.componentNames = response;
-            Camel.log.info("onComponents: " + response);
-            $scope.hasComponentNames = $scope.componentNames ? true : false;
-            Core.$apply($scope);
-        }
-        function onEndpointSchema(response) {
-            if (response) {
-                try {
-                    //console.log("got JSON: " + response);
-                    var json = JSON.parse(response);
-                    var endpointName = $scope.selectedComponentName;
-                    configureEndpointSchema(endpointName, json);
-                    $scope.endpointSchema = json;
-                    $scope.schema.definitions[endpointName] = json;
-                    $scope.loadedEndpointSchema = endpointName;
-                    Core.$apply($scope);
-                }
-                catch (e) {
-                    console.log("Failed to parse JSON " + e);
-                    console.log("JSON: " + response);
-                }
-            }
-        }
-        function configureEndpointSchema(endpointName, json) {
-            console.log("======== configuring schema for " + endpointName);
-            var config = Camel.endpointForms[endpointName];
-            if (config && json) {
-                if (config.tabs) {
-                    json.tabs = config.tabs;
-                }
-            }
-        }
-        function findCamelContextMBean() {
-            var profileWorkspace = $scope.profileWorkspace;
-            if (!profileWorkspace) {
-                var removeJolokia = $scope.jolokia;
-                if (removeJolokia) {
-                    profileWorkspace = Core.createRemoteWorkspace(removeJolokia, $location, localStorage);
-                    $scope.profileWorkspace = profileWorkspace;
-                }
-            }
-            if (!profileWorkspace) {
-                Camel.log.info("No profileWorkspace found so defaulting it to workspace for now");
-                profileWorkspace = workspace;
-            }
-            // TODO we need to find the MBean for the CamelContext / Route we are editing!
-            var componentName = $scope.selectedComponentName;
-            var selectedCamelContextId;
-            var selectedRouteId;
-            if (angular.isDefined($scope.camelSelectionDetails)) {
-                selectedCamelContextId = $scope.camelSelectionDetails.selectedCamelContextId;
-                selectedRouteId = $scope.camelSelectionDetails.selectedRouteId;
-            }
-            console.log("==== componentName " + componentName + " selectedCamelContextId: " + selectedCamelContextId + " selectedRouteId: " + selectedRouteId);
-            var contextsById = Camel.camelContextMBeansById(profileWorkspace);
-            if (selectedCamelContextId) {
-                var mbean = Core.pathGet(contextsById, [selectedCamelContextId, "mbean"]);
-                if (mbean) {
-                    return mbean;
-                }
-            }
-            if (selectedRouteId) {
-                var map = Camel.camelContextMBeansByRouteId(profileWorkspace);
-                var mbean = Core.pathGet(map, [selectedRouteId, "mbean"]);
-                if (mbean) {
-                    return mbean;
-                }
-            }
-            if (componentName) {
-                var map = Camel.camelContextMBeansByComponentName(profileWorkspace);
-                var mbean = Core.pathGet(map, [componentName, "mbean"]);
-                if (mbean) {
-                    return mbean;
-                }
-            }
-            // NOTE we don't really know which camel context to pick, so lets just find the first one?
-            var answer = null;
-            angular.forEach(contextsById, function (details, id) {
-                var mbean = details.mbean;
-                if (!answer && mbean)
-                    answer = mbean;
-            });
-            return answer;
-            /*
-                  // we could be remote to lets query jolokia
-                  var results = $scope.jolokia.search("org.apache.camel:*,type=context", Core.onSuccess(null));
-                  //var results = $scope.jolokia.search("org.apache.camel:*", Core.onSuccess(null));
-                  if (results && results.length) {
-                    console.log("===== Got results: " + results);
-                    return results[0];
-                  }
-            
-                  var mbean = Camel.getSelectionCamelContextMBean(profileWorkspace);
-                  if (!mbean && $scope.findProfileCamelContext) {
-                    // TODO as a hack for now lets just find any camel context we can
-                    var folder = Core.getMBeanTypeFolder(profileWorkspace, Camel.jmxDomain, "context");
-                    mbean = Core.pathGet(folder, ["objectName"]);
-                  }
-                  return mbean;
-            */
-        }
-    }
-    Camel.initEndpointChooserScope = initEndpointChooserScope;
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.FabricDiagramController", ["$scope", "$compile", "$location", "localStorage", "jolokia", "workspace", function ($scope, $compile, $location, localStorage, jolokia, workspace) {
-        Fabric.initScope($scope, $location, jolokia, workspace);
-        var isFmc = Wiki.isFMCContainer(workspace);
-        $scope.isFmc = isFmc;
-        $scope.selectedNode = null;
-        var defaultFlags = {
-            panel: true,
-            popup: false,
-            label: true,
-            container: false,
-            endpoint: true,
-            route: true,
-            context: false,
-            consumer: true,
-            producer: true
-        };
-        $scope.viewSettings = {};
-        $scope.shapeSize = {
-            context: 12,
-            route: 10,
-            endpoint: 7
-        };
-        var graphBuilder = new ForceGraph.GraphBuilder();
-        Core.bindModelToSearchParam($scope, $location, "searchFilter", "q", "");
-        angular.forEach(defaultFlags, function (defaultValue, key) {
-            var modelName = "viewSettings." + key;
-            // bind model values to search params...
-            function currentValue() {
-                var answer = $location.search()[paramName] || defaultValue;
-                return answer === "false" ? false : answer;
-            }
-            var paramName = key;
-            var value = currentValue();
-            Core.pathSet($scope, modelName, value);
-            $scope.$watch(modelName, function () {
-                var current = Core.pathGet($scope, modelName);
-                var old = currentValue();
-                if (current !== old) {
-                    var defaultValue = defaultFlags[key];
-                    if (current !== defaultValue) {
-                        if (!current) {
-                            current = "false";
-                        }
-                        $location.search(paramName, current);
-                    }
-                    else {
-                        $location.search(paramName, null);
-                    }
-                }
-                redrawGraph();
-            });
-        });
-        $scope.connectToContext = function () {
-            var selectedNode = $scope.selectedNode;
-            if (selectedNode) {
-                var container = selectedNode["container"] || selectedNode;
-                var postfix = null;
-                connectToContainer(container, postfix);
-            }
-        };
-        $scope.connectToEndpoint = function () {
-            var selectedNode = $scope.selectedNode;
-            if (selectedNode) {
-                var container = selectedNode["container"] || selectedNode;
-                var postfix = null;
-                connectToContainer(container, postfix);
-            }
-        };
-        function connectToContainer(container, postfix, viewPrefix) {
-            if (viewPrefix === void 0) { viewPrefix = "#/jmx/attributes?tab=camel"; }
-            var view = viewPrefix;
-            if (postfix) {
-                view += postfix;
-            }
-            // TODO if local just link to local view!
-            $scope.doConnect(container, view);
-        }
-        $scope.$on('$destroy', function (event) {
-            stopOldJolokia();
-        });
-        function stopOldJolokia() {
-            var oldJolokia = $scope.selectedNodeJolokia;
-            if (oldJolokia && oldJolokia !== jolokia) {
-                oldJolokia.stop();
-            }
-        }
-        $scope.$watch("selectedNode", function (newValue, oldValue) {
-            // lets cancel any previously registered thingy
-            if ($scope.unregisterFn) {
-                $scope.unregisterFn();
-                $scope.unregisterFn = null;
-            }
-            var node = $scope.selectedNode;
-            if (node) {
-                var mbean = node.objectName;
-                var container = node.container || {};
-                var nodeJolokia = node.jolokia || container.jolokia || jolokia;
-                if (nodeJolokia !== $scope.selectedNodeJolokia) {
-                    stopOldJolokia();
-                    $scope.selectedNodeJolokia = nodeJolokia;
-                    if (nodeJolokia !== jolokia) {
-                        var rate = Core.parseIntValue(localStorage['updateRate'] || "2000", "update rate");
-                        if (rate) {
-                            nodeJolokia.start(rate);
-                        }
-                    }
-                }
-                var dummyResponse = { value: node.panelProperties || {} };
-                if (mbean && nodeJolokia) {
-                    $scope.unregisterFn = Core.register(nodeJolokia, $scope, {
-                        type: 'read',
-                        mbean: mbean
-                    }, Core.onSuccess(renderNodeAttributes, { error: function (response) {
-                        // probably we've got a wrong mbean name?
-                        // so lets render at least
-                        renderNodeAttributes(dummyResponse);
-                        Core.defaultJolokiaErrorHandler(response);
-                    } }));
-                }
-                else {
-                    renderNodeAttributes(dummyResponse);
-                }
-            }
-        });
-        var ignoreNodeAttributes = [
-            "CamelId",
-            "CamelManagementName"
-        ];
-        var ignoreNodeAttributesByType = {
-            context: ["ApplicationContextClassName", "CamelId", "ClassResolver", "ManagementName", "PackageScanClassResolver", "Properties"],
-            endpoint: ["Camel", "Endpoint"],
-            route: ["Description"]
-        };
-        var onlyShowAttributesByType = {
-            broker: []
-        };
-        function renderNodeAttributes(response) {
-            var properties = [];
-            if (response) {
-                var value = response.value || {};
-                $scope.selectedNodeAttributes = value;
-                var selectedNode = $scope.selectedNode || {};
-                var container = selectedNode['container'] || {};
-                var nodeType = selectedNode["type"];
-                var brokerName = selectedNode["brokerName"];
-                var containerId = container["id"];
-                var group = selectedNode["group"] || container["group"];
-                var jolokiaUrl = selectedNode["jolokiaUrl"] || container["jolokiaUrl"];
-                var profile = selectedNode["profile"] || container["profile"];
-                var version = selectedNode["version"] || container["version"];
-                var isBroker = nodeType && nodeType.startsWith("broker");
-                var ignoreKeys = ignoreNodeAttributes.concat(ignoreNodeAttributesByType[nodeType] || []);
-                var onlyShowKeys = onlyShowAttributesByType[nodeType];
-                angular.forEach(value, function (v, k) {
-                    if (onlyShowKeys ? onlyShowKeys.indexOf(k) >= 0 : ignoreKeys.indexOf(k) < 0) {
-                        var formattedValue = Core.humanizeValueHtml(v);
-                        properties.push({ key: Core.humanizeValue(k), value: formattedValue });
-                    }
-                });
-                properties = properties.sortBy("key");
-                if (containerId && isFmc) {
-                    //var containerModel = "selectedNode.container";
-                    properties.splice(0, 0, { key: "Container", value: $compile('<div fabric-container-link="' + selectedNode['container']['id'] + '"></div>')($scope) });
-                }
-                var typeLabel = selectedNode["typeLabel"];
-                var name = selectedNode["name"] || selectedNode["id"] || selectedNode['objectName'];
-                if (typeLabel) {
-                    var html = name;
-                    if (nodeType === "queue" || nodeType === "topic") {
-                        html = createDestinationLink(name, nodeType);
-                    }
-                    var typeProperty = { key: typeLabel, value: html };
-                    properties.splice(0, 0, typeProperty);
-                }
-            }
-            $scope.selectedNodeProperties = properties;
-            Core.$apply($scope);
-        }
-        /**
-         * Generates the HTML for a link to the destination
-         */
-        function createDestinationLink(destinationName, destinationType) {
-            if (destinationType === void 0) { destinationType = "queue"; }
-            return $compile('<a target="destination" title="' + destinationName + '" ng-click="connectToEndpoint()">' + destinationName + '</a>')($scope);
-        }
-        $scope.$watch("searchFilter", function (newValue, oldValue) {
-            redrawGraph();
-        });
-        if (isFmc) {
-            $scope.versionId = Fabric.getDefaultVersionId(jolokia);
-            var fields = ["id", "alive", "parentId", "profileIds", "versionId", "provisionResult", "jolokiaUrl", "jmxDomains"];
-            Fabric.getContainersFields(jolokia, fields, onFabricContainerData);
-        }
-        else {
-            // lets just use the current stuff from the workspace
-            $scope.$watch('workspace.tree', function () {
-                reloadLocalJmxTree();
-            });
-            $scope.$on('jmxTreeUpdated', function () {
-                reloadLocalJmxTree();
-            });
-        }
-        function reloadLocalJmxTree() {
-            var localContainer = {
-                jolokia: jolokia
-            };
-            $scope.activeContainers = {
-                "local": localContainer
-            };
-            redrawGraph();
-            $scope.containerCount = 1;
-        }
-        function onFabricContainerData(response) {
-            if (response) {
-                var responseJson = angular.toJson(response);
-                if ($scope.responseJson === responseJson) {
-                    return;
-                }
-                $scope.responseJson = responseJson;
-                var containersToDelete = $scope.activeContainers || {};
-                $scope.activeContainers = (response || {}).filter(function (c) { return c.jmxDomains.any(Camel.jmxDomain); });
-                $scope.containerCount = $scope.activeContainers.length;
-                // query containers which have camel...
-                redrawGraph();
-            }
-            else {
-                $scope.containerCount = 0;
-            }
-        }
-        function redrawGraph() {
-            graphBuilder = new ForceGraph.GraphBuilder();
-            // TODO delete any nodes from dead containers in containersToDelete
-            angular.forEach($scope.activeContainers, function (container, id) {
-                var containerJolokia = container.jolokia;
-                if (!containerJolokia) {
-                    var jolokiaUrl = container["jolokiaUrl"];
-                    if (jolokiaUrl) {
-                        var url = Core.useProxyIfExternal(jolokiaUrl);
-                        containerJolokia = Fabric.createJolokia(url);
-                    }
-                }
-                if (containerJolokia) {
-                    onContainerJolokia(containerJolokia, container);
-                }
-                else {
-                    Fabric.containerJolokia(jolokia, id, function (containerJolokia) { return onContainerJolokia(containerJolokia, container); });
-                }
-            });
-            //$scope.graph = graphBuilder.buildGraph();
-            Core.$apply($scope);
-        }
-        /**
-         * Returns true if the given CamelContext ID matches the current search filter
-         */
-        function matchesContextId(contextId) {
-            if (contextId) {
-                return !$scope.searchFilter || contextId.indexOf($scope.searchFilter) >= 0;
-            }
-            return false;
-        }
-        function onContainerJolokia(containerJolokia, container) {
-            if (containerJolokia) {
-                container.jolokia = containerJolokia;
-                var containerId = container.id || "local";
-                var idPrefix = containerId + ":";
-                var endpointUriToObject = {};
-                var startedLoadMetaDataFromEndpointMBeans = false;
-                function getOrCreateRoute(objectName, properties, addEndpointLink, routeId, contextId, camelContext) {
-                    if (routeId === void 0) { routeId = null; }
-                    if (contextId === void 0) { contextId = null; }
-                    if (camelContext === void 0) { camelContext = null; }
-                    if (!objectName) {
-                        // lets try guess the mbean name
-                        objectName = Camel.jmxDomain + ':context=' + contextId + ',type=routes,name="' + routeId + '"';
-                    }
-                    var details = Core.parseMBean(objectName);
-                    var attributes = details['attributes'];
-                    var contextId = attributes["context"];
-                    if (!routeId) {
-                        routeId = Core.trimQuotes(attributes["name"]);
-                    }
-                    attributes["routeId"] = routeId;
-                    attributes["mbean"] = objectName;
-                    attributes["container"] = container;
-                    attributes["type"] = "route";
-                    var route = null;
-                    if (routeId && matchesContextId(contextId)) {
-                        route = getOrAddNode("route", idPrefix + routeId, attributes, function () {
-                            return {
-                                name: routeId,
-                                typeLabel: "Route",
-                                container: container,
-                                objectName: objectName,
-                                jolokia: containerJolokia,
-                                popup: {
-                                    title: "Route: " + routeId,
-                                    content: "<p>context: " + contextId + "</p>"
-                                }
-                            };
-                        });
-                        if (addEndpointLink) {
-                            var uri = properties["EndpointUri"];
-                            if (uri && route) {
-                                var endpoint = null;
-                                var escaledUrl = Camel.escapeEndpointUriNameForJmx(uri);
-                                var urlsToTry = [uri, escaledUrl];
-                                angular.forEach(urlsToTry, function (key) {
-                                    if (!endpoint) {
-                                        endpoint = endpointUriToObject[key];
-                                    }
-                                });
-                                if (!endpoint) {
-                                    angular.forEach(urlsToTry, function (key) {
-                                        if (!endpoint) {
-                                            var idx = key.lastIndexOf("?");
-                                            if (idx > 0) {
-                                                var prefix = key.substring(0, idx);
-                                                endpoint = endpointUriToObject[prefix];
-                                            }
-                                        }
-                                    });
-                                }
-                                addLink(route, endpoint, "consumer");
-                            }
-                        }
-                        if ($scope.viewSettings.route && $scope.viewSettings.context) {
-                            if (!camelContext) {
-                                camelContext = getOrCreateCamelContext(contextId);
-                            }
-                            addLink(camelContext, route, "route");
-                        }
-                    }
-                    return route;
-                }
-                function getOrCreateEndpoint(objectName, uri, contextId) {
-                    if (uri === void 0) { uri = null; }
-                    if (contextId === void 0) { contextId = null; }
-                    if (!objectName) {
-                        // lets try guess the mbean name
-                        objectName = Camel.jmxDomain + ':context=' + contextId + ',type=endpoints,name="' + Camel.escapeEndpointUriNameForJmx(uri) + '"';
-                    }
-                    var details = Core.parseMBean(objectName);
-                    var attributes = details['attributes'];
-                    //log.info("attributes: " + angular.toJson(attributes));
-                    var contextId = attributes["context"];
-                    if (!uri) {
-                        uri = Core.trimQuotes(attributes["name"]);
-                    }
-                    attributes["uri"] = uri;
-                    attributes["mbean"] = objectName;
-                    attributes["container"] = container;
-                    attributes["contextId"] = contextId;
-                    var endpoint = null;
-                    if (uri && matchesContextId(contextId)) {
-                        endpoint = getOrAddNode("endpoint", idPrefix + uri, attributes, function () {
-                            return {
-                                name: uri,
-                                typeLabel: "Endpoint",
-                                container: container,
-                                objectName: objectName,
-                                jolokia: containerJolokia,
-                                popup: {
-                                    title: "Endpoint: " + uri,
-                                    content: "<p>context: " + contextId + "</p>"
-                                }
-                            };
-                        });
-                        if (endpoint) {
-                            endpointUriToObject[uri] = endpoint;
-                        }
-                    }
-                    return endpoint;
-                }
-                // lets use the old way for pre-camel 2.13 versions
-                function loadMetaDataFromEndpointMBeans() {
-                    // find routes
-                    if ($scope.viewSettings.route) {
-                        containerJolokia.request({ type: "read", mbean: "org.apache.camel:type=routes,*", attribute: ["EndpointUri"] }, Core.onSuccess(function (response) {
-                            angular.forEach(response.value, function (properties, objectName) {
-                                getOrCreateRoute(objectName, properties, true);
-                            });
-                            graphModelUpdated();
-                        }));
-                    }
-                    if ($scope.viewSettings.endpoint) {
-                        containerJolokia.search("org.apache.camel:type=endpoints,*", Core.onSuccess(function (response) {
-                            angular.forEach(response, function (objectName) {
-                                var endpoint = getOrCreateEndpoint(objectName);
-                                var camelContext = getOrCreateCamelContext(null, objectName);
-                                addLink(camelContext, endpoint, "endpoint");
-                            });
-                            graphModelUpdated();
-                        }));
-                    }
-                }
-                function getOrCreateCamelContext(contextId, contextMBean) {
-                    if (contextMBean === void 0) { contextMBean = null; }
-                    var answer = null;
-                    if (matchesContextId(contextId)) {
-                        if (!contextMBean) {
-                            // try guess the mbean name
-                            contextMBean = Camel.jmxDomain + ':context=' + contextId + ',type=context,name="' + contextId + '"';
-                        }
-                        if (!contextId && contextMBean) {
-                            var details = Core.parseMBean(contextMBean);
-                            var attributes = details['attributes'];
-                            contextId = attributes["context"];
-                        }
-                        var contextAttributes = {
-                            contextId: contextId
-                        };
-                        if ($scope.viewSettings.context) {
-                            answer = getOrAddNode("context", idPrefix + contextId, contextAttributes, function () {
-                                return {
-                                    name: contextId,
-                                    typeLabel: "CamelContext",
-                                    container: container,
-                                    objectName: contextMBean,
-                                    jolokia: containerJolokia,
-                                    popup: {
-                                        title: "CamelContext: " + contextId,
-                                        content: ""
-                                    }
-                                };
-                            });
-                        }
-                        // lets try out the new Camel 2.13 API to find endpoint usage...
-                        containerJolokia.execute(contextMBean, "createRouteStaticEndpointJson", Core.onSuccess(function (response) {
-                            if (angular.isString(response)) {
-                                var text = response;
-                                var data = null;
-                                try {
-                                    data = JSON.parse(text);
-                                }
-                                catch (e) {
-                                    // there's a bug in 2.13.0 - lets try trimming the final '}' to see if that makes it valid json ;)
-                                    text = Core.trimTrailing(text.trim(), "}");
-                                    try {
-                                        data = JSON.parse(text);
-                                    }
-                                    catch (e2) {
-                                        Camel.log.debug("Ignored invalid json: " + e + " from text: " + response);
-                                    }
-                                }
-                            }
-                            if (data) {
-                                angular.forEach(data["routes"], function (routeData, routeId) {
-                                    angular.forEach(routeData["inputs"], function (inputEndpoint) {
-                                        var inputUri = inputEndpoint["uri"];
-                                        if (inputUri) {
-                                            var route = getOrCreateRoute(null, {}, false, routeId, contextId, answer);
-                                            var input = getOrCreateEndpoint(null, inputUri, contextId);
-                                            var nextStep = route;
-                                            addLink(input, route, "endpoint");
-                                            angular.forEach(routeData["outputs"], function (outputEndpoint) {
-                                                var outputUri = outputEndpoint["uri"];
-                                                if (outputUri) {
-                                                    var output = getOrCreateEndpoint(null, outputUri, contextId);
-                                                    addLink(nextStep, output, "endpoint");
-                                                    nextStep = output;
-                                                }
-                                            });
-                                        }
-                                    });
-                                });
-                                Camel.log.info("Updating graph model!");
-                                graphModelUpdated();
-                            }
-                        }, {
-                            error: function (response) {
-                                // probably a pre-2.13 Camel implementation so lets use the old way
-                                if (!startedLoadMetaDataFromEndpointMBeans) {
-                                    startedLoadMetaDataFromEndpointMBeans = true;
-                                    loadMetaDataFromEndpointMBeans();
-                                }
-                            }
-                        }));
-                    }
-                    return answer;
-                }
-                containerJolokia.search("org.apache.camel:type=context,*", Core.onSuccess(function (response) {
-                    angular.forEach(response, function (objectName) {
-                        var details = Core.parseMBean(objectName);
-                        var attributes = details['attributes'];
-                        var contextId = attributes["context"];
-                        var uri = Core.trimQuotes(attributes["name"]);
-                        getOrCreateCamelContext(contextId, objectName);
-                    });
-                    //graphModelUpdated();
-                }));
-            }
-        }
-        function graphModelUpdated() {
-            $scope.graph = graphBuilder.buildGraph();
-            Core.$apply($scope);
-        }
-        function getOrAddNode(typeName, id, properties, createFn) {
-            var node = null;
-            if (id) {
-                var nodeId = typeName + ":" + id;
-                node = graphBuilder.getNode(nodeId);
-                if (!node) {
-                    var nodeValues = createFn();
-                    node = angular.copy(properties);
-                    angular.forEach(nodeValues, function (value, key) { return node[key] = value; });
-                    node['id'] = nodeId;
-                    if (!node['type']) {
-                        node['type'] = typeName;
-                    }
-                    if (!node['name']) {
-                        node['name'] = id;
-                    }
-                    if (node) {
-                        var size = $scope.shapeSize[typeName];
-                        if (size && !node['size']) {
-                            node['size'] = size;
-                        }
-                        if (!node['summary']) {
-                            node['summary'] = node['popup'] || "";
-                        }
-                        if (!$scope.viewSettings.popup) {
-                            delete node['popup'];
-                        }
-                        if (!$scope.viewSettings.label) {
-                            delete node['name'];
-                        }
-                        // lets not add nodes which are defined as being disabled
-                        var enabled = $scope.viewSettings[typeName];
-                        if (enabled || !angular.isDefined(enabled)) {
-                            //log.info("==== Adding node " + nodeId + " of type + " + typeName);
-                            graphBuilder.addNode(node);
-                        }
-                        else {
-                        }
-                    }
-                }
-            }
-            return node;
-        }
-        function addLink(object1, object2, linkType) {
-            if (object1 && object2) {
-                addLinkIds(object1.id, object2.id, linkType);
-            }
-        }
-        function addLinkIds(id1, id2, linkType) {
-            if (id1 && id2) {
-                //log.info("==== Linking " + id1 + " to " + id2);
-                graphBuilder.addLink(id1, id2, linkType);
-            }
-        }
-        /**
-         * Avoid the JMX type property clashing with the ForceGraph type property; used for associating css classes with nodes on the graph
-         *
-         * @param properties
-         */
-        function renameTypeProperty(properties) {
-            properties.mbeanType = properties['type'];
-            delete properties['type'];
-        }
-        function configureEndpointProperties(properties) {
-            renameTypeProperty(properties);
-            var destinationType = properties.destinationType || "Queue";
-            var typeName = destinationType.toLowerCase();
-            properties.isQueue = !typeName.startsWith("t");
-            properties['destType'] = typeName;
-        }
-    }]);
-})(Camel || (Camel = {}));
-
-var Camel;
-(function (Camel) {
-    Camel.jmsHeaderSchema = {
-        definitions: {
-            headers: {
-                properties: {
-                    JMSCorrelationID: {
-                        type: "java.lang.String"
-                    },
-                    JMSDeliveryMode: {
-                        "type": "string",
-                        "enum": [
-                            "PERSISTENT",
-                            "NON_PERSISTENT"
-                        ]
-                    },
-                    JMSDestination: {
-                        type: "javax.jms.Destination"
-                    },
-                    JMSExpiration: {
-                        type: "long"
-                    },
-                    JMSPriority: {
-                        type: "int"
-                    },
-                    JMSReplyTo: {
-                        type: "javax.jms.Destination"
-                    },
-                    JMSType: {
-                        type: "java.lang.String"
-                    },
-                    JMSXGroupId: {
-                        type: "java.lang.String"
-                    },
-                    AMQ_SCHEDULED_CRON: {
-                        type: "java.lang.String"
-                    },
-                    AMQ_SCHEDULED_DELAY: {
-                        type: "java.lang.String"
-                    },
-                    AMQ_SCHEDULED_PERIOD: {
-                        type: "java.lang.String"
-                    },
-                    AMQ_SCHEDULED_REPEAT: {
-                        type: "java.lang.String"
-                    }
-                }
-            },
-            "javax.jms.Destination": {
-                type: "java.lang.String"
-            }
-        }
-    };
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-/**
- * @module Camel
- */
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.PreferencesController", ["$scope", "localStorage", function ($scope, localStorage) {
-        Core.initPreferenceScope($scope, localStorage, {
-            'camelIgnoreIdForLabel': {
-                'value': false,
-                'converter': Core.parseBooleanValue
-            },
-            'camelMaximumLabelWidth': {
-                'value': Camel.defaultMaximumLabelWidth,
-                'converter': parseInt
-            },
-            'camelMaximumTraceOrDebugBodyLength': {
-                'value': Camel.defaultCamelMaximumTraceOrDebugBodyLength,
-                'converter': parseInt
-            },
-            'camelTraceOrDebugIncludeStreams': {
-                'value': Camel.defaultCamelTraceOrDebugIncludeStreams,
-                'converter': Core.parseBooleanValue
-            },
-            'camelRouteMetricMaxSeconds': {
-                'value': Camel.defaultCamelRouteMetricMaxSeconds,
-                'converter': parseInt
-            }
-        });
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.ProfileRouteController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.data = [];
-        $scope.calcManually = true;
-        $scope.icons = {};
-        $scope.selectedRouteId = "";
-        var columnDefs = [
-            {
-                field: 'id',
-                displayName: 'Id',
-                cellTemplate: '<div class="ngCellText" ng-bind-html-unsafe="rowIcon(row.entity.id)"></div>',
-                cellFilter: null,
-                width: "**",
-                resizable: true
-            },
-            {
-                field: 'count',
-                displayName: 'Count',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'last',
-                displayName: 'Last',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'delta',
-                displayName: 'Delta',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'mean',
-                displayName: 'Mean',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'min',
-                displayName: 'Min',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'max',
-                displayName: 'Max',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'total',
-                displayName: 'Total',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'self',
-                displayName: 'Self',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            }
-        ];
-        $scope.rowIcon = function (id) {
-            var entry = $scope.icons[id];
-            if (entry) {
-                return entry.img + " " + id;
-            }
-            else {
-                return id;
-            }
-        };
-        $scope.gridOptions = {
-            data: 'data',
-            displayFooter: true,
-            displaySelectionCheckbox: false,
-            canSelectRows: false,
-            enableSorting: false,
-            columnDefs: columnDefs,
-            filterOptions: {
-                filterText: ''
-            }
-        };
-        var populateProfileMessages = function (response) {
-            var updatedData = [];
-            // its xml structure so we need to parse it
-            var xml = response.value;
-            if (angular.isString(xml)) {
-                // lets parse the XML DOM here...
-                var doc = $.parseXML(xml);
-                var routeMessages = $(doc).find("routeStat");
-                routeMessages.each(function (idx, message) {
-                    var messageData = {
-                        id: {},
-                        count: {},
-                        last: {},
-                        delta: {},
-                        mean: {},
-                        min: {},
-                        max: {},
-                        total: {},
-                        self: {}
-                    };
-                    // compare counters, as we only update if we have new data
-                    messageData.id = message.getAttribute("id");
-                    var total = 0;
-                    total += +message.getAttribute("exchangesCompleted");
-                    total += +message.getAttribute("exchangesFailed");
-                    messageData.count = total;
-                    messageData.last = message.getAttribute("lastProcessingTime");
-                    // delta is only avail from Camel 2.11 onwards
-                    var delta = message.getAttribute("deltaProcessingTime");
-                    if (delta) {
-                        messageData.delta = delta;
-                    }
-                    else {
-                        messageData.delta = 0;
-                    }
-                    messageData.mean = message.getAttribute("meanProcessingTime");
-                    messageData.min = message.getAttribute("minProcessingTime");
-                    messageData.max = message.getAttribute("maxProcessingTime");
-                    messageData.total = message.getAttribute("totalProcessingTime");
-                    // self is pre calculated from Camel 2.11 onwards
-                    var self = message.getAttribute("selfProcessingTime");
-                    if (self) {
-                        messageData.self = self;
-                    }
-                    else {
-                        // we need to calculate this manually
-                        $scope.calcManually = true;
-                        messageData.self = "0";
-                    }
-                    updatedData.push(messageData);
-                });
-                var processorMessages = $(doc).find("processorStat");
-                processorMessages.each(function (idx, message) {
-                    var messageData = {
-                        id: {},
-                        count: {},
-                        last: {},
-                        delta: {},
-                        mean: {},
-                        min: {},
-                        max: {},
-                        total: {},
-                        self: {}
-                    };
-                    messageData.id = message.getAttribute("id");
-                    var total = 0;
-                    total += +message.getAttribute("exchangesCompleted");
-                    total += +message.getAttribute("exchangesFailed");
-                    messageData.count = total;
-                    messageData.last = message.getAttribute("lastProcessingTime");
-                    // delta is only avail from Camel 2.11 onwards
-                    var delta = message.getAttribute("deltaProcessingTime");
-                    if (delta) {
-                        messageData.delta = delta;
-                    }
-                    else {
-                        messageData.delta = 0;
-                    }
-                    messageData.mean = message.getAttribute("meanProcessingTime");
-                    messageData.min = message.getAttribute("minProcessingTime");
-                    messageData.max = message.getAttribute("maxProcessingTime");
-                    // total time for processors is pre calculated as accumulated from Camel 2.11 onwards
-                    var apt = message.getAttribute("accumulatedProcessingTime");
-                    if (apt) {
-                        messageData.total = apt;
-                    }
-                    else {
-                        messageData.total = "0";
-                    }
-                    // self time for processors is their total time
-                    messageData.self = message.getAttribute("totalProcessingTime");
-                    updatedData.push(messageData);
-                });
-            }
-            // for Camel 2.10 or older we need to run through the data and calculate the self/total times manually
-            if ($scope.calcManually) {
-                // sort the data accordingly to order in the icons map
-                updatedData.sort(function (e1, e2) {
-                    var entry1 = $scope.icons[e1.id];
-                    var entry2 = $scope.icons[e2.id];
-                    if (entry1 && entry2) {
-                        return entry1.index - entry2.index;
-                    }
-                    else {
-                        return 0;
-                    }
-                });
-                var accTotal = 0;
-                updatedData.reverse().forEach(function (data, idx) {
-                    // update accTotal with self time
-                    if (idx < updatedData.length - 1) {
-                        // each processor should have the total updated with the accumulated total
-                        accTotal += +data.self;
-                        data.total = accTotal;
-                    }
-                    else {
-                        // the last row is the route, which should have self calculated as follows
-                        data.self = +(data.total - accTotal);
-                        // just to be safe we dont want negative values self value for the route
-                        if (data.self < 0) {
-                            data.self = 0;
-                        }
-                    }
-                });
-                // reverse back again
-                updatedData.reverse();
-            }
-            // TODO: need a way to update data without flickering
-            // if we do as below with the forEach then the data does not update
-            // replace data with updated data
-            $scope.data = updatedData;
-            Core.$apply($scope);
-        };
-        // function to trigger reloading page
-        $scope.onResponse = function (response) {
-            //console.log("got response: " + response);
-            loadData();
-        };
-        $scope.$watch('workspace.tree', function () {
-            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
-            // so lets reload, asynchronously just in case
-            setTimeout(loadData, 50);
-        });
-        function initIdToIcon() {
-            console.log("initializing id and icons");
-            $scope.icons = {};
-            var routeXml = Core.pathGet(workspace.selection, ["routeXmlNode"]);
-            if (routeXml) {
-                // add route id first
-                var entry = {
-                    img: "",
-                    index: 0
-                };
-                entry.index = -1;
-                entry.img = "<img src='img/icons/camel/camel_route.png'>";
-                $scope.icons[$scope.selectedRouteId] = entry;
-                // then each processor id and icons
-                $(routeXml).find('*').each(function (idx, element) {
-                    var id = element.getAttribute("id");
-                    if (id) {
-                        var entry = {
-                            img: "",
-                            index: 0
-                        };
-                        entry.index = idx;
-                        var icon = Camel.getRouteNodeIcon(element);
-                        if (icon) {
-                            entry.img = "<img src='" + icon + "'>";
-                        }
-                        else {
-                            entry.img = "";
-                        }
-                        $scope.icons[id] = entry;
-                    }
-                });
-            }
-        }
-        function loadData() {
-            console.log("Loading Camel route profile data...");
-            $scope.selectedRouteId = Camel.getSelectedRouteId(workspace);
-            var routeMBean = Camel.getSelectionRouteMBean(workspace, $scope.selectedRouteId);
-            console.log("Selected route is " + $scope.selectedRouteId);
-            if (Camel.isCamelVersionEQGT(2, 11, workspace, jolokia)) {
-                // this is Camel 2.11 or better so we dont need to calculate data manually
-                console.log("Camel 2.11 or better detected");
-                $scope.calcManually = false;
-            }
-            else {
-                console.log("Camel 2.10 or older detected");
-                $scope.calcManually = true;
-            }
-            initIdToIcon();
-            console.log("Initialized icons, with " + $scope.icons.length + " icons");
-            // schedule update the profile data, based on the configured interval
-            // TOOD: the icons is not initialized the first time, for some reason, the routeXmlNode is empty/undefined
-            // TODO: have cellFilter with bar grey-scale for highlighting the scales between the numbers
-            // TODO: have the icons indent, there is some CSS ninja crack to do this
-            var query = { type: 'exec', mbean: routeMBean, operation: 'dumpRouteStatsAsXml(boolean,boolean)', arguments: [false, true] };
-            Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateProfileMessages, query));
-        }
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.PropertiesController", ["$scope", "workspace", function ($scope, workspace) {
-        $scope.viewTemplate = null;
-        $scope.schema = Camel._apacheCamelModel;
-        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
-            // lets do this asynchronously to avoid Error: $digest already in progress
-            setTimeout(updateData, 50);
-        });
-        $scope.$watch('workspace.selection', function () {
-            if (workspace.moveIfViewInvalid())
-                return;
-            updateData();
-        });
-        function updateData() {
-            var routeXmlNode = Camel.getSelectedRouteNode(workspace);
-            $scope.nodeData = Camel.getRouteNodeJSON(routeXmlNode);
-            if (routeXmlNode) {
-                var nodeName = routeXmlNode.nodeName;
-                $scope.model = Camel.getCamelSchema(nodeName);
-                if ($scope.model) {
-                    console.log("data is: " + JSON.stringify($scope.nodeData, null, "  "));
-                    console.log("model schema is: " + JSON.stringify($scope.model, null, "  "));
-                    $scope.viewTemplate = "plugins/camel/html/nodePropertiesView.html";
-                }
-            }
-        }
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.RestServiceController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.data = [];
-        $scope.selectedMBean = null;
-        $scope.mbeanAttributes = {};
-        var columnDefs = [
-            {
-                field: 'url',
-                displayName: 'Absolute Url',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'baseUrl',
-                displayName: 'Base Url',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'basePath',
-                displayName: 'Base Path',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'uriTemplate',
-                displayName: 'Uri Template',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'method',
-                displayName: 'Method',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'consumes',
-                displayName: 'Consumes',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'produces',
-                displayName: 'Produces',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'inType',
-                displayName: 'Input Type',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'outType',
-                displayName: 'Output Type',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'state',
-                displayName: 'State',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'routeId',
-                displayName: 'Route Id',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'description',
-                displayName: 'Description',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            }
-        ];
-        $scope.gridOptions = {
-            data: 'data',
-            displayFooter: true,
-            displaySelectionCheckbox: false,
-            canSelectRows: false,
-            enableSorting: true,
-            columnDefs: columnDefs,
-            selectedItems: [],
-            filterOptions: {
-                filterText: ''
-            }
-        };
-        function onRestRegistry(response) {
-            var obj = response.value;
-            if (obj) {
-                // the JMX tabular data has 2 indexes so we need to dive 2 levels down to grab the data
-                var arr = [];
-                for (var key in obj) {
-                    var values = obj[key];
-                    for (var v in values) {
-                        var entry = values[v];
-                        arr.push({
-                            url: entry.url,
-                            baseUrl: entry.baseUrl,
-                            basePath: entry.basePath,
-                            uriTemplate: entry.uriTemplate,
-                            method: entry.method,
-                            consumes: entry.consumes,
-                            produces: entry.produces,
-                            inType: entry.inType,
-                            outType: entry.outType,
-                            state: entry.state,
-                            routeId: entry.routeId,
-                            description: entry.description
-                        });
-                    }
-                }
-                arr = arr.sortBy("url");
-                $scope.data = arr;
-                // okay we have the data then set the selected mbean which allows UI to display data
-                $scope.selectedMBean = response.request.mbean;
-            }
-            else {
-                // set the mbean to a value so the ui can get updated
-                $scope.selectedMBean = "true";
-            }
-            // ensure web page is updated
-            Core.$apply($scope);
-        }
-        $scope.renderIcon = function (state) {
-            return Camel.iconClass(state);
-        };
-        function loadRestRegistry() {
-            console.log("Loading RestRegistry data...");
-            var mbean = Camel.getSelectionCamelRestRegistry(workspace);
-            if (mbean) {
-                jolokia.request({ type: 'exec', mbean: mbean, operation: 'listRestServices' }, Core.onSuccess(onRestRegistry));
-            }
-        }
-        // load data
-        loadRestRegistry();
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.RouteMetricsController", ["$scope", "$location", "workspace", "jolokia", "metricsWatcher", function ($scope, $location, workspace, jolokia, metricsWatcher) {
-        var log = Logger.get("Camel");
-        $scope.maxSeconds = Camel.routeMetricMaxSeconds(localStorage);
-        $scope.filterText = null;
-        $scope.initDone = false;
-        $scope.metricDivs = [];
-        $scope.filterByRoute = function (div) {
-            log.debug("Filter by route " + div);
-            var match = Core.matchFilterIgnoreCase(div.routeId, $scope.filterText);
-            if (!match) {
-                // hide using CSS style
-                return "display: none;";
-            }
-            else {
-                return "";
-            }
-        };
-        function populateRouteStatistics(response) {
-            var obj = response.value;
-            if (obj) {
-                // turn into json javascript object which metrics watcher requires
-                var json = JSON.parse(obj);
-                if (!$scope.initDone) {
-                    // figure out which routes we have
-                    var meters = json['timers'];
-                    var counter = 0;
-                    if (meters != null) {
-                        for (var v in meters) {
-                            var key = v;
-                            var lastDot = key.lastIndexOf(".");
-                            var className = key.substr(0, lastDot);
-                            var metricsName = key.substr(lastDot + 1);
-                            var firstColon = key.indexOf(":");
-                            // compute route id from the key, which is text after the 1st colon, and the last dot
-                            var routeId = key.substr(firstColon + 1);
-                            lastDot = routeId.lastIndexOf(".");
-                            if (lastDot > 0) {
-                                routeId = routeId.substr(0, lastDot);
-                            }
-                            var entry = meters[v];
-                            var div = "timer-" + counter;
-                            $scope.metricDivs.push({
-                                id: div,
-                                routeId: routeId
-                            });
-                            counter++;
-                            log.info("Added timer: " + div + " (" + className + "." + metricsName + ") for route: " + routeId + " with max seconds: " + $scope.maxSeconds);
-                            metricsWatcher.addTimer(div, className, metricsName, $scope.maxSeconds, routeId, "Histogram", $scope.maxSeconds * 1000);
-                        }
-                        // ensure web page is updated at this point, as we need the metricDivs in the HTML before we call init graphs later
-                        log.info("Pre-init graphs");
-                        Core.$apply($scope);
-                    }
-                    log.info("Init graphs");
-                    metricsWatcher.initGraphs();
-                }
-                $scope.initDone = true;
-                // update graphs
-                log.debug("Updating graphs: " + json);
-                metricsWatcher.updateGraphs(json);
-            }
-            $scope.initDone = true;
-            // ensure web page is updated
-            Core.$apply($scope);
-        }
-        // function to trigger reloading page
-        $scope.onResponse = function (response) {
-            loadData();
-        };
-        $scope.$watch('workspace.tree', function () {
-            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
-            // so lets reload, asynchronously just in case
-            setTimeout(loadData, 50);
-        });
-        function loadData() {
-            log.info("Loading RouteMetrics data...");
-            // pre-select filter if we have selected a route
-            var routeId = Camel.getSelectedRouteId(workspace);
-            if (routeId != null) {
-                $scope.filterText = routeId;
-            }
-            var mbean = Camel.getSelectionCamelRouteMetrics(workspace);
-            if (mbean) {
-                var query = { type: 'exec', mbean: mbean, operation: 'dumpStatisticsAsJson' };
-                Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateRouteStatistics, query));
-            }
-            else {
-                $scope.initDone = true;
-                // ensure web page is updated
-                Core.$apply($scope);
-            }
-        }
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.RouteController", ["$scope", "$routeParams", "$element", "$timeout", "workspace", "$location", "jolokia", "localStorage", function ($scope, $routeParams, $element, $timeout, workspace, $location, jolokia, localStorage) {
-        var log = Logger.get("Camel");
-        $scope.routes = [];
-        $scope.routeNodes = {};
-        // if we are in dashboard then $routeParams may be null
-        if ($routeParams != null) {
-            $scope.contextId = $routeParams["contextId"];
-            $scope.routeId = Core.trimQuotes($routeParams["routeId"]);
-            $scope.isJmxTab = !$routeParams["contextId"] || !$routeParams["routeId"];
-        }
-        $scope.camelIgnoreIdForLabel = Camel.ignoreIdForLabel(localStorage);
-        $scope.camelMaximumLabelWidth = Camel.maximumLabelWidth(localStorage);
-        var updateRoutes = Core.throttled(doUpdateRoutes, 1000);
-        // lets delay a little updating the routes to avoid timing issues where we've not yet
-        // fully loaded the workspace and/or the XML model
-        var delayUpdatingRoutes = 300;
-        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
-            // lets do this asynchronously to avoid Error: $digest already in progress
-            $timeout(updateRoutes, delayUpdatingRoutes);
-        });
-        $scope.$watch('workspace.selection', function () {
-            if ($scope.isJmxTab && workspace.moveIfViewInvalid())
-                return;
-            $timeout(updateRoutes, delayUpdatingRoutes);
-        });
-        $scope.$on('jmxTreeUpdated', function () {
-            $timeout(updateRoutes, delayUpdatingRoutes);
-        });
-        $scope.$watch('nodeXmlNode', function () {
-            if ($scope.isJmxTab && workspace.moveIfViewInvalid())
-                return;
-            $timeout(updateRoutes, delayUpdatingRoutes);
-        });
-        function doUpdateRoutes() {
-            var routeXmlNode = null;
-            if (!$scope.ignoreRouteXmlNode) {
-                routeXmlNode = Camel.getSelectedRouteNode(workspace);
-                if (!routeXmlNode) {
-                    routeXmlNode = $scope.nodeXmlNode;
-                }
-                if (routeXmlNode && routeXmlNode.localName !== "route") {
-                    var wrapper = document.createElement("route");
-                    wrapper.appendChild(routeXmlNode.cloneNode(true));
-                    routeXmlNode = wrapper;
-                }
-            }
-            $scope.mbean = Camel.getSelectionCamelContextMBean(workspace);
-            if (!$scope.mbean && $scope.contextId) {
-                $scope.mbean = Camel.getCamelContextMBean(workspace, $scope.contextId);
-            }
-            if (routeXmlNode) {
-                // lets show the remaining parts of the diagram of this route node
-                $scope.nodes = {};
-                var nodes = [];
-                var links = [];
-                $scope.processorTree = Camel.camelProcessorMBeansById(workspace);
-                Camel.addRouteXmlChildren($scope, routeXmlNode, nodes, links, null, 0, 0);
-                showGraph(nodes, links);
-            }
-            else if ($scope.mbean) {
-                jolokia.request({ type: 'exec', mbean: $scope.mbean, operation: 'dumpRoutesAsXml()' }, Core.onSuccess(populateTable));
-            }
-            else {
-                log.info("No camel context bean! Selection: " + workspace.selection);
-            }
-        }
-        var populateTable = function (response) {
-            var data = response.value;
-            // routes is the xml data of the routes
-            $scope.routes = data;
-            // nodes and routeNodes is the GUI nodes for the processors and routes shown in the diagram
-            $scope.nodes = {};
-            $scope.routeNodes = {};
-            var nodes = [];
-            var links = [];
-            var selectedRouteId = $scope.routeId;
-            if (!selectedRouteId) {
-                selectedRouteId = Camel.getSelectedRouteId(workspace);
-            }
-            if (data) {
-                var doc = $.parseXML(data);
-                $scope.processorTree = Camel.camelProcessorMBeansById(workspace);
-                Camel.loadRouteXmlNodes($scope, doc, selectedRouteId, nodes, links, getWidth());
-                showGraph(nodes, links);
-            }
-            else {
-                console.log("No data from route XML!");
-            }
-            Core.$apply($scope);
-        };
-        var postfix = " selected";
-        function isSelected(node) {
-            if (node) {
-                var className = node.getAttribute("class");
-                return className && className.endsWith(postfix);
-            }
-            return false;
-        }
-        function setSelected(node, flag) {
-            var answer = false;
-            if (node) {
-                var className = node.getAttribute("class");
-                var selected = className && className.endsWith(postfix);
-                if (selected) {
-                    className = className.substring(0, className.length - postfix.length);
-                }
-                else {
-                    if (!flag) {
-                        // no need to change!
-                        return answer;
-                    }
-                    className = className + postfix;
-                    answer = true;
-                }
-                node.setAttribute("class", className);
-            }
-            return answer;
-        }
-        function showGraph(nodes, links) {
-            var canvasDiv = $($element);
-            var width = getWidth();
-            var height = getHeight();
-            var svg = canvasDiv.children("svg")[0];
-            $scope.graphData = Core.dagreLayoutGraph(nodes, links, width, height, svg);
-            var gNodes = canvasDiv.find("g.node");
-            gNodes.click(function () {
-                var selected = isSelected(this);
-                // lets clear all selected flags
-                gNodes.each(function (idx, element) {
-                    setSelected(element, false);
-                });
-                var cid = null;
-                if (!selected) {
-                    cid = this.getAttribute("data-cid");
-                    setSelected(this, true);
-                }
-                $scope.$emit("camel.diagram.selectedNodeId", cid);
-                Core.$apply($scope);
-            });
-            // TODO: https://github.com/hawtio/hawtio/issues/1261
-            // we need some kind of right-click menu on d3
-            // disabled code below as its work in progress
-            /*      gNodes.dblclick(function() {
-                    //var allStats = $(doc).find("processorStat");
-                    var cid = this.getAttribute("data-cid");
-                    log.info("You double clicked " + cid);
-            
-                    // find the node of the cid we clicked, and then find the folder in the Camel tree
-                    // to grab the folder key, which is the nid for the location in the JMX plugin to
-                    // view the processor mbean
-                    var node = $scope.nodes[cid];
-                    if (node) {
-                      var pid = node.elementId;
-            
-                      var processors = camelProcessorMBeansById(workspace);
-                      var processor = processors[pid];
-                      if (processor) {
-                        var key = processor.key;
-                        // change url to jmx attributes so we can see the jmx stats for the selected processor
-                        $location.search("nid", key);
-                        var url = "/jmx/attributes";
-                        var href = Core.createHref($location, url);
-                        // change path to the jmx attributes page so we can see the processor mbean
-                        log.info("Changing to path: " + href);
-                        $location.url(href);
-                        Core.$apply($scope);
-                      }
-                    }
-                  });*/
-            if ($scope.mbean) {
-                Core.register(jolokia, $scope, {
-                    type: 'exec',
-                    mbean: $scope.mbean,
-                    operation: 'dumpRoutesStatsAsXml',
-                    arguments: [true, true]
-                }, Core.onSuccess(statsCallback, { silent: true, error: false }));
-            }
-            $scope.$emit("camel.diagram.layoutComplete");
-            return width;
-        }
-        function getWidth() {
-            var canvasDiv = $($element);
-            return canvasDiv.width();
-        }
-        function getHeight() {
-            var canvasDiv = $($element);
-            return Camel.getCanvasHeight(canvasDiv);
-        }
-        function statsCallback(response) {
-            var data = response.value;
-            if (data) {
-                var doc = $.parseXML(data);
-                var allStats = $(doc).find("routeStat");
-                allStats.each(function (idx, stat) {
-                    addTooltipToNode(true, stat);
-                });
-                var allStats = $(doc).find("processorStat");
-                allStats.each(function (idx, stat) {
-                    addTooltipToNode(false, stat);
-                });
-                // now lets try update the graph
-                Core.dagreUpdateGraphData($scope.graphData);
-            }
-            function addTooltipToNode(isRoute, stat) {
-                // we could have used a function instead of the boolean isRoute parameter (but sometimes that is easier)
-                var id = stat.getAttribute("id");
-                var completed = stat.getAttribute("exchangesCompleted");
-                var tooltip = "";
-                if (id && completed) {
-                    var container = isRoute ? $scope.routeNodes : $scope.nodes;
-                    var node = container[id];
-                    if (!node) {
-                        angular.forEach(container, function (value, key) {
-                            if (!node && id === value.elementId) {
-                                node = value;
-                            }
-                        });
-                    }
-                    if (node) {
-                        var total = 0 + parseInt(completed);
-                        var failed = stat.getAttribute("exchangesFailed");
-                        if (failed) {
-                            total += parseInt(failed);
-                        }
-                        var last = stat.getAttribute("lastProcessingTime");
-                        var mean = stat.getAttribute("meanProcessingTime");
-                        var min = stat.getAttribute("minProcessingTime");
-                        var max = stat.getAttribute("maxProcessingTime");
-                        tooltip = "last: " + last + " (ms)\nmean: " + mean + " (ms)\nmin: " + min + " (ms)\nmax: " + max + " (ms)";
-                        node["counter"] = total;
-                        var labelSummary = node["labelSummary"];
-                        if (labelSummary) {
-                            tooltip = labelSummary + "\n\n" + tooltip;
-                        }
-                        node["tooltip"] = tooltip;
-                    }
-                    else {
-                    }
-                }
-            }
-        }
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    var DELIVERY_PERSISTENT = "2";
-    Camel._module.controller("Camel.SendMessageController", ["$route", "$scope", "$element", "$timeout", "workspace", "jolokia", "localStorage", "$location", "activeMQMessage", function ($route, $scope, $element, $timeout, workspace, jolokia, localStorage, $location, activeMQMessage) {
-        var log = Logger.get("Camel");
-        log.info("Loaded page!");
-        $scope.noCredentials = false;
-        $scope.showChoose = false;
-        $scope.profileFileNames = [];
-        $scope.profileFileNameToProfileId = {};
-        $scope.selectedFiles = {};
-        $scope.container = {};
-        $scope.message = "\n\n\n\n";
-        $scope.headers = [];
-        // bind model values to search params...
-        Core.bindModelToSearchParam($scope, $location, "tab", "subtab", "compose");
-        Core.bindModelToSearchParam($scope, $location, "searchText", "q", "");
-        // only reload the page if certain search parameters change
-        Core.reloadWhenParametersChange($route, $scope, $location);
-        $scope.checkCredentials = function () {
-            $scope.noCredentials = (Core.isBlank(localStorage['activemqUserName']) || Core.isBlank(localStorage['activemqPassword']));
-        };
-        if ($location.path().has('activemq')) {
-            $scope.localStorage = localStorage;
-            $scope.$watch('localStorage.activemqUserName', $scope.checkCredentials);
-            $scope.$watch('localStorage.activemqPassword', $scope.checkCredentials);
-            //prefill if it's a resent
-            if (activeMQMessage.message !== null) {
-                $scope.message = activeMQMessage.message.bodyText;
-                if (activeMQMessage.message.PropertiesText !== null) {
-                    for (var p in activeMQMessage.message.StringProperties) {
-                        $scope.headers.push({ name: p, value: activeMQMessage.message.StringProperties[p] });
-                    }
-                }
-            }
-            // always reset at the end
-            activeMQMessage.message = null;
-        }
-        $scope.openPrefs = function () {
-            $location.search('pref', 'ActiveMQ');
-            $scope.$emit("hawtioOpenPrefs");
-        };
-        var LANGUAGE_FORMAT_PREFERENCE = "defaultLanguageFormat";
-        var sourceFormat = workspace.getLocalStorage(LANGUAGE_FORMAT_PREFERENCE) || "javascript";
-        // TODO Remove this if possible
-        $scope.codeMirror = undefined;
-        var options = {
-            mode: {
-                name: sourceFormat
-            },
-            // Quick hack to get the codeMirror instance.
-            onChange: function (codeMirror) {
-                if (!$scope.codeMirror) {
-                    $scope.codeMirror = codeMirror;
-                }
-            }
-        };
-        $scope.codeMirrorOptions = CodeEditor.createEditorSettings(options);
-        $scope.addHeader = function () {
-            $scope.headers.push({ name: "", value: "" });
-            // lets set the focus to the last header
-            if ($element) {
-                $timeout(function () {
-                    var lastHeader = $element.find("input.headerName").last();
-                    lastHeader.focus();
-                }, 100);
-            }
-        };
-        $scope.removeHeader = function (header) {
-            $scope.headers = $scope.headers.remove(header);
-        };
-        $scope.defaultHeaderNames = function () {
-            var answer = [];
-            function addHeaderSchema(schema) {
-                angular.forEach(schema.definitions.headers.properties, function (value, name) {
-                    answer.push(name);
-                });
-            }
-            if (isJmsEndpoint()) {
-                addHeaderSchema(Camel.jmsHeaderSchema);
-            }
-            if (isCamelEndpoint()) {
-                addHeaderSchema(Camel.camelHeaderSchema);
-            }
-            return answer;
-        };
-        $scope.$watch('workspace.selection', function () {
-            // if the current JMX selection does not support sending messages then lets redirect the page
-            workspace.moveIfViewInvalid();
-            loadProfileConfigurationFiles();
-        });
-        /* save the sourceFormat in preferences for later
-         * Note, this would be controller specific preferences and not the global, overriding, preferences */
-        // TODO Use ng-selected="changeSourceFormat()" - Although it seemed to fire multiple times..
-        $scope.$watch('codeMirrorOptions.mode.name', function (newValue, oldValue) {
-            workspace.setLocalStorage(LANGUAGE_FORMAT_PREFERENCE, newValue);
-        });
-        var sendWorked = function () {
-            $scope.message = "";
-            Core.notification("success", "Message sent!");
-        };
-        $scope.autoFormat = function () {
-            setTimeout(function () {
-                CodeEditor.autoFormatEditor($scope.codeMirror);
-            }, 50);
-        };
-        $scope.sendMessage = function () {
-            var body = $scope.message;
-            doSendMessage(body, sendWorked);
-        };
-        function doSendMessage(body, onSendCompleteFn) {
-            var selection = workspace.selection;
-            if (selection) {
-                var mbean = selection.objectName;
-                if (mbean) {
-                    var headers = null;
-                    if ($scope.headers.length) {
-                        headers = {};
-                        angular.forEach($scope.headers, function (object) {
-                            var key = object.name;
-                            if (key) {
-                                headers[key] = object.value;
-                            }
-                        });
-                        log.info("About to send headers: " + JSON.stringify(headers));
-                    }
-                    var callback = Core.onSuccess(onSendCompleteFn);
-                    if (selection.domain === "org.apache.camel") {
-                        var target = Camel.getContextAndTargetEndpoint(workspace);
-                        var uri = target['uri'];
-                        mbean = target['mbean'];
-                        if (mbean && uri) {
-                            // if we are running Camel 2.14 we can check if its posible to send to the endppoint
-                            var ok = true;
-                            if (Camel.isCamelVersionEQGT(2, 14, workspace, jolokia)) {
-                                var reply = jolokia.execute(mbean, "canSendToEndpoint(java.lang.String)", uri);
-                                if (!reply) {
-                                    Core.notification("warning", "Camel does not support sending to this endpoint.");
-                                    ok = false;
-                                }
-                            }
-                            if (ok) {
-                                if (headers) {
-                                    jolokia.execute(mbean, "sendBodyAndHeaders(java.lang.String, java.lang.Object, java.util.Map)", uri, body, headers, callback);
-                                }
-                                else {
-                                    jolokia.execute(mbean, "sendStringBody(java.lang.String, java.lang.String)", uri, body, callback);
-                                }
-                            }
-                        }
-                        else {
-                            if (!mbean) {
-                                Core.notification("error", "Could not find CamelContext MBean!");
-                            }
-                            else {
-                                Core.notification("error", "Failed to determine endpoint name!");
-                            }
-                            log.debug("Parsed context and endpoint: ", target);
-                        }
-                    }
-                    else {
-                        var user = localStorage["activemqUserName"];
-                        var pwd = localStorage["activemqPassword"];
-                        // AMQ is sending non persistent by default, so make sure we tell to sent persistent by default
-                        if (!headers) {
-                            headers = {};
-                        }
-                        if (!headers["JMSDeliveryMode"]) {
-                            headers["JMSDeliveryMode"] = DELIVERY_PERSISTENT;
-                        }
-                        jolokia.execute(mbean, "sendTextMessage(java.util.Map, java.lang.String, java.lang.String, java.lang.String)", headers, body, user, pwd, callback);
-                    }
-                }
-            }
-        }
-        $scope.fileSelection = function () {
-            var answer = [];
-            angular.forEach($scope.selectedFiles, function (value, key) {
-                if (value) {
-                    answer.push(key);
-                }
-            });
-            return answer;
-        };
-        $scope.sendSelectedFiles = function () {
-            var filesToSend = $scope.fileSelection();
-            var fileCount = filesToSend.length;
-            var version = $scope.container.versionId || "1.0";
-            function onSendFileCompleted(response) {
-                if (filesToSend.length) {
-                    var fileName = filesToSend.pop();
-                    if (fileName) {
-                        // lets load the file data...
-                        var profile = $scope.profileFileNameToProfileId[fileName];
-                        if (profile) {
-                        }
-                    }
-                }
-                else {
-                    var text = Core.maybePlural(fileCount, "Message") + " sent!";
-                    Core.notification("success", text);
-                }
-            }
-            // now lets start sending
-            onSendFileCompleted(null);
-        };
-        function isCamelEndpoint() {
-            // TODO check for the camel or if its an activemq endpoint
-            return true;
-        }
-        function isJmsEndpoint() {
-            // TODO check for the jms/activemq endpoint in camel or if its an activemq endpoint
-            return true;
-        }
-        function loadProfileConfigurationFiles() {
-            /*
-                  TODO
-                  if (Fabric.fabricCreated(workspace)) {
-                    $scope.container = Fabric.getCurrentContainer(jolokia, ['versionId', 'profileIds']);
-                    jolokia.execute(Fabric.managerMBean, "currentContainerConfigurationFiles", Core.onSuccess(onFabricConfigFiles));
-                  }
-            */
-        }
-        function onFabricConfigFiles(response) {
-            $scope.profileFileNameToProfileId = response;
-            // we only want files from the data dir
-            $scope.profileFileNames = Object.keys(response).filter(function (key) {
-                return key.toLowerCase().startsWith('data/');
-            }).sort();
-            $scope.showChoose = $scope.profileFileNames.length ? true : false;
-            $scope.selectedFiles = {};
-            Core.$apply($scope);
-        }
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.SourceController", ["$scope", "workspace", function ($scope, workspace) {
-        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
-            // lets do this asynchronously to avoid Error: $digest already in progress
-            setTimeout(updateRoutes, 50);
-        });
-        $scope.$watch('workspace.selection', function () {
-            if (workspace.moveIfViewInvalid())
-                return;
-            updateRoutes();
-        });
-        $scope.mode = 'xml';
-        function getSource(routeXmlNode) {
-            function removeCrappyHeaders(idx, e) {
-                var answer = e.getAttribute("customId");
-                if (e.nodeName === 'route') {
-                    // always keep id on <route> element
-                    answer = "true";
-                }
-                if (!answer || answer !== "true") {
-                    e.removeAttribute("id");
-                }
-                // just always remove customId, _cid, and group
-                e.removeAttribute("customId");
-                e.removeAttribute("_cid");
-                e.removeAttribute("group");
-            }
-            var copy = $(routeXmlNode).clone();
-            copy.each(removeCrappyHeaders);
-            copy.find("*").each(removeCrappyHeaders);
-            var newNode = (copy && copy.length) ? copy[0] : routeXmlNode;
-            return Core.xmlNodeToString(newNode);
-        }
-        function updateRoutes() {
-            // did we select a single route
-            var routeXmlNode = Camel.getSelectedRouteNode(workspace);
-            if (routeXmlNode) {
-                $scope.source = getSource(routeXmlNode);
-                Core.$apply($scope);
-            }
-            else {
-                // no then try to find the camel context and get all the routes code
-                $scope.mbean = Camel.getSelectionCamelContextMBean(workspace);
-                if (!$scope.mbean) {
-                    // maybe the parent is the camel context folder (when we have selected the routes folder),
-                    // then grab the object name from parent
-                    var parent = Core.pathGet(workspace, ["selection", "parent"]);
-                    if (parent && parent.title === "context") {
-                        $scope.mbean = parent.children[0].objectName;
-                    }
-                }
-                if ($scope.mbean) {
-                    var jolokia = workspace.jolokia;
-                    jolokia.request({ type: 'exec', mbean: $scope.mbean, operation: 'dumpRoutesAsXml()' }, Core.onSuccess(populateTable));
-                }
-            }
-        }
-        var populateTable = function (response) {
-            var data = response.value;
-            var selectedRouteId = Camel.getSelectedRouteId(workspace);
-            if (data && selectedRouteId) {
-                var doc = $.parseXML(data);
-                var routes = $(doc).find('route[id="' + selectedRouteId + '"]');
-                if (routes && routes.length) {
-                    var selectedRoute = routes[0];
-                    // TODO turn into XML?
-                    var routeXml = getSource(selectedRoute);
-                    if (routeXml) {
-                        data = routeXml;
-                    }
-                }
-            }
-            $scope.source = data;
-            Core.$apply($scope);
-        };
-        var saveWorked = function () {
-            Core.notification("success", "Route updated!");
-            // lets clear the cached route XML so we reload the new value
-            Camel.clearSelectedRouteNode(workspace);
-            updateRoutes();
-        };
-        $scope.saveRouteXml = function () {
-            var routeXml = $scope.source;
-            if (routeXml) {
-                var decoded = decodeURIComponent(routeXml);
-                Camel.log.debug("addOrUpdateRoutesFromXml xml decoded: " + decoded);
-                var jolokia = workspace.jolokia;
-                var mbean = Camel.getSelectionCamelContextMBean(workspace);
-                if (mbean) {
-                    jolokia.execute(mbean, "addOrUpdateRoutesFromXml(java.lang.String)", decoded, Core.onSuccess(saveWorked));
-                }
-                else {
-                    Core.notification("error", "Could not find CamelContext MBean!");
-                }
-            }
-        };
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.TraceRouteController", ["$scope", "workspace", "jolokia", "localStorage", "tracerStatus", function ($scope, workspace, jolokia, localStorage, tracerStatus) {
-        var log = Logger.get("CamelTracer");
-        $scope.tracing = false;
-        $scope.messages = [];
-        $scope.graphView = null;
-        $scope.tableView = null;
-        $scope.mode = 'text';
-        $scope.messageDialog = new UI.Dialog();
-        $scope.gridOptions = Camel.createBrowseGridOptions();
-        $scope.gridOptions.selectWithCheckboxOnly = false;
-        $scope.gridOptions.showSelectionCheckbox = false;
-        $scope.gridOptions.multiSelect = false;
-        $scope.gridOptions.afterSelectionChange = onSelectionChanged;
-        $scope.gridOptions.columnDefs.push({
-            field: 'toNode',
-            displayName: 'To Node'
-        });
-        $scope.startTracing = function () {
-            log.info("Start tracing");
-            setTracing(true);
-        };
-        $scope.stopTracing = function () {
-            log.info("Stop tracing");
-            setTracing(false);
-        };
-        $scope.clear = function () {
-            log.debug("Clear messages");
-            tracerStatus.messages = [];
-            $scope.messages = [];
-            Core.$apply($scope);
-        };
-        $scope.$watch('workspace.selection', function () {
-            if (workspace.moveIfViewInvalid()) {
-                return;
-            }
-            $scope.messages = tracerStatus.messages;
-            reloadTracingFlag();
-        });
-        // TODO can we share these 2 methods from activemq browse / camel browse / came trace?
-        $scope.openMessageDialog = function (message) {
-            var idx = Core.pathGet(message, ["rowIndex"]);
-            $scope.selectRowIndex(idx);
-            if ($scope.row) {
-                $scope.mode = CodeEditor.detectTextFormat($scope.row.body);
-                $scope.messageDialog.open();
-            }
-        };
-        $scope.selectRowIndex = function (idx) {
-            $scope.rowIndex = idx;
-            var selected = $scope.gridOptions.selectedItems;
-            selected.splice(0, selected.length);
-            if (idx >= 0 && idx < $scope.messages.length) {
-                $scope.row = $scope.messages[idx];
-                if ($scope.row) {
-                    selected.push($scope.row);
-                }
-            }
-            else {
-                $scope.row = null;
-            }
-            onSelectionChanged();
-        };
-        function reloadTracingFlag() {
-            $scope.tracing = false;
-            // clear any previous polls
-            if (tracerStatus.jhandle != null) {
-                log.debug("Unregistering jolokia handle");
-                jolokia.unregister(tracerStatus.jhandle);
-                tracerStatus.jhandle = null;
-            }
-            var mbean = Camel.getSelectionCamelTraceMBean(workspace);
-            if (mbean) {
-                $scope.tracing = jolokia.getAttribute(mbean, "Enabled", Core.onSuccess(null));
-                if ($scope.tracing) {
-                    var traceMBean = mbean;
-                    if (traceMBean) {
-                        // register callback for doing live update of tracing
-                        if (tracerStatus.jhandle === null) {
-                            log.debug("Registering jolokia handle");
-                            tracerStatus.jhandle = jolokia.register(populateRouteMessages, {
-                                type: 'exec',
-                                mbean: traceMBean,
-                                operation: 'dumpAllTracedMessagesAsXml()',
-                                ignoreErrors: true,
-                                arguments: []
-                            });
-                        }
-                    }
-                    $scope.graphView = "plugins/camel/html/routes.html";
-                    $scope.tableView = "plugins/camel/html/browseMessages.html";
-                }
-                else {
-                    tracerStatus.messages = [];
-                    $scope.messages = [];
-                    $scope.graphView = null;
-                    $scope.tableView = null;
-                }
-            }
-        }
-        function populateRouteMessages(response) {
-            log.debug("Populating response " + response);
-            // filter messages due CAMEL-7045 but in camel-core
-            // see https://github.com/hawtio/hawtio/issues/292
-            var selectedRouteId = Camel.getSelectedRouteId(workspace);
-            var xml = response.value;
-            if (angular.isString(xml)) {
-                // lets parse the XML DOM here...
-                var doc = $.parseXML(xml);
-                var allMessages = $(doc).find("fabricTracerEventMessage");
-                if (!allMessages || !allMessages.length) {
-                    // lets try find another element name
-                    allMessages = $(doc).find("backlogTracerEventMessage");
-                }
-                allMessages.each(function (idx, message) {
-                    var routeId = $(message).find("routeId").text();
-                    if (routeId === selectedRouteId) {
-                        var messageData = Camel.createMessageFromXml(message);
-                        var toNode = $(message).find("toNode").text();
-                        if (toNode) {
-                            messageData["toNode"] = toNode;
-                        }
-                        log.debug("Adding new message to trace table with id " + messageData["id"]);
-                        $scope.messages.push(messageData);
-                    }
-                });
-                // keep state of the traced messages on tracerStatus
-                tracerStatus.messages = $scope.messages;
-                Core.$apply($scope);
-            }
-        }
-        function onSelectionChanged() {
-            angular.forEach($scope.gridOptions.selectedItems, function (selected) {
-                if (selected) {
-                    var toNode = selected["toNode"];
-                    if (toNode) {
-                        // lets highlight the node in the diagram
-                        var nodes = d3.select("svg").selectAll("g .node");
-                        Camel.highlightSelectedNode(nodes, toNode);
-                    }
-                }
-            });
-        }
-        function tracingChanged(response) {
-            reloadTracingFlag();
-            Core.$apply($scope);
-        }
-        function setTracing(flag) {
-            var mbean = Camel.getSelectionCamelTraceMBean(workspace);
-            if (mbean) {
-                // set max only supported on BacklogTracer
-                // (the old fabric tracer does not support max length)
-                if (mbean.toString().endsWith("BacklogTracer")) {
-                    var max = Camel.maximumTraceOrDebugBodyLength(localStorage);
-                    var streams = Camel.traceOrDebugIncludeStreams(localStorage);
-                    jolokia.setAttribute(mbean, "BodyMaxChars", max);
-                    jolokia.setAttribute(mbean, "BodyIncludeStreams", streams);
-                    jolokia.setAttribute(mbean, "BodyIncludeFiles", streams);
-                }
-                jolokia.setAttribute(mbean, "Enabled", flag, Core.onSuccess(tracingChanged));
-            }
-        }
-        log.info("Re-activating tracer with " + tracerStatus.messages.length + " existing messages");
-        $scope.messages = tracerStatus.messages;
-        $scope.tracing = tracerStatus.jhandle != null;
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.TreeHeaderController", ["$scope", "$location", function ($scope, $location) {
-        $scope.contextFilterText = '';
-        $scope.$watch('contextFilterText', function (newValue, oldValue) {
-            if (newValue !== oldValue) {
-                $scope.$emit("camel-contextFilterText", newValue);
-            }
-        });
-        $scope.expandAll = function () {
-            Tree.expandAll("#cameltree");
-        };
-        $scope.contractAll = function () {
-            Tree.contractAll("#cameltree");
-        };
-    }]);
-    Camel._module.controller("Camel.TreeController", ["$scope", "$location", "$timeout", "workspace", "$rootScope", function ($scope, $location, $timeout, workspace, $rootScope) {
-        $scope.contextFilterText = $location.search()["cq"];
-        $scope.fullScreenViewLink = Camel.linkToFullScreenView(workspace);
-        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
-            // lets do this asynchronously to avoid Error: $digest already in progress
-            setTimeout(updateSelectionFromURL, 50);
-        });
-        var reloadThrottled = Core.throttled(reloadFunction, 500);
-        $scope.$watch('workspace.tree', function () {
-            reloadThrottled();
-        });
-        var reloadOnContextFilterThrottled = Core.throttled(function () {
-            reloadFunction(function () {
-                $("#camelContextIdFilter").focus();
-            });
-        }, 500);
-        $scope.$watch('contextFilterText', function () {
-            if ($scope.contextFilterText != $scope.lastContextFilterText) {
-                $timeout(reloadOnContextFilterThrottled, 250);
-            }
-        });
-        $rootScope.$on('camel-contextFilterText', function (event, value) {
-            $scope.contextFilterText = value;
-        });
-        $scope.$on('jmxTreeUpdated', function () {
-            reloadThrottled();
-        });
-        function reloadFunction(afterSelectionFn) {
-            if (afterSelectionFn === void 0) { afterSelectionFn = null; }
-            $scope.fullScreenViewLink = Camel.linkToFullScreenView(workspace);
-            var children = [];
-            var domainName = Camel.jmxDomain;
-            // lets pull out each context
-            var tree = workspace.tree;
-            if (tree) {
-                var rootFolder = new Folder("Camel Contexts");
-                rootFolder.addClass = "org-apache-camel-context-folder";
-                rootFolder.children = children;
-                rootFolder.typeName = "context";
-                rootFolder.key = "camelContexts";
-                rootFolder.domain = domainName;
-                var contextFilterText = $scope.contextFilterText;
-                $scope.lastContextFilterText = contextFilterText;
-                Camel.log.debug("Reloading the tree for filter: " + contextFilterText);
-                var folder = tree.get(domainName);
-                if (folder) {
-                    angular.forEach(folder.children, function (value, key) {
-                        var entries = value.map;
-                        if (entries) {
-                            var contextsFolder = entries["context"];
-                            var routesNode = entries["routes"];
-                            var endpointsNode = entries["endpoints"];
-                            if (contextsFolder) {
-                                var contextNode = contextsFolder.children[0];
-                                if (contextNode) {
-                                    var title = contextNode.title;
-                                    var match = Core.matchFilterIgnoreCase(title, contextFilterText);
-                                    if (match) {
-                                        var folder = new Folder(title);
-                                        folder.addClass = "org-apache-camel-context";
-                                        folder.domain = domainName;
-                                        folder.objectName = contextNode.objectName;
-                                        folder.entries = contextNode.entries;
-                                        folder.typeName = contextNode.typeName;
-                                        folder.key = contextNode.key;
-                                        folder.version = contextNode.version;
-                                        if (routesNode) {
-                                            var routesFolder = new Folder("Routes");
-                                            routesFolder.addClass = "org-apache-camel-routes-folder";
-                                            routesFolder.parent = contextsFolder;
-                                            routesFolder.children = routesNode.children;
-                                            angular.forEach(routesFolder.children, function (n) { return n.addClass = "org-apache-camel-routes"; });
-                                            folder.children.push(routesFolder);
-                                            routesFolder.typeName = "routes";
-                                            routesFolder.key = routesNode.key;
-                                            routesFolder.domain = routesNode.domain;
-                                        }
-                                        if (endpointsNode) {
-                                            var endpointsFolder = new Folder("Endpoints");
-                                            endpointsFolder.addClass = "org-apache-camel-endpoints-folder";
-                                            endpointsFolder.parent = contextsFolder;
-                                            endpointsFolder.children = endpointsNode.children;
-                                            angular.forEach(endpointsFolder.children, function (n) {
-                                                n.addClass = "org-apache-camel-endpoints";
-                                                if (!Camel.getContextId(n)) {
-                                                    n.entries["context"] = contextNode.entries["context"];
-                                                }
-                                            });
-                                            folder.children.push(endpointsFolder);
-                                            endpointsFolder.entries = contextNode.entries;
-                                            endpointsFolder.typeName = "endpoints";
-                                            endpointsFolder.key = endpointsNode.key;
-                                            endpointsFolder.domain = endpointsNode.domain;
-                                        }
-                                        var jmxNode = new Folder("MBeans");
-                                        // lets add all the entries which are not one context/routes/endpoints
-                                        angular.forEach(entries, function (jmxChild, name) {
-                                            if (name !== "context" && name !== "routes" && name !== "endpoints") {
-                                                jmxNode.children.push(jmxChild);
-                                            }
-                                        });
-                                        if (jmxNode.children.length > 0) {
-                                            jmxNode.sortChildren(false);
-                                            folder.children.push(jmxNode);
-                                        }
-                                        folder.parent = rootFolder;
-                                        children.push(folder);
-                                    }
-                                }
-                            }
-                        }
-                    });
-                }
-                var treeElement = $("#cameltree");
-                Jmx.enableTree($scope, $location, workspace, treeElement, [rootFolder], true);
-                // lets do this asynchronously to avoid Error: $digest already in progress
-                setTimeout(function () {
-                    updateSelectionFromURL();
-                    if (angular.isFunction(afterSelectionFn)) {
-                        afterSelectionFn();
-                    }
-                }, 50);
-            }
-        }
-        function updateSelectionFromURL() {
-            Jmx.updateTreeSelectionFromURLAndAutoSelect($location, $("#cameltree"), function (first) {
-                // use function to auto select first Camel context routes if there is only one Camel context
-                var contexts = first.getChildren();
-                if (contexts && contexts.length === 1) {
-                    first = contexts[0];
-                    first.expand(true);
-                    var children = first.getChildren();
-                    if (children && children.length) {
-                        var routes = children[0];
-                        if (routes.data.typeName === 'routes') {
-                            first = routes;
-                            return first;
-                        }
-                    }
-                }
-                return null;
-            }, true);
-            $scope.fullScreenViewLink = Camel.linkToFullScreenView(workspace);
-        }
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="camelPlugin.ts"/>
-var Camel;
-(function (Camel) {
-    Camel._module.controller("Camel.TypeConverterController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.data = [];
-        $scope.selectedMBean = null;
-        $scope.mbeanAttributes = {};
-        var columnDefs = [
-            {
-                field: 'from',
-                displayName: 'From',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            },
-            {
-                field: 'to',
-                displayName: 'To',
-                cellFilter: null,
-                width: "*",
-                resizable: true
-            }
-        ];
-        $scope.gridOptions = {
-            data: 'data',
-            displayFooter: true,
-            displaySelectionCheckbox: false,
-            canSelectRows: false,
-            enableSorting: true,
-            columnDefs: columnDefs,
-            selectedItems: [],
-            filterOptions: {
-                filterText: ''
-            }
-        };
-        function onAttributes(response) {
-            var obj = response.value;
-            if (obj) {
-                $scope.mbeanAttributes = obj;
-                // ensure web page is updated
-                Core.$apply($scope);
-            }
-        }
-        function onConverters(response) {
-            var obj = response.value;
-            if (obj) {
-                // the JMX tabular data has 2 indexes so we need to dive 2 levels down to grab the data
-                var arr = [];
-                for (var key in obj) {
-                    var values = obj[key];
-                    for (var v in values) {
-                        arr.push({ from: key, to: v });
-                    }
-                }
-                arr = arr.sortBy("from");
-                $scope.data = arr;
-                // okay we have the data then set the selected mbean which allows UI to display data
-                $scope.selectedMBean = response.request.mbean;
-                // ensure web page is updated
-                Core.$apply($scope);
-            }
-        }
-        $scope.renderIcon = function (state) {
-            return Camel.iconClass(state);
-        };
-        $scope.disableStatistics = function () {
-            if ($scope.selectedMBean) {
-                jolokia.setAttribute($scope.selectedMBean, "StatisticsEnabled", false);
-            }
-        };
-        $scope.enableStatistics = function () {
-            if ($scope.selectedMBean) {
-                jolokia.setAttribute($scope.selectedMBean, "StatisticsEnabled", true);
-            }
-        };
-        $scope.resetStatistics = function () {
-            if ($scope.selectedMBean) {
-                jolokia.request({ type: 'exec', mbean: $scope.selectedMBean, operation: 'resetTypeConversionCounters' }, Core.onSuccess(null, { silent: true }));
-            }
-        };
-        function loadConverters() {
-            console.log("Loading TypeConverter data...");
-            var mbean = Camel.getSelectionCamelTypeConverter(workspace);
-            if (mbean) {
-                // grab attributes in real time
-                var query = { type: "read", mbean: mbean, attribute: ["AttemptCounter", "FailedCounter", "HitCounter", "MissCounter", "NumberOfTypeConverters", "StatisticsEnabled"] };
-                jolokia.request(query, Core.onSuccess(onAttributes));
-                Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(onAttributes, query));
-                // and list of converters
-                jolokia.request({ type: 'exec', mbean: mbean, operation: 'listTypeConverters' }, Core.onSuccess(onConverters));
-            }
-        }
-        // load converters
-        loadConverters();
-    }]);
-})(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/**
- * @module Karaf
- * @main Karaf
- */
-var Karaf;
-(function (Karaf) {
-    var pluginName = 'karaf';
-    //export var _module = angular.module(pluginName, ['bootstrap', 'ngResource', 'hawtio-core']);
-    Karaf._module = angular.module(pluginName, ['ngResource', 'hawtio-core']);
-    Karaf._module.config(["$routeProvider", function ($routeProvider) {
-        $routeProvider.when('/osgi/server', { templateUrl: 'plugins/karaf/html/server.html' }).when('/osgi/features', { templateUrl: 'plugins/karaf/html/features.html', reloadOnSearch: false }).when('/osgi/scr-components', { templateUrl: 'plugins/karaf/html/scr-components.html' }).when('/osgi/scr-component/:name', { templateUrl: 'plugins/karaf/html/scr-component.html' }).when('/osgi/feature/:name/:version', { templateUrl: 'plugins/karaf/html/feature.html' });
-    }]);
-    Karaf._module.run(["workspace", "viewRegistry", "helpRegistry", function (workspace, viewRegistry, helpRegistry) {
-        helpRegistry.addUserDoc('karaf', 'plugins/karaf/doc/help.md', function () {
-            return workspace.treeContainsDomainAndProperties('org.apache.karaf');
-        });
-    }]);
-    hawtioPluginLoader.addModule(pluginName);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafPlugin.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.FeatureController", ["$scope", "jolokia", "workspace", "$routeParams", function ($scope, jolokia, workspace, $routeParams) {
-        $scope.hasFabric = Fabric.hasFabric(workspace);
-        $scope.name = $routeParams.name;
-        $scope.version = $routeParams.version;
-        $scope.bundlesByLocation = {};
-        $scope.props = "properties";
-        updateTableContents();
-        $scope.install = function () {
-            Karaf.installFeature(workspace, jolokia, $scope.name, $scope.version, function () {
-                Core.notification('success', 'Installed feature ' + $scope.name);
-            }, function (response) {
-                Core.notification('error', 'Failed to install feature ' + $scope.name + ' due to ' + response.error);
-            });
-        };
-        $scope.uninstall = function () {
-            Karaf.uninstallFeature(workspace, jolokia, $scope.name, $scope.version, function () {
-                Core.notification('success', 'Uninstalled feature ' + $scope.name);
-            }, function (response) {
-                Core.notification('error', 'Failed to uninstall feature ' + $scope.name + ' due to ' + response.error);
-            });
-        };
-        $scope.toProperties = function (elements) {
-            var answer = '';
-            angular.forEach(elements, function (value, name) {
-                answer += value['Key'] + " = " + value['Value'] + "\n";
-            });
-            return answer.trim();
-        };
-        function populateTable(response) {
-            $scope.row = Karaf.extractFeature(response.value, $scope.name, $scope.version);
-            if ($scope.row) {
-                addBundleDetails($scope.row);
-                var dependencies = [];
-                //TODO - if the version isn't set or is 0.0.0 then maybe we show the highest available?
-                angular.forEach($scope.row.Dependencies, function (version, name) {
-                    angular.forEach(version, function (data, version) {
-                        dependencies.push({
-                            Name: name,
-                            Version: version
-                        });
-                    });
-                });
-                $scope.row.Dependencies = dependencies;
-            }
-            //console.log("row: ", $scope.row);
-            Core.$apply($scope);
-        }
-        function setBundles(response) {
-            var bundleMap = {};
-            Osgi.defaultBundleValues(workspace, $scope, response.values);
-            angular.forEach(response.value, function (bundle) {
-                var location = bundle["Location"];
-                $scope.bundlesByLocation[location] = bundle;
-            });
-        }
-        ;
-        function updateTableContents() {
-            var featureMbean = Karaf.getSelectionFeaturesMBean(workspace);
-            var bundleMbean = Osgi.getSelectionBundleMBean(workspace);
-            var jolokia = workspace.jolokia;
-            if (bundleMbean) {
-                setBundles(jolokia.request({ type: 'exec', mbean: bundleMbean, operation: 'listBundles()' }));
-            }
-            if (featureMbean) {
-                jolokia.request({ type: 'read', mbean: featureMbean }, Core.onSuccess(populateTable));
-            }
-        }
-        function addBundleDetails(feature) {
-            var bundleDetails = [];
-            angular.forEach(feature["Bundles"], function (bundleLocation) {
-                var bundle = $scope.bundlesByLocation[bundleLocation];
-                if (bundle) {
-                    bundle["Installed"] = true;
-                    bundleDetails.push(bundle);
-                }
-                else {
-                    bundleDetails.push({
-                        "Location": bundleLocation,
-                        "Installed": false
-                    });
-                }
-            });
-            feature["BundleDetails"] = bundleDetails;
-        }
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafPlugin.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.FeaturesController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.hasFabric = Fabric.hasFabric(workspace);
-        $scope.responseJson = '';
-        $scope.filter = '';
-        $scope.installedFeatures = [];
-        $scope.features = [];
-        $scope.repositories = [];
-        $scope.selectedRepositoryId = '';
-        $scope.selectedRepository = {};
-        $scope.newRepositoryURI = '';
-        $scope.init = function () {
-            var selectedRepositoryId = $location.search()['repositoryId'];
-            if (selectedRepositoryId) {
-                $scope.selectedRepositoryId = selectedRepositoryId;
-            }
-            var filter = $location.search()['filter'];
-            if (filter) {
-                $scope.filter = filter;
-            }
-        };
-        $scope.init();
-        $scope.$watch('selectedRepository', function (newValue, oldValue) {
-            //log.debug("selectedRepository: ", $scope.selectedRepository);
-            if (newValue !== oldValue) {
-                if (!newValue) {
-                    $scope.selectedRepositoryId = '';
-                }
-                else {
-                    $scope.selectedRepositoryId = newValue['repository'];
-                }
-                $location.search('repositoryId', $scope.selectedRepositoryId);
-            }
-        }, true);
-        $scope.$watch('filter', function (newValue, oldValue) {
-            if (newValue !== oldValue) {
-                $location.search('filter', newValue);
-            }
-        });
-        var featuresMBean = Karaf.getSelectionFeaturesMBean(workspace);
-        Karaf.log.debug("Features mbean: ", featuresMBean);
-        if (featuresMBean) {
-            Core.register(jolokia, $scope, {
-                type: 'read',
-                mbean: featuresMBean
-            }, Core.onSuccess(render));
-        }
-        $scope.inSelectedRepository = function (feature) {
-            if (!$scope.selectedRepository || !('repository' in $scope.selectedRepository)) {
-                return "";
-            }
-            if (!feature || !('RepositoryName' in feature)) {
-                return "";
-            }
-            if (feature['RepositoryName'] === $scope.selectedRepository['repository']) {
-                return "in-selected-repository";
-            }
-            return "";
-        };
-        $scope.isValidRepository = function () {
-            return Core.isBlank($scope.newRepositoryURI);
-        };
-        $scope.installRepository = function () {
-            var repoURL = $scope.newRepositoryURI;
-            Core.notification('info', 'Adding feature repository URL');
-            Karaf.installRepository(workspace, jolokia, repoURL, function () {
-                Core.notification('success', 'Added feature repository URL');
-                $scope.selectedRepository = {};
-                $scope.selectedRepositoryId = '';
-                $scope.responseJson = null;
-                $scope.triggerRefresh();
-            }, function (response) {
-                Karaf.log.error('Failed to add feature repository URL ', repoURL, ' due to ', response.error);
-                Karaf.log.info('stack trace: ', response.stacktrace);
-                Core.$apply($scope);
-            });
-        };
-        $scope.uninstallRepository = function () {
-            var repoURI = $scope.selectedRepository['uri'];
-            Core.notification('info', 'Removing feature repository ' + repoURI);
-            Karaf.uninstallRepository(workspace, jolokia, repoURI, function () {
-                Core.notification('success', 'Removed feature repository ' + repoURI);
-                $scope.responseJson = null;
-                $scope.selectedRepositoryId = '';
-                $scope.selectedRepository = {};
-                $scope.triggerRefresh();
-            }, function (response) {
-                Karaf.log.error('Failed to remove feature repository ', repoURI, ' due to ', response.error);
-                Karaf.log.info('stack trace: ', response.stacktrace);
-                Core.$apply($scope);
-            });
-        };
-        $scope.triggerRefresh = function () {
-            jolokia.request({
-                type: 'read',
-                method: 'POST',
-                mbean: featuresMBean
-            }, Core.onSuccess(render));
-        };
-        $scope.install = function (feature) {
-            if ($scope.hasFabric) {
-                return;
-            }
-            //$('.popover').remove();
-            Core.notification('info', 'Installing feature ' + feature.Name);
-            Karaf.installFeature(workspace, jolokia, feature.Name, feature.Version, function () {
-                Core.notification('success', 'Installed feature ' + feature.Name);
-                $scope.installedFeatures.add(feature);
-                $scope.responseJson = null;
-                $scope.triggerRefresh();
-                //Core.$apply($scope);
-            }, function (response) {
-                Karaf.log.error('Failed to install feature ', feature.Name, ' due to ', response.error);
-                Karaf.log.info('stack trace: ', response.stacktrace);
-                Core.$apply($scope);
-            });
-        };
-        $scope.uninstall = function (feature) {
-            if ($scope.hasFabric) {
-                return;
-            }
-            //$('.popover').remove();
-            Core.notification('info', 'Uninstalling feature ' + feature.Name);
-            Karaf.uninstallFeature(workspace, jolokia, feature.Name, feature.Version, function () {
-                Core.notification('success', 'Uninstalled feature ' + feature.Name);
-                $scope.installedFeatures.remove(feature);
-                $scope.responseJson = null;
-                $scope.triggerRefresh();
-                //Core.$apply($scope);
-            }, function (response) {
-                Karaf.log.error('Failed to uninstall feature ', feature.Name, ' due to ', response.error);
-                Karaf.log.info('stack trace: ', response.stacktrace);
-                Core.$apply($scope);
-            });
-        };
-        $scope.filteredRows = ['Bundles', 'Configurations', 'Configuration Files', 'Dependencies'];
-        $scope.showRow = function (key, value) {
-            if ($scope.filteredRows.any(key)) {
-                return false;
-            }
-            if (angular.isArray(value)) {
-                if (value.length === 0) {
-                    return false;
-                }
-            }
-            if (angular.isString(value)) {
-                if (Core.isBlank(value)) {
-                    return false;
-                }
-            }
-            if (angular.isObject(value)) {
-                if (!value || angular.equals(value, {})) {
-                    return false;
-                }
-            }
-            return true;
-        };
-        $scope.installed = function (installed) {
-            var answer = Core.parseBooleanValue(installed);
-            return answer;
-        };
-        $scope.showValue = function (value) {
-            if (angular.isArray(value)) {
-                var answer = ['<ul class="zebra-list">'];
-                value.forEach(function (v) {
-                    answer.push('<li>' + v + '</li>');
-                });
-                answer.push('</ul>');
-                return answer.join('\n');
-            }
-            if (angular.isObject(value)) {
-                var answer = ['<table class="table">', '<tbody>'];
-                angular.forEach(value, function (value, key) {
-                    answer.push('<tr>');
-                    answer.push('<td>' + key + '</td>');
-                    answer.push('<td>' + value + '</td>');
-                    answer.push('</tr>');
-                });
-                answer.push('</tbody>');
-                answer.push('</table>');
-                return answer.join('\n');
-            }
-            return "" + value;
-        };
-        $scope.getStateStyle = function (feature) {
-            if (Core.parseBooleanValue(feature.Installed)) {
-                return "badge badge-success";
-            }
-            return "badge";
-        };
-        $scope.filterFeature = function (feature) {
-            if (Core.isBlank($scope.filter)) {
-                return true;
-            }
-            if (feature.Id.has($scope.filter)) {
-                return true;
-            }
-            return false;
-        };
-        function render(response) {
-            var responseJson = angular.toJson(response.value);
-            if ($scope.responseJson !== responseJson) {
-                $scope.responseJson = responseJson;
-                //log.debug("Got response: ", response.value);
-                if (response['value']['Features'] === null) {
-                    $scope.featuresError = true;
-                }
-                else {
-                    $scope.featuresError = false;
-                }
-                $scope.features = [];
-                $scope.repositories = [];
-                var features = [];
-                var repositories = [];
-                Karaf.populateFeaturesAndRepos(response.value, features, repositories);
-                var installedFeatures = features.filter(function (f) {
-                    return Core.parseBooleanValue(f.Installed);
-                });
-                var uninstalledFeatures = features.filter(function (f) {
-                    return !Core.parseBooleanValue(f.Installed);
-                });
-                //log.debug("repositories: ", repositories);
-                $scope.installedFeatures = installedFeatures.sortBy(function (f) {
-                    return f['Name'];
-                });
-                uninstalledFeatures = uninstalledFeatures.sortBy(function (f) {
-                    return f['Name'];
-                });
-                repositories.sortBy('id').forEach(function (repo) {
-                    $scope.repositories.push({
-                        repository: repo['id'],
-                        uri: repo['uri'],
-                        features: uninstalledFeatures.filter(function (f) {
-                            return f['RepositoryName'] === repo['id'];
-                        })
-                    });
-                });
-                if (!Core.isBlank($scope.newRepositoryURI)) {
-                    var selectedRepo = repositories.find(function (r) {
-                        return r['uri'] === $scope.newRepositoryURI;
-                    });
-                    if (selectedRepo) {
-                        $scope.selectedRepositoryId = selectedRepo['id'];
-                    }
-                    $scope.newRepositoryURI = '';
-                }
-                if (Core.isBlank($scope.selectedRepositoryId)) {
-                    $scope.selectedRepository = $scope.repositories.first();
-                }
-                else {
-                    $scope.selectedRepository = $scope.repositories.find(function (r) {
-                        return r.repository === $scope.selectedRepositoryId;
-                    });
-                }
-                Core.$apply($scope);
-            }
-        }
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/// <reference path="karafPlugin.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.NavBarController", ["$scope", "workspace", function ($scope, workspace) {
-        $scope.hash = workspace.hash();
-        $scope.isKarafEnabled = workspace.treeContainsDomainAndProperties("org.apache.karaf");
-        $scope.isFeaturesEnabled = Karaf.getSelectionFeaturesMBean(workspace);
-        $scope.isScrEnabled = Karaf.getSelectionScrMBean(workspace);
-        $scope.$on('$routeChangeSuccess', function () {
-            $scope.hash = workspace.hash();
-        });
-        $scope.isActive = function (nav) {
-            return workspace.isLinkActive(nav);
-        };
-        $scope.isPrefixActive = function (nav) {
-            return workspace.isLinkPrefixActive(nav);
-        };
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/// <reference path="karafPlugin.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.ScrComponentController", ["$scope", "$location", "workspace", "jolokia", "$routeParams", function ($scope, $location, workspace, jolokia, $routeParams) {
-        $scope.name = $routeParams.name;
-        populateTable();
-        function populateTable() {
-            $scope.row = Karaf.getComponentByName(workspace, jolokia, $scope.name);
-            Core.$apply($scope);
-        }
-        $scope.activate = function () {
-            Karaf.activateComponent(workspace, jolokia, $scope.row['Name'], function () {
-                console.log("Activated!");
-            }, function () {
-                console.log("Failed to activate!");
-            });
-        };
-        $scope.deactivate = function () {
-            Karaf.deactivateComponent(workspace, jolokia, $scope.row['Name'], function () {
-                console.log("Deactivated!");
-            }, function () {
-                console.log("Failed to deactivate!");
-            });
-        };
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/// <reference path="karafPlugin.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.ScrComponentsController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.component = empty();
-        // caches last jolokia result
-        $scope.result = [];
-        // rows in components table
-        $scope.components = [];
-        // selected components
-        $scope.selectedComponents = [];
-        $scope.scrOptions = {
-            //plugins: [searchProvider],
-            data: 'components',
-            showFilter: false,
-            showColumnMenu: false,
-            filterOptions: {
-                useExternalFilter: false
-            },
-            sortInfo: { fields: ['Name'], directions: ['asc'] },
-            selectedItems: $scope.selectedComponents,
-            rowHeight: 32,
-            selectWithCheckboxOnly: true,
-            columnDefs: [
-                {
-                    field: 'Name',
-                    displayName: 'Name',
-                    cellTemplate: '<div class="ngCellText"><a href="#/osgi/scr-component/{{row.entity.Name}}?p=container">{{row.getProperty(col.field)}}</a></div>',
-                    width: 400
-                },
-                {
-                    field: 'State',
-                    displayName: 'State',
-                    cellTemplate: '<div class="ngCellText">{{row.getProperty(col.field)}}</div>',
-                    width: 200
-                }
-            ]
-        };
-        var scrMBean = Karaf.getSelectionScrMBean(workspace);
-        if (scrMBean) {
-            render(Karaf.getAllComponents(workspace, jolokia));
-        }
-        $scope.activate = function () {
-            $scope.selectedComponents.forEach(function (component) {
-                Karaf.activateComponent(workspace, jolokia, component.Name, function () {
-                    console.log("Activated!");
-                }, function () {
-                    console.log("Failed to activate!");
-                });
-            });
-        };
-        $scope.deactivate = function () {
-            $scope.selectedComponents.forEach(function (component) {
-                Karaf.deactivateComponent(workspace, jolokia, component.Name, function () {
-                    console.log("Deactivated!");
-                }, function () {
-                    console.log("Failed to deactivate!");
-                });
-            });
-        };
-        function empty() {
-            return [
-                { Name: "", Status: false }
-            ];
-        }
-        function render(components) {
-            if (!angular.equals($scope.result, components)) {
-                $scope.components = components;
-                $scope.result = $scope.components;
-                Core.$apply($scope);
-            }
-        }
-    }]);
-})(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="karafHelpers.ts"/>
-/// <reference path="karafPlugin.ts"/>
-/**
- * @module Karaf
- */
-var Karaf;
-(function (Karaf) {
-    Karaf._module.controller("Karaf.ServerController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.data = {
-            name: "",
-            version: "",
-            state: "",
-            root: "",
-            startLevel: "",
-            framework: "",
-            frameworkVersion: "",
-            location: "",
-            sshPort: "",
-            rmiRegistryPort: "",
-            rmiServerPort: "",
-            pid: ""
-        };
-        $scope.$on('jmxTreeUpdated', reloadFunction);
-        $scope.$watch('workspace.tree', reloadFunction);
-        function reloadFunction() {
-            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
-            // so lets reload, asynchronously just in case
-            setTimeout(loadData, 50);
-        }
-        function loadData() {
-            console.log("Loading Karaf data...");
-            jolokia.search("org.apache.karaf:type=admin,*", Core.onSuccess(render));
-        }
-        function render(response) {
-            // grab the first mbean as there should ideally only be one karaf in the JVM
-            if (angular.isArray(response)) {
-                var mbean = response[0];
-                if (mbean) {
-                    jolokia.getAttribute(mbean, "Instances", Core.onSuccess(function (response) {
-                        onInstances(response, mbean);
-                    }));
-                }
-            }
-        }
-        function onInstances(instances, mbean) {
-            if (instances) {
-                var parsedMBean = Core.parseMBean(mbean);
-                var instanceName = 'root';
-                if ('attributes' in parsedMBean) {
-                    if ('name' in parsedMBean['attributes']) {
-                        instanceName = parsedMBean['attributes']['name'];
-                    }
-                }
-                //log.debug("mbean: ", Core.parseMBean(mbean));
-                //log.debug("Instances: ", instances);
-                // the name is the first child
-                var rootInstance = instances[instanceName];
-                $scope.data.name = rootInstance.Name;
-                $scope.data.state = rootInstance.State;
-                $scope.data.root = rootInstance["Is Root"];
-                $scope.data.location = rootInstance.Location;
-                $scope.data.sshPort = rootInstance["SSH Port"];
-                $scope.data.rmiRegistryPort = rootInstance["RMI Registry Port"];
-                $scope.data.rmiServerPort = rootInstance["RMI Server Port"];
-                $scope.data.pid = rootInstance.Pid;
-                // we need to get these data from the system mbean
-                $scope.data.version = "?";
-                $scope.data.startLevel = "?";
-                $scope.data.framework = "?";
-                $scope.data.frameworkVersion = "?";
-                var systemMbean = "org.apache.karaf:type=system,name=" + rootInstance.Name;
-                // get more data, and its okay to do this synchronously
-                var response = jolokia.request({ type: "read", mbean: systemMbean, attribute: ["StartLevel", "Framework", "Version"] }, Core.onSuccess(null));
-                var obj = response.value;
-                if (obj) {
-                    $scope.data.version = obj.Version;
-                    $scope.data.startLevel = obj.StartLevel;
-                    $scope.data.framework = obj.Framework;
-                }
-                // and the osgi framework version is the bundle version
-                var response2 = jolokia.search("osgi.core:type=bundleState,*", Core.onSuccess(null));
-                if (angular.isArray(response2)) {
-                    var mbean = response2[0];
-                    if (mbean) {
-                        // get more data, and its okay to do this synchronously
-                        var response3 = jolokia.request({ type: 'exec', mbean: mbean, operation: 'getVersion(long)', arguments: [0] }, Core.onSuccess(null));
-                        var obj3 = response3.value;
-                        if (obj3) {
-                            $scope.data.frameworkVersion = obj3;
-                        }
-                    }
-                }
-            }
-            // ensure web page is updated
-            Core.$apply($scope);
-        }
-    }]);
-})(Karaf || (Karaf = {}));
-
 angular.module("hawtio-wiki-templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("plugins/activemq/html/brokerDiagram.html","<style type=\"text/css\">\n\n.col-md-4.node-panel {\n  margin-top: 10px;\n  margin-left: 10px;\n  width: 33%;\n}\n.node-attributes dl {\n  margin-top: 5px;\n  margin-bottom: 10px;\n}\n.node-attributes dt {\n  width: 150px;\n}\n.node-attributes dd {\n  margin-left: 160px;\n}\n.node-attributes dd a {\n  /** lets make the destination links wrap */\n  -ms-word-break: break-all;\n  word-break: break-all;\n  -webkit-hyphens: auto;\n  -moz-hyphens: auto;\n  hyphens: auto;\n}\n\nul.viewMenu li {\n  padding-left: 10px;\n  padding-top: 2px;\n  padding-bottom: 2px;\n}\n\ndiv#pop-up {\n  display: none;\n  position: absolute;\n  color: white;\n  font-size: 14px;\n  background: rgba(0, 0, 0, 0.6);\n  padding: 5px 10px 5px 10px;\n  -moz-border-radius: 8px 8px;\n  border-radius: 8px 8px;\n}\n\ndiv#pop-up-title {\n  font-size: 15px;\n  margin-bottom: 4px;\n  font-weight: bolder;\n}\n\ndiv#pop-up-content {\n  font-size: 12px;\n}\n\nrect.graphbox {\n  fill: #FFF;\n}\n\nrect.graphbox.frame {\n  stroke: #222;\n  stroke-width: 2px\n}\n\n/* only things directly related to the network graph should be here */\n\npath.link {\n  fill: none;\n  stroke: #666;\n  stroke-width: 1.5px;  b\n}\n\nmarker.broker {\n  stroke: red;\n  fill: red;\n  stroke-width: 1.5px;\n}\n\ncircle.broker {\n  fill: #0c0;\n}\n\ncircle.brokerSlave {\n  fill: #c00;\n}\n\ncircle.notActive {\n  fill: #c00;\n}\n\npath.link.group {\n  stroke: #ccc;\n}\n\nmarker#group {\n  stroke: #ccc;\n  fill: #ccc;\n}\n\ncircle.group {\n  fill: #eee;\n  stroke: #ccc;\n}\n\ncircle.destination {\n  fill: #bbb;\n  stroke: #ccc;\n}\n\ncircle.pinned {\n  stroke-width: 4.5px;\n}\n\npath.link.profile {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\nmarker#container {\n}\n\ncircle.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\npath.link.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\ncircle {\n  fill: #ccc;\n  stroke: #333;\n  stroke-width: 1.5px;\n  cursor: pointer;\n}\n\ncircle.closeMode {\n  cursor: crosshair;\n}\n\npath.link.destination {\n  stroke: #ccc;\n}\n\ncircle.topic {\n  fill: #c0c;\n}\n\ncircle.queue {\n  fill: #00c;\n}\n\ncircle.consumer {\n  fill: #cfc;\n}\n\ncircle.producer {\n  fill: #ccf;\n}\n\npath.link.producer {\n  stroke: #ccc;\n}\n\npath.link.consumer {\n  stroke: #ccc;\n}\n\npath.link.network {\n  stroke: #ccc;\n}\n\ncircle.selected {\n  stroke-width: 3px;\n}\n\n.selected {\n  stroke-width: 3px;\n}\n\ntext {\n  font: 10px sans-serif;\n  pointer-events: none;\n}\n\ntext.shadow {\n  stroke: #fff;\n  stroke-width: 3px;\n  stroke-opacity: .8;\n}\n</style>\n\n\n<div class=\"row mq-page\" ng-controller=\"ActiveMQ.BrokerDiagramController\">\n\n  <div ng-hide=\"inDashboard\" class=\"col-md-12 page-padded\">\n    <div class=\"section-header\">\n\n      <div class=\"section-filter\">\n        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"searchFilter\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"searchFilter = \'\'\"></i>\n      </div>\n\n      <div class=\"section-controls\">\n        <a href=\"#\"\n           class=\"dropdown-toggle\"\n           data-toggle=\"dropdown\">\n          View &nbsp;<i class=\"fa fa-caret-down\"></i>\n        </a>\n\n        <ul class=\"dropdown-menu viewMenu\">\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.consumer\"> Consumers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.producer\"> Producers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.queue\"> Queues\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.topic\"> Topics\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.group\"> Broker groups\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.profile\"> Profiles\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.broker\"> Brokers\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.slave\"> Slave brokers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.network\"> Networks\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.container\"> Containers\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li title=\"Should we show the details panel on the left\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.panel\"> Details panel\n            </label>\n          </li>\n          <li title=\"Show the summary popup as you hover over nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.popup\"> Hover text\n            </label>\n          </li>\n          <li title=\"Show the labels next to nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.label\"> Label\n            </label>\n          </li>\n        </ul>\n\n        <a ng-show=\"isFmc\" ng-href=\"#/fabric/mq/brokers{{hash}}\" title=\"View the broker and container diagram\">\n          <i class=\"fa fa-edit\"></i> Configuration\n        </a>\n      </div>\n    </div>\n  </div>\n\n\n  <div id=\"pop-up\">\n    <div id=\"pop-up-title\"></div>\n    <div id=\"pop-up-content\"></div>\n  </div>\n\n  <div class=\"row\">\n    <div class=\"{{viewSettings.panel ? \'col-md-8\' : \'col-md-12\'}} canvas broker-canvas\">\n      <div hawtio-force-graph graph=\"graph\" selected-model=\"selectedNode\" link-distance=\"150\" charge=\"-600\" nodesize=\"10\" marker-kind=\"marker-end\"\n           style=\"min-height: 800px\">\n      </div>\n    </div>\n    <div ng-show=\"viewSettings.panel\" class=\"col-md-4 node-panel\">\n      <div ng-show=\"selectedNode\" class=\"node-attributes\">\n        <dl ng-repeat=\"property in selectedNodeProperties\" class=\"dl-horizontal\">\n          <dt title=\"{{property.key}}\">{{property.key}}:</dt>\n          <dd ng-bind-html-unsafe=\"property.value\"></dd>\n        </dl>\n      </div>\n    </div>\n  </div>\n\n  <!--\n  <div ng-include=\"\'plugins/fabric/html/connectToContainerDialog.html\'\"></div>\n  -->\n\n</div>\n\n\n");
 $templateCache.put("plugins/activemq/html/browseQueue.html","<div ng-controller=\"ActiveMQ.BrowseQueueController\">\n  <div class=\"row\">\n    <div class=\"col-md-6\">\n      <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n             placeholder=\"Filter messages\">\n    </div>\n    <div class=\"col-md-6\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline\">\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-show=\"dlq\" ng-click=\"retryMessages()\"\n                  title=\"Moves the dead letter queue message back to its original destination so it can be retried\" data-placement=\"bottom\">\n            <i class=\"fa fa-reply\"></i> Retry\n          </button>\n          <button class=\"btn\" ng-disabled=\"gridOptions.selectedItems.length !== 1\" ng-click=\"resendMessage()\"\n                    title=\"Edit the message to resend it\" data-placement=\"bottom\">\n           <i class=\"fa fa-share-alt\"></i> Resend\n          </button>\n\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                  title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n            <i class=\"fa fa-share-alt\"></i> Move\n          </button>\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                  ng-click=\"deleteDialog = true\"\n                  title=\"Delete the selected messages\">\n            <i class=\"fa fa-remove\"></i> Delete\n          </button>\n          <button class=\"btn\" ng-click=\"refresh()\"\n                  title=\"Refreshes the list of messages\">\n            <i class=\"fa fa-refresh\"></i>\n          </button>\n        </form>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row\">\n    <table class=\"table table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n  </div>\n\n  <div hawtio-slideout=\"showMessageDetails\" title=\"{{row.JMSMessageID}}\">\n    <div class=\"dialog-body\">\n\n      <div class=\"row\">\n        <div class=\"pull-right\">\n          <form class=\"form-horizontal no-bottom-margin\">\n\n            <div class=\"btn-group\"\n                 hawtio-pager=\"messages\"\n                 on-index-change=\"selectRowIndex\"\n                 row-index=\"rowIndex\"></div>\n\n            <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                    title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n              <i class=\"fa fa-share-alt\"></i> Move\n            </button>\n\n            <button class=\"btn btn-danger\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                    ng-click=\"deleteDialog = true\"\n                    title=\"Delete the selected messages\">\n              <i class=\"fa fa-remove\"></i> Delete\n            </button>\n\n            <button class=\"btn\" ng-click=\"showMessageDetails = !showMessageDetails\" title=\"Close this dialog\">\n              <i class=\"fa fa-remove\"></i> Close\n            </button>\n\n          </form>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div class=\"expandable closed\">\n          <div title=\"Headers\" class=\"title\">\n            <i class=\"expandable-indicator\"></i> Headers & Properties\n          </div>\n          <div class=\"expandable-body well\">\n            <table class=\"table table-condensed table-striped\">\n              <thead>\n              <tr>\n                <th>Header</th>\n                <th>Value</th>\n              </tr>\n              </thead>\n              <tbody ng-bind-html=\"row.headerHtml\">\n              </tbody>\n              <!--\n                            <tr ng-repeat=\"(key, value) in row.headers\">\n                              <td class=\"property-name\">{{key}}</td>\n                              <td class=\"property-value\">{{value}}</td>\n                            </tr>\n              -->\n            </table>\n          </div>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div>Displaying body as <span ng-bind=\"row.textMode\"></span></div>\n        <div hawtio-editor=\"row.bodyText\" read-only=\"true\" mode=\'mode\'></div>\n      </div>\n\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"deleteDialog\"\n       ok-button-text=\"Delete\"\n       on-ok=\"deleteMessages()\">\n    <div class=\"dialog-body\">\n      <p>You are about to delete\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'a message!\', \'other\': \'{} messages!\'}\">\n        </ng-pluralize>\n      </p>\n      <p>This operation cannot be undone so please be careful.</p>\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"moveDialog\"\n       ok-button-text=\"Move\"\n       on-ok=\"moveMessages()\">\n    <div class=\"dialog-body\">\n      <p>Move\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'{} messages\'}\"></ng-pluralize>\n        to: <input type=\"text\" ng-model=\"queueName\" placeholder=\"Queue name\"\n                   typeahead=\"title.unescapeHTML() for title in queueNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'></p>\n      <p>\n        You cannot undo this operation.<br>\n        Though after the move you can always move the\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'messages\'}\"></ng-pluralize>\n        back again.\n      </p>\n    </div>\n  </div>\n\n</div>\n\n");
 $templateCache.put("plugins/activemq/html/createDestination.html","<form class=\"form-horizontal\" ng-controller=\"ActiveMQ.DestinationController\">\n  <fieldset>\n    <div class=\"control-group\">\n      <label class=\"pull-left\" style=\"margin-top:5px;\"> {{destinationTypeName}} name:</label>\n      <input class=\"col-md-10 pull-left\"  type=\"text\" size=\"60\" style=\"margin-left:15px;\" maxlength=\"300\" name=\"destinationName\" ng-model=\"destinationName\" placeholder=\"{{destinationTypeName}} name\"/>\n    </div>\n    <div class=\"alert alert-warning\">\n        The JMS API does not define a standard address syntax. Although a standard address syntax was considered, it was decided that the differences in address semantics between existing message-oriented middleware (MOM) products were too wide to bridge with a single syntax.\n    </div>\n\n    <div class=\"control-group\">\n      <label class=\"checkbox\">\n        <input type=\"radio\" ng-model=\"queueType\" value=\"true\"> Queue\n      </label>\n      <label class=\"checkbox\">\n        <input type=\"radio\" ng-model=\"queueType\" value=\"\"> Topic\n      </label>\n    </div>\n\n    <div class=\"control-group\">\n      <button type=\"submit\" class=\"btn btn-info\" ng-click=\"createDestination(destinationName, queueType)\"\n              ng-disabled=\"!destinationName\">Create {{destinationTypeName}}\n      </button>\n    </div>\n  </fieldset>\n</form>\n");
@@ -17633,9 +17635,9 @@ $templateCache.put("plugins/activemq/html/preferences.html","<div ng-controller=
 $templateCache.put("plugins/camel/html/attributeToolBarContext.html","<div class=\"row\">\n  <div class=\"col-md-6\" ng-controller=\"Camel.AttributesToolBarController\">\n    <div class=\"control-group\">\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'stop\', \'suspend\'])\" ng-click=\"start()\"><i\n              class=\"fa fa-play-circle\"></i> Start\n      </button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState(\'start\')\" ng-click=\"pause()\"><i class=\"fa fa-pause\"></i>\n        Pause\n      </button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'start\', \'suspend\'])\" ng-click=\"deleteDialog = true\"><i\n              class=\"fa fa-remove\"></i> Destroy\n      </button>\n    </div>\n\n    <div hawtio-confirm-dialog=\"deleteDialog\"\n         ok-button-text=\"Delete\"\n         on-ok=\"stop()\">\n      <div class=\"dialog-body\">\n        <p>You are about to delete this Camel Context.</p>\n        <p>This operation cannot be undone so please be careful.</p>\n      </div>\n    </div>\n\n  </div>\n  <div class=\"col-md-6\">\n    <div class=\"control-group\">\n      <input class=\"col-md-12 search-query\" type=\"text\" ng-model=\"$parent.gridOptions.filterOptions.filterText\" placeholder=\"Filter...\">\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/attributeToolBarRoutes.html","<div class=\"row\">\n  <div class=\"col-md-6\">\n    <div class=\"control-group\"  ng-controller=\"Camel.AttributesToolBarController\">\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'stop\', \'suspend\'])\" ng-click=\"start()\"><i class=\"fa fa-play-circle\"></i> Start</button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState(\'start\')\" ng-click=\"pause()\"><i class=\"fa fa-pause\"></i> Pause</button>\n      <button class=\"btn\" ng-disabled=\"!anySelectionHasState([\'start\', \'suspend\'])\" ng-click=\"stop()\"><i class=\"fa fa-off\"></i> Stop</button>\n      <button class=\"btn\" ng-disabled=\"!everySelectionHasState(\'stop\')\" ng-click=\"delete()\"><i class=\"fa fa-remove\"></i> Delete</button>\n    </div>\n  </div>\n  <div class=\"col-md-6\">\n    <div class=\"control-group\">\n      <input type=\"text\" class=\"col-md-12 search-query\" ng-model=\"$parent.gridOptions.filterOptions.filterText\" placeholder=\"Filter...\">\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/breadcrumbBar.html","<div ng-hide=\"inDashboard\" class=\"logbar logbar-wiki\" ng-controller=\"Camel.BreadcrumbBarController\">\n  <div class=\"wiki logbar-container\">\n    <ul class=\"nav nav-tabs\">\n      <li class=\"\" >\n        <a class=\"breadcrumb-link\">\n          <span class=\"contained c-medium\">Camel Contexts</span>\n        </a>\n      </li>\n        <li class=\"dropdown\" ng-repeat=\"breadcrumb in breadcrumbs\">\n          <a ng-show=\"breadcrumb.items.length > 0\" href=\"#\" class=\"breadcrumb-link dropdown-toggle\" data-toggle=\"dropdown\"\n             data-placement=\"bottom\" title=\"{{breadcrumb.tooltip}}\">\n            {{breadcrumb.name}}\n            <span class=\"caret\"></span>\n          </a>\n          <ul class=\"dropdown-menu\">\n            <li ng-repeat=\"item in breadcrumb.items\">\n              <a ng-href=\"{{item.link}}{{hash}}\"\n                 title=\"Switch to {{item.name}} \"\n                 data-placement=\"bottom\">\n                {{item.name}}</a>\n            </li>\n          </ul>\n        </li>\n      <li class=\"pull-right\" ng-show=\"treeViewLink\" title=\"Switch to the tree based explorer view\">\n        <a href=\"{{treeViewLink}}\"><i class=\"fa fa-resize-full\"></i></a>\n      </li>\n      </ul>\n  </div>\n</div>\n");
-$templateCache.put("plugins/camel/html/browseEndpoint.html","<div ng-controller=\"Camel.BrowseEndpointController\">\n  <div ng-hide=\"isJmxTab\">\n    <ng-include src=\"\'plugins/camel/html/breadcrumbBar.html\'\"></ng-include>\n  </div>\n  <div ng-class=\"{\'wiki-fixed\' : !isJmxTab}\">\n    <div class=\"row\">\n      <div class=\"col-md-6\">\n        <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n               placeholder=\"Filter messages\">\n      </div>\n      <div class=\"col-md-6\">\n        <div class=\"pull-right\">\n          <form class=\"form-inline\">\n            <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"forwardDialog.open()\"\n                    hawtio-show object-name=\"{{workspace.selection.objectName}}\" method-name=\"sendBodyAndHeaders\"\n                    title=\"Forward the selected messages to another endpoint\" data-placement=\"bottom\">\n              <i class=\"fa fa-forward\"></i> Forward\n            </button>\n            <button class=\"btn\" ng-click=\"refresh()\"\n                    title=\"Refreshes the list of messages\">\n              <i class=\"fa fa-refresh\"></i>\n            </button>\n          </form>\n        </div>\n      </div>\n    </div>\n\n\n    <div class=\"row\">\n      <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n    </div>\n\n    <div hawtio-slideout=\"showMessageDetails\" title=\"{{row.id}}\">\n      <div class=\"dialog-body\">\n\n        <div class=\"row\">\n          <div class=\"pull-right\">\n            <form class=\"form-horizontal no-bottom-margin\">\n              <div class=\"btn-group\" hawtio-pager=\"messages\" on-index-change=\"selectRowIndex\"\n                   row-index=\"rowIndex\"></div>\n              <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"forwardDialog.open()\"\n                      hawtio-show object-name=\"{{workspace.selection.objectName}}\" method-name=\"sendBodyAndHeaders\"\n                      title=\"Forward the selected messages to another endpoint\" data-placement=\"bottom\">\n                <i class=\"fa fa-forward\"></i> Forward\n              </button>\n              <button class=\"btn\" ng-click=\"showMessageDetails = !showMessageDetails\" title=\"Close this dialog\">\n                <i class=\"fa fa-remove\"></i> Close\n              </button>\n            </form>\n          </div>\n        </div>\n\n        <div class=\"row\">\n          <div class=\"expandable closed\">\n            <div title=\"Headers\" class=\"title\">\n              <i class=\"expandable-indicator\"></i> Headers\n            </div>\n            <div class=\"expandable-body well\">\n              <table class=\"table table-condensed table-striped\">\n                <thead>\n                <tr>\n                  <th>Header</th>\n                  <th>Value</th>\n                </tr>\n                </thead>\n                <tbody ng-bind-html-unsafe=\"row.headerHtml\">\n                </tbody>\n              </table>\n            </div>\n          </div>\n\n          <div class=\"row\">\n            <div hawtio-editor=\"row.body\" read-only=\"true\" mode=\"mode\"></div>\n          </div>\n\n        </div>\n\n      </div>\n    </div>\n  </div>\n\n  <div modal=\"forwardDialog.show\" close=\"forwardDialog.close()\" options=\"forwardDialog.options\">\n    <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"forwardDialog.close()\">\n      <div class=\"modal-header\">\n        <h4>Forward\n          <ng-pluralize count=\"selectedItems.length\"\n                        when=\"{\'1\': \'a message\', \'other\': \'messages\'}\"></ng-pluralize>\n        </h4>\n      </div>\n      <div class=\"modal-body\">\n        <p>Forward\n          <ng-pluralize count=\"selectedItems.length\"\n                        when=\"{\'1\': \'a message\', \'other\': \'{} messages\'}\"></ng-pluralize>\n          to: <input type=\"text\" style=\"width: 100%\" ng-model=\"endpointUri\" placeholder=\"Endpoint URI\"\n                     typeahead=\"title for title in endpointUris() | filter:$viewValue\" typeahead-editable=\'true\'></p>\n      </div>\n      <div class=\"modal-footer\">\n        <input id=\"submit\" class=\"btn btn-primary add\" type=\"submit\" ng-click=\"forwardMessagesAndCloseForwardDialog()\"\n               value=\"Forward\">\n        <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"forwardDialog.close()\">Cancel</button>\n      </div>\n    </form>\n  </div>\n</div>\n");
-$templateCache.put("plugins/camel/html/browseMessages.html","<div ng-switch=\"messageDialog.show\">\n  <div ng-switch-when=\"false\">\n    <div class=\"row\">\n      <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n      <!--\n          <div class=\"gridStyle\" hawtio-datatable=\"gridOptions\"></div>\n      -->\n    </div>\n  </div>\n  <div ng-switch-when=\"true\">\n    <div class=\"row\">\n      <div class=\"col-md-8\">\n        <h4>{{row.id}}</h4>\n      </div>\n      <div class=\"pull-right\">\n        <form class=\"form-horizontal no-bottom-margin\">\n          <div class=\"btn-group\" hawtio-pager=\"messages\" on-index-change=\"selectRowIndex\" row-index=\"rowIndex\"></div>\n          <button class=\"btn\" ng-click=\"messageDialog.close()\" title=\"Closes the message detail view\">\n            <i class=\"fa fa-eject\"></i></button>\n        </form>\n      </div>\n    </div>\n    <div class=\"row\">\n      <div class=\"expandable closed\">\n        <div title=\"Headers\" class=\"title\">\n          <i class=\"expandable-indicator\"></i> Headers\n        </div>\n        <div class=\"expandable-body well\">\n          <table class=\"table table-condensed table-striped\">\n            <thead>\n            <tr>\n              <th>Header</th>\n              <th>Type</th>\n              <th>Value</th>\n            </tr>\n            </thead>\n            <tbody ng-bind-html-unsafe=\"row.headerHtml\">\n            </tbody>\n          </table>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div title=\"Body\" class=\"title\">\n          Body (type: {{row.bodyType}})\n        </div>\n        <div hawtio-editor=\"row.body\" read-only=\"true\" mode=\"mode\" text-title=\"row.bodyType\"></div>\n      </div>\n\n    </div>\n  </div>\n</div>\n");
-$templateCache.put("plugins/camel/html/browseRoute.html","<ng-include src=\"\'plugins/camel/html/browseMessageTemplate.html\'\"></ng-include>\n\n<div class=\"row\">\n  <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n  <!--\n      <div class=\"gridStyle\" hawtio-datatable=\"gridOptions\"></div>\n  -->\n</div>");
+$templateCache.put("plugins/camel/html/browseEndpoint.html","<div ng-controller=\"Camel.BrowseEndpointController\">\n  <div ng-hide=\"isJmxTab\">\n    <ng-include src=\"\'plugins/camel/html/breadcrumbBar.html\'\"></ng-include>\n  </div>\n  <div ng-class=\"{\'wiki-fixed\' : !isJmxTab}\">\n    <div class=\"row\">\n      <div class=\"col-md-6\">\n        <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n               placeholder=\"Filter messages\">\n      </div>\n      <div class=\"col-md-6\">\n        <div class=\"pull-right\">\n          <form class=\"form-inline\">\n            <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"forwardDialog.open()\"\n                    hawtio-show object-name=\"{{workspace.selection.objectName}}\" method-name=\"sendBodyAndHeaders\"\n                    title=\"Forward the selected messages to another endpoint\" data-placement=\"bottom\">\n              <i class=\"fa fa-forward\"></i> Forward\n            </button>\n            <button class=\"btn\" ng-click=\"refresh()\"\n                    title=\"Refreshes the list of messages\">\n              <i class=\"fa fa-refresh\"></i>\n            </button>\n          </form>\n        </div>\n      </div>\n    </div>\n\n\n    <div class=\"row\">\n      <table class=\"table table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n    </div>\n\n    <div hawtio-slideout=\"showMessageDetails\" title=\"{{row.id}}\">\n      <div class=\"dialog-body\">\n\n        <div class=\"row\">\n          <div class=\"pull-right\">\n            <form class=\"form-horizontal no-bottom-margin\">\n              <div class=\"btn-group\" hawtio-pager=\"messages\" on-index-change=\"selectRowIndex\"\n                   row-index=\"rowIndex\"></div>\n              <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"forwardDialog.open()\"\n                      hawtio-show object-name=\"{{workspace.selection.objectName}}\" method-name=\"sendBodyAndHeaders\"\n                      title=\"Forward the selected messages to another endpoint\" data-placement=\"bottom\">\n                <i class=\"fa fa-forward\"></i> Forward\n              </button>\n              <button class=\"btn\" ng-click=\"showMessageDetails = !showMessageDetails\" title=\"Close this dialog\">\n                <i class=\"fa fa-remove\"></i> Close\n              </button>\n            </form>\n          </div>\n        </div>\n\n        <div class=\"row\">\n          <div class=\"expandable closed\">\n            <div title=\"Headers\" class=\"title\">\n              <i class=\"expandable-indicator\"></i> Headers\n            </div>\n            <div class=\"expandable-body well\">\n              <table class=\"table table-condensed table-striped\">\n                <thead>\n                <tr>\n                  <th>Header</th>\n                  <th>Value</th>\n                </tr>\n                </thead>\n                <tbody ng-bind-html-unsafe=\"row.headerHtml\">\n                </tbody>\n              </table>\n            </div>\n          </div>\n\n          <div class=\"row\">\n            <div hawtio-editor=\"row.body\" read-only=\"true\" mode=\"mode\"></div>\n          </div>\n\n        </div>\n\n      </div>\n    </div>\n  </div>\n\n  <div modal=\"forwardDialog.show\" close=\"forwardDialog.close()\" options=\"forwardDialog.options\">\n    <form class=\"form-horizontal no-bottom-margin\" ng-submit=\"forwardDialog.close()\">\n      <div class=\"modal-header\">\n        <h4>Forward\n          <ng-pluralize count=\"selectedItems.length\"\n                        when=\"{\'1\': \'a message\', \'other\': \'messages\'}\"></ng-pluralize>\n        </h4>\n      </div>\n      <div class=\"modal-body\">\n        <p>Forward\n          <ng-pluralize count=\"selectedItems.length\"\n                        when=\"{\'1\': \'a message\', \'other\': \'{} messages\'}\"></ng-pluralize>\n          to: <input type=\"text\" style=\"width: 100%\" ng-model=\"endpointUri\" placeholder=\"Endpoint URI\"\n                     typeahead=\"title for title in endpointUris() | filter:$viewValue\" typeahead-editable=\'true\'></p>\n      </div>\n      <div class=\"modal-footer\">\n        <input id=\"submit\" class=\"btn btn-primary add\" type=\"submit\" ng-click=\"forwardMessagesAndCloseForwardDialog()\"\n               value=\"Forward\">\n        <button class=\"btn btn-warning cancel\" type=\"button\" ng-click=\"forwardDialog.close()\">Cancel</button>\n      </div>\n    </form>\n  </div>\n</div>\n");
+$templateCache.put("plugins/camel/html/browseMessages.html","<div ng-switch=\"messageDialog.show\">\n  <div ng-switch-when=\"false\">\n    <div class=\"row\">\n      <table class=\"table table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n    </div>\n  </div>\n  <div ng-switch-when=\"true\">\n    <div class=\"row\">\n      <div class=\"col-md-8\">\n        <h4>{{row.id}}</h4>\n      </div>\n      <div class=\"pull-right\">\n        <form class=\"form-horizontal no-bottom-margin\">\n          <div class=\"btn-group\" hawtio-pager=\"messages\" on-index-change=\"selectRowIndex\" row-index=\"rowIndex\"></div>\n          <button class=\"btn\" ng-click=\"messageDialog.close()\" title=\"Closes the message detail view\">\n            <i class=\"fa fa-eject\"></i></button>\n        </form>\n      </div>\n    </div>\n    <div class=\"row\">\n      <div class=\"expandable closed\">\n        <div title=\"Headers\" class=\"title\">\n          <i class=\"expandable-indicator\"></i> Headers\n        </div>\n        <div class=\"expandable-body well\">\n          <table class=\"table table-condensed table-striped\">\n            <thead>\n            <tr>\n              <th>Header</th>\n              <th>Type</th>\n              <th>Value</th>\n            </tr>\n            </thead>\n            <tbody ng-bind-html-unsafe=\"row.headerHtml\">\n            </tbody>\n          </table>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div title=\"Body\" class=\"title\">\n          Body (type: {{row.bodyType}})\n        </div>\n        <div hawtio-editor=\"row.body\" read-only=\"true\" mode=\"mode\" text-title=\"row.bodyType\"></div>\n      </div>\n\n    </div>\n  </div>\n</div>\n");
+$templateCache.put("plugins/camel/html/browseRoute.html","<ng-include src=\"\'plugins/camel/html/browseMessageTemplate.html\'\"></ng-include>\n\n<div class=\"row\">\n  <table class=\"table table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n  <!--\n      <div class=\"gridStyle\" hawtio-datatable=\"gridOptions\"></div>\n  -->\n</div>\n");
 $templateCache.put("plugins/camel/html/createEndpoint.html","<div ng-controller=\"Camel.EndpointController\" ng-switch=\"hasComponentNames\">\n  <div ng-switch-when=\"true\">\n    <tabs>\n      <pane heading=\"URL\">\n        <ng-include src=\"\'plugins/camel/html/createEndpointURL.html\'\"></ng-include>\n      </pane>\n      <pane heading=\"Components\">\n        <ng-include src=\"\'plugins/camel/html/createEndpointWizard.html\'\"></ng-include>\n      </pane>\n    </tabs>\n  </div>\n  <div ng-switch-default=\"false\">\n    <ng-include src=\"\'plugins/camel/html/createEndpointURL.html\'\"></ng-include>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/createEndpointURL.html","<form class=\"form-horizontal\">\n  <div class=\"control-group\">\n    <input class=\"col-md-12\" type=\"text\" size=\"255\" ng-model=\"endpointName\" placeholder=\"Endpoint URI\"/>\n  </div>\n  <div class=\"control-group\">\n    <button type=\"submit\" class=\"btn btn-info\" ng-click=\"createEndpoint(endpointName)\"\n            ng-disabled=\"!endpointName\">\n      Create endpoint\n    </button>\n  </div>\n</form>\n");
 $templateCache.put("plugins/camel/html/createEndpointWizard.html","<div ng-controller=\"Camel.EndpointController\">\n  <form class=\"form-horizontal\">\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"componentName\">Component</label>\n\n      <div class=\"controls\">\n        <select id=\"componentName\" ng-model=\"selectedComponentName\"\n                ng-options=\"componentName for componentName in componentNames\"></select>\n      </div>\n    </div>\n    <div ng-show=\"selectedComponentName\">\n      <div class=\"control-group\">\n        <label class=\"control-label\" for=\"endpointPath\">Endpoint</label>\n\n        <div class=\"controls\">\n          <input id=\"endpointPath\" class=\"col-md-10\" type=\"text\" ng-model=\"endpointPath\" placeholder=\"name\"\n                 typeahead=\"title for title in endpointCompletions($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'\n                 min-length=\"1\">\n        </div>\n      </div>\n\n      <div simple-form name=\"formEditor\" entity=\'endpointParameters\' data=\'endpointSchema\' schema=\"schema\"></div>\n\n      <div class=\"control-group\">\n        <div class=\"controls\">\n          <button type=\"submit\" class=\"btn btn-info\" ng-click=\"createEndpointFromData()\"\n                  ng-disabled=\"!endpointPath || !selectedComponentName\">\n            Create endpoint\n          </button>\n        </div>\n      </div>\n    </div>\n  </form>\n</div>\n");
