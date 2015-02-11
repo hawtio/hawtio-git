@@ -35,7 +35,7 @@
   </div>
 
   <div class="row">
-    <div class="gridStyle" ng-grid="gridOptions"></div>
+    <table class="table table-striped" hawtio-simple-table="gridOptions"></table>
   </div>
 
   <div hawtio-slideout="showMessageDetails" title="{{row.JMSMessageID}}">
@@ -82,7 +82,7 @@
                 <th>Value</th>
               </tr>
               </thead>
-              <tbody ng-bind-html-unsafe="row.headerHtml">
+              <tbody ng-bind-html="row.headerHtml">
               </tbody>
               <!--
                             <tr ng-repeat="(key, value) in row.headers">

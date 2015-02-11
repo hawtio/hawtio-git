@@ -68,8 +68,12 @@ module ActiveMQ {
    */
   export function selectCurrentMessage(message:any, key:string, $scope) {
     // clicking on message's link would interfere with messages selected with checkboxes
-    $scope.gridOptions.selectAll(false);
-    var idx = Core.pathGet(message, ["rowIndex"]);
+    if ('selectAll' in $scope.gridOptions) {
+      $scope.gridOptions.selectAll(false);
+    } else {
+      $scope.gridOptions.selectedItems.length = 0;
+    } 
+    var idx = Core.pathGet(message, ["rowIndex"]) || Core.pathGet(message, ['index']);
     var jmsMessageID = Core.pathGet(message, ["entity", key]);
     $scope.rowIndex = idx;
     var selected = $scope.gridOptions.selectedItems;

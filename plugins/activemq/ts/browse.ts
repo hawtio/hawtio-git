@@ -35,7 +35,7 @@ module ActiveMQ {
         {
           field: 'JMSMessageID',
           displayName: 'Message ID',
-          cellTemplate: '<div class="ngCellText"><a ng-click="openMessageDialog(row)">{{row.entity.JMSMessageID}}</a></div>',
+          cellTemplate: '<div class="ngCellText"><a href="" ng-click="row.entity.openMessageDialog(row)">{{row.entity.JMSMessageID}}</a></div>',
           // for ng-grid
           width: '34%'
           // for hawtio-datatable
@@ -184,11 +184,12 @@ module ActiveMQ {
         $scope.allMessages = data;
       }
       angular.forEach($scope.allMessages, (message) => {
+        message.openMessageDialog = $scope.openMessageDialog;
         message.headerHtml = createHeaderHtml(message);
         message.bodyText = createBodyText(message);
       });
-      Core.$apply($scope);
       filterMessages($scope.gridOptions.filterOptions.filterText);
+      Core.$apply($scope);
     }
 
     /*
@@ -310,7 +311,7 @@ module ActiveMQ {
     }
 
     function createHeaders(row) {
-      log.debug("headers: ", row);
+      //log.debug("headers: ", row);
       var answer = {};
       angular.forEach(row, (value, key) => {
         if (!ignoreColumns.any(key) && !flattenColumns.any(key)) {
@@ -321,7 +322,7 @@ module ActiveMQ {
     }
     
     function createProperties(row) {
-      log.debug("properties: ", row);
+      //log.debug("properties: ", row);
       var answer = {};
       angular.forEach(row, (value, key) => {
         if (!ignoreColumns.any(key) && flattenColumns.any(key)) {
@@ -377,7 +378,6 @@ module ActiveMQ {
 
     function filterMessages(filter) {
       var searchConditions = buildSearchConditions(filter);
-
       evalFilter(searchConditions);
     }
 
