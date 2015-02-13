@@ -48,7 +48,7 @@ module Camel {
       return { 'message' : null}
   });
 
-  _module.run(["HawtioNav", "workspace", "jolokia", "viewRegistry", "layoutFull", "helpRegistry", "preferencesRegistry", "$templateCache", (nav:HawtioMainNav.Registry, workspace:Workspace, jolokia, viewRegistry, layoutFull, helpRegistry, preferencesRegistry, $templateCache:ng.ITemplateCacheService) => {
+  _module.run(["HawtioNav", "workspace", "jolokia", "viewRegistry", "layoutFull", "helpRegistry", "preferencesRegistry", "$templateCache", "WelcomePageRegistry", "$location", (nav:HawtioMainNav.Registry, workspace:Workspace, jolokia, viewRegistry, layoutFull, helpRegistry, preferencesRegistry, $templateCache:ng.ITemplateCacheService, welcome, $location) => {
 
     viewRegistry['camel/endpoint/'] = layoutFull;
     viewRegistry['camel/route/'] = layoutFull;
@@ -78,8 +78,6 @@ module Camel {
       }
       return null;
     });
-
-
 
     // register default attribute views
     var stateField = 'State';
@@ -199,10 +197,18 @@ module Camel {
       {field: 'MaximumRedeliveryDelay', displayName: 'Max Redeliveries Delay'}
     ];
 
+    var myUrl = '/jmx/attributes?tab=camel';
+
+    welcome.pages.push({
+      rank: 8,
+      isValid: () => Core.isRemoteConnection() || workspace.treeContainsDomainAndProperties(jmxDomain),
+      href: () => myUrl
+    });
+
     var builder = nav.builder();
     var tab = builder.id('camel')
                 .title( () => 'Camel' )
-                .href( () => '/jmx/attributes?tab=camel' )
+                .href( () => myUrl )
                 .isSelected( () => workspace.isTopTabActive('camel') )
                 .isValid( () => workspace.treeContainsDomainAndProperties(jmxDomain) )
                 .build();

@@ -22,7 +22,7 @@ module ActiveMQ {
             when('/activemq/jobs', {templateUrl: 'plugins/activemq/html/jobs.html'})
   }]);
 
-  _module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", (nav:HawtioMainNav.Registry, $location:ng.ILocationService, workspace:Workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache:ng.ITemplateCacheService) => {
+  _module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", "WelcomePageRegistry", (nav:HawtioMainNav.Registry, $location:ng.ILocationService, workspace:Workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache:ng.ITemplateCacheService, welcome) => {
 
     viewRegistry['activemq'] = 'plugins/activemq/html/layoutActiveMQTree.html';
     helpRegistry.addUserDoc('activemq', 'plugins/activemq/doc/help.md', () => {
@@ -88,10 +88,18 @@ module ActiveMQ {
       {field: 'LogDirectory', displayName: 'Log Directory', width: "**"}
     ];
 
+    var myUrl = '/jmx/attributes?tab=activemq';
+
+    welcome.pages.push({
+      rank: 10,
+      isValid: () => workspace.treeContainsDomainAndProperties(jmxDomain),
+      href: () => myUrl
+    });
+
     var builder = nav.builder();
     var tab = builder.id('activemq')
                      .title( () => 'ActiveMQ' )
-                     .href( () => '/jmx/attributes?tab=activemq' )
+                     .href( () => myUrl )
                      .isSelected( () => workspace.isTopTabActive('activemq') )
                      .isValid( () => workspace.treeContainsDomainAndProperties(jmxDomain) )
                      .build();
@@ -141,7 +149,7 @@ module ActiveMQ {
       id: 'activemq-create-destination',
       title: () => '<i class="fa fa-plus"></i> Create',
       //title: "Create a new destination",
-      show: () => isBroker(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"),
+      show: () => (isBroker(workspace) || isQueuesFolder(workspace) || isTopicsFolder(workspace) || isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"),
       isSelected: () => workspace.isLinkActive('activemq/createDestination'),
       href: () => "/activemq/createDestination" + workspace.hash()
     });
