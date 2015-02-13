@@ -103,7 +103,7 @@ module ActiveMQ {
       //title: "View a diagram of the producers, destinations and consumers",
       show: () =>  workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(jmxDomain),
       isSelected: () => workspace.isLinkActive('activemq/diagram'),
-      href: () => "/activemq/diagram"
+      href: () => "/activemq/diagram" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-browse',
@@ -111,7 +111,7 @@ module ActiveMQ {
       //title: "Browse the messages on the queue",
       show: () => isQueue(workspace) && workspace.hasInvokeRights(workspace.selection, "browse()"),
       isSelected: () => workspace.isLinkActive('activemq/browseQueue'),
-      href: () => "/activemq/browseQueue"
+      href: () => "/activemq/browseQueue" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-send',
@@ -119,7 +119,7 @@ module ActiveMQ {
       //title: "Send a message to this destination",
       show: () => (isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(workspace.selection, "sendTextMessage(java.util.Map,java.lang.String,java.lang.String,java.lang.String)"),
       isSelected: () => workspace.isLinkActive('activemq/sendMessage'),
-      href: () => "/activemq/sendMessage"
+      href: () => "/activemq/sendMessage" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-durable-subscribers',
@@ -127,7 +127,7 @@ module ActiveMQ {
       //title: "Manage durable subscribers",
       show: () => isBroker(workspace),
       isSelected: () => workspace.isLinkActive('activemq/durableSubscribers'),
-      href: () => "/activemq/durableSubscribers"
+      href: () => "/activemq/durableSubscribers" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-jobs',
@@ -135,7 +135,7 @@ module ActiveMQ {
       //title: "Manage jobs",
       show: () => isJobScheduler(workspace),
       isSelected: () => workspace.isLinkActive('activemq/jobs'),
-      href: () => "/activemq/jobs"
+      href: () => "/activemq/jobs" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-create-destination',
@@ -143,7 +143,7 @@ module ActiveMQ {
       //title: "Create a new destination",
       show: () => isBroker(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"),
       isSelected: () => workspace.isLinkActive('activemq/createDestination'),
-      href: () => "/activemq/createDestination"
+      href: () => "/activemq/createDestination" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-create-queue',
@@ -151,7 +151,7 @@ module ActiveMQ {
       //title: "Create a new queue",
       show: () => isQueuesFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"),
       isSelected: () => workspace.isLinkActive('activemq/createQueue'),
-      href: () => "/activemq/createQueue"
+      href: () => "/activemq/createQueue" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-create-topic',
@@ -159,7 +159,7 @@ module ActiveMQ {
       //title: "Create a new topic",
       show: () => isTopicsFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"),
       isSelected: () => workspace.isLinkActive('activemq/createTopic'),
-      href: () => "/activemq/createTopic"
+      href: () => "/activemq/createTopic" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-delete-topic',
@@ -167,7 +167,7 @@ module ActiveMQ {
       //title: "Delete this topic",
       show: () => isTopic(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeTopic"),
       isSelected: () => workspace.isLinkActive('activemq/deleteTopic'),
-      href: () => "/activemq/deleteTopic"
+      href: () => "/activemq/deleteTopic" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-delete-queue',
@@ -175,7 +175,7 @@ module ActiveMQ {
       //title: "Delete or purge this queue",
       show: () => isQueue(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeQueue"),
       isSelected: () => workspace.isLinkActive('activemq/deleteQueue'),
-      href: () => "/activemq/deleteQueue"
+      href: () => "/activemq/deleteQueue" + workspace.hash()
     });
     nav.add(tab);
 
