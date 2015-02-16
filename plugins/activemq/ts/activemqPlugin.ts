@@ -22,7 +22,7 @@ module ActiveMQ {
             when('/activemq/jobs', {templateUrl: 'plugins/activemq/html/jobs.html'})
   }]);
 
-  _module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", "WelcomePageRegistry", (nav:HawtioMainNav.Registry, $location:ng.ILocationService, workspace:Workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache:ng.ITemplateCacheService, welcome) => {
+  _module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", (nav:HawtioMainNav.Registry, $location:ng.ILocationService, workspace:Workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache:ng.ITemplateCacheService) => {
 
     viewRegistry['activemq'] = 'plugins/activemq/html/layoutActiveMQTree.html';
     helpRegistry.addUserDoc('activemq', 'plugins/activemq/doc/help.md', () => {
@@ -90,15 +90,23 @@ module ActiveMQ {
 
     var myUrl = '/jmx/attributes?tab=activemq';
 
-    welcome.pages.push({
-      rank: 10,
-      isValid: () => workspace.treeContainsDomainAndProperties(jmxDomain),
-      href: () => myUrl
-    });
-
     var builder = nav.builder();
     var tab = builder.id('activemq')
                      .title( () => 'ActiveMQ' )
+                     .defaultPage({
+                       rank: 15,
+                       isValid: (yes, no) => {
+                         var name = 'ActiveMQDefaultPage';
+                         workspace.addNamedTreePostProcessor(name, (tree) => {
+                           workspace.removeNamedTreePostProcessor(name);
+                           if (workspace.treeContainsDomainAndProperties(jmxDomain)) {
+                             yes();
+                           } else {
+                             no();
+                           }
+                         });
+                       }
+                     })
                      .href( () => myUrl )
                      .isSelected( () => workspace.isTopTabActive('activemq') )
                      .isValid( () => workspace.treeContainsDomainAndProperties(jmxDomain) )

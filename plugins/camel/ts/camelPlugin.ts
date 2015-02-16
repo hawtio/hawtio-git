@@ -48,7 +48,7 @@ module Camel {
       return { 'message' : null}
   });
 
-  _module.run(["HawtioNav", "workspace", "jolokia", "viewRegistry", "layoutFull", "helpRegistry", "preferencesRegistry", "$templateCache", "WelcomePageRegistry", "$location", (nav:HawtioMainNav.Registry, workspace:Workspace, jolokia, viewRegistry, layoutFull, helpRegistry, preferencesRegistry, $templateCache:ng.ITemplateCacheService, welcome, $location) => {
+  _module.run(["HawtioNav", "workspace", "jolokia", "viewRegistry", "layoutFull", "helpRegistry", "preferencesRegistry", "$templateCache", "$location", (nav:HawtioMainNav.Registry, workspace:Workspace, jolokia, viewRegistry, layoutFull, helpRegistry, preferencesRegistry, $templateCache:ng.ITemplateCacheService, $location) => {
 
     viewRegistry['camel/endpoint/'] = layoutFull;
     viewRegistry['camel/route/'] = layoutFull;
@@ -199,15 +199,23 @@ module Camel {
 
     var myUrl = '/jmx/attributes?tab=camel';
 
-    welcome.pages.push({
-      rank: 8,
-      isValid: () => Core.isRemoteConnection() || workspace.treeContainsDomainAndProperties(jmxDomain),
-      href: () => myUrl
-    });
-
     var builder = nav.builder();
     var tab = builder.id('camel')
                 .title( () => 'Camel' )
+                .defaultPage({
+                  rank: 20,
+                  isValid: (yes, no) => {
+                    var name = 'CamelDefaultPage';
+                    workspace.addNamedTreePostProcessor(name, (tree) => {
+                      workspace.removeNamedTreePostProcessor(name);
+                      if (workspace.treeContainsDomainAndProperties(jmxDomain)) {
+                        yes();
+                      } else {
+                        no();
+                      }
+                    });
+                  }
+                })
                 .href( () => myUrl )
                 .isSelected( () => workspace.isTopTabActive('camel') )
                 .isValid( () => workspace.treeContainsDomainAndProperties(jmxDomain) )

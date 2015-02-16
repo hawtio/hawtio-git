@@ -133,7 +133,7 @@ var ActiveMQ;
     ActiveMQ._module.config(["$routeProvider", function ($routeProvider) {
         $routeProvider.when('/activemq/browseQueue', { templateUrl: 'plugins/activemq/html/browseQueue.html' }).when('/activemq/diagram', { templateUrl: 'plugins/activemq/html/brokerDiagram.html', reloadOnSearch: false }).when('/activemq/createDestination', { templateUrl: 'plugins/activemq/html/createDestination.html' }).when('/activemq/createQueue', { templateUrl: 'plugins/activemq/html/createQueue.html' }).when('/activemq/createTopic', { templateUrl: 'plugins/activemq/html/createTopic.html' }).when('/activemq/deleteQueue', { templateUrl: 'plugins/activemq/html/deleteQueue.html' }).when('/activemq/deleteTopic', { templateUrl: 'plugins/activemq/html/deleteTopic.html' }).when('/activemq/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html' }).when('/activemq/durableSubscribers', { templateUrl: 'plugins/activemq/html/durableSubscribers.html' }).when('/activemq/jobs', { templateUrl: 'plugins/activemq/html/jobs.html' });
     }]);
-    ActiveMQ._module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", "WelcomePageRegistry", function (nav, $location, workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache, welcome) {
+    ActiveMQ._module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", function (nav, $location, workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache) {
         viewRegistry['activemq'] = 'plugins/activemq/html/layoutActiveMQTree.html';
         helpRegistry.addUserDoc('activemq', 'plugins/activemq/doc/help.md', function () {
             return workspace.treeContainsDomainAndProperties("org.apache.activemq");
@@ -195,13 +195,22 @@ var ActiveMQ;
             { field: 'LogDirectory', displayName: 'Log Directory', width: "**" }
         ];
         var myUrl = '/jmx/attributes?tab=activemq';
-        welcome.pages.push({
-            rank: 10,
-            isValid: function () { return workspace.treeContainsDomainAndProperties(ActiveMQ.jmxDomain); },
-            href: function () { return myUrl; }
-        });
         var builder = nav.builder();
-        var tab = builder.id('activemq').title(function () { return 'ActiveMQ'; }).href(function () { return myUrl; }).isSelected(function () { return workspace.isTopTabActive('activemq'); }).isValid(function () { return workspace.treeContainsDomainAndProperties(ActiveMQ.jmxDomain); }).build();
+        var tab = builder.id('activemq').title(function () { return 'ActiveMQ'; }).defaultPage({
+            rank: 15,
+            isValid: function (yes, no) {
+                var name = 'ActiveMQDefaultPage';
+                workspace.addNamedTreePostProcessor(name, function (tree) {
+                    workspace.removeNamedTreePostProcessor(name);
+                    if (workspace.treeContainsDomainAndProperties(ActiveMQ.jmxDomain)) {
+                        yes();
+                    }
+                    else {
+                        no();
+                    }
+                });
+            }
+        }).href(function () { return myUrl; }).isSelected(function () { return workspace.isTopTabActive('activemq'); }).isValid(function () { return workspace.treeContainsDomainAndProperties(ActiveMQ.jmxDomain); }).build();
         tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
         // add sub level tabs
         tab.tabs.push({
@@ -4568,7 +4577,7 @@ var Camel;
     Camel._module.factory('activeMQMessage', function () {
         return { 'message': null };
     });
-    Camel._module.run(["HawtioNav", "workspace", "jolokia", "viewRegistry", "layoutFull", "helpRegistry", "preferencesRegistry", "$templateCache", "WelcomePageRegistry", "$location", function (nav, workspace, jolokia, viewRegistry, layoutFull, helpRegistry, preferencesRegistry, $templateCache, welcome, $location) {
+    Camel._module.run(["HawtioNav", "workspace", "jolokia", "viewRegistry", "layoutFull", "helpRegistry", "preferencesRegistry", "$templateCache", "$location", function (nav, workspace, jolokia, viewRegistry, layoutFull, helpRegistry, preferencesRegistry, $templateCache, $location) {
         viewRegistry['camel/endpoint/'] = layoutFull;
         viewRegistry['camel/route/'] = layoutFull;
         viewRegistry['camel/fabricDiagram'] = layoutFull;
@@ -4708,13 +4717,22 @@ var Camel;
             { field: 'MaximumRedeliveryDelay', displayName: 'Max Redeliveries Delay' }
         ];
         var myUrl = '/jmx/attributes?tab=camel';
-        welcome.pages.push({
-            rank: 8,
-            isValid: function () { return Core.isRemoteConnection() || workspace.treeContainsDomainAndProperties(Camel.jmxDomain); },
-            href: function () { return myUrl; }
-        });
         var builder = nav.builder();
-        var tab = builder.id('camel').title(function () { return 'Camel'; }).href(function () { return myUrl; }).isSelected(function () { return workspace.isTopTabActive('camel'); }).isValid(function () { return workspace.treeContainsDomainAndProperties(Camel.jmxDomain); }).build();
+        var tab = builder.id('camel').title(function () { return 'Camel'; }).defaultPage({
+            rank: 20,
+            isValid: function (yes, no) {
+                var name = 'CamelDefaultPage';
+                workspace.addNamedTreePostProcessor(name, function (tree) {
+                    workspace.removeNamedTreePostProcessor(name);
+                    if (workspace.treeContainsDomainAndProperties(Camel.jmxDomain)) {
+                        yes();
+                    }
+                    else {
+                        no();
+                    }
+                });
+            }
+        }).href(function () { return myUrl; }).isSelected(function () { return workspace.isTopTabActive('camel'); }).isValid(function () { return workspace.treeContainsDomainAndProperties(Camel.jmxDomain); }).build();
         // add sub level tabs
         tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
         // special for route diagram as we want this to be the 1st
