@@ -53,7 +53,7 @@ module Camel {
     viewRegistry['camel/endpoint/'] = layoutFull;
     viewRegistry['camel/route/'] = layoutFull;
     viewRegistry['camel/fabricDiagram'] = layoutFull;
-    viewRegistry['camel'] = 'plugins/camel/html/layoutCamelTree.html';
+    viewRegistry['{ "tab": "camel" }'] = 'plugins/camel/html/layoutCamelTree.html';
 
     helpRegistry.addUserDoc('camel', 'plugins/camel/doc/help.md', () => {
       return workspace.treeContainsDomainAndProperties(jmxDomain);

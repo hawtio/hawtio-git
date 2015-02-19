@@ -24,7 +24,7 @@ module ActiveMQ {
 
   _module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", (nav:HawtioMainNav.Registry, $location:ng.ILocationService, workspace:Workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache:ng.ITemplateCacheService) => {
 
-    viewRegistry['activemq'] = 'plugins/activemq/html/layoutActiveMQTree.html';
+    viewRegistry['{ "tab": "activemq" }'] = 'plugins/activemq/html/layoutActiveMQTree.html';
     helpRegistry.addUserDoc('activemq', 'plugins/activemq/doc/help.md', () => {
       return workspace.treeContainsDomainAndProperties("org.apache.activemq");
     });

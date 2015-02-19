@@ -134,7 +134,7 @@ var ActiveMQ;
         $routeProvider.when('/activemq/browseQueue', { templateUrl: 'plugins/activemq/html/browseQueue.html' }).when('/activemq/diagram', { templateUrl: 'plugins/activemq/html/brokerDiagram.html', reloadOnSearch: false }).when('/activemq/createDestination', { templateUrl: 'plugins/activemq/html/createDestination.html' }).when('/activemq/createQueue', { templateUrl: 'plugins/activemq/html/createQueue.html' }).when('/activemq/createTopic', { templateUrl: 'plugins/activemq/html/createTopic.html' }).when('/activemq/deleteQueue', { templateUrl: 'plugins/activemq/html/deleteQueue.html' }).when('/activemq/deleteTopic', { templateUrl: 'plugins/activemq/html/deleteTopic.html' }).when('/activemq/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html' }).when('/activemq/durableSubscribers', { templateUrl: 'plugins/activemq/html/durableSubscribers.html' }).when('/activemq/jobs', { templateUrl: 'plugins/activemq/html/jobs.html' });
     }]);
     ActiveMQ._module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", function (nav, $location, workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache) {
-        viewRegistry['activemq'] = 'plugins/activemq/html/layoutActiveMQTree.html';
+        viewRegistry['{ "tab": "activemq" }'] = 'plugins/activemq/html/layoutActiveMQTree.html';
         helpRegistry.addUserDoc('activemq', 'plugins/activemq/doc/help.md', function () {
             return workspace.treeContainsDomainAndProperties("org.apache.activemq");
         });
@@ -4581,7 +4581,7 @@ var Camel;
         viewRegistry['camel/endpoint/'] = layoutFull;
         viewRegistry['camel/route/'] = layoutFull;
         viewRegistry['camel/fabricDiagram'] = layoutFull;
-        viewRegistry['camel'] = 'plugins/camel/html/layoutCamelTree.html';
+        viewRegistry['{ "tab": "camel" }'] = 'plugins/camel/html/layoutCamelTree.html';
         helpRegistry.addUserDoc('camel', 'plugins/camel/doc/help.md', function () {
             return workspace.treeContainsDomainAndProperties(Camel.jmxDomain);
         });
