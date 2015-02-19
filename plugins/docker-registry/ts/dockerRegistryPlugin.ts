@@ -35,6 +35,7 @@ module DockerRegistry {
   _module.run(['viewRegistry', 'workspace', (viewRegistry, workspace:Core.Workspace) => {
     log.debug("Running");
     viewRegistry['docker-registry'] = UrlHelpers.join(templatePath, 'layoutDockerRegistry.html');
+    /* TODO commenting this out until we fix the above service :-)
     workspace.topLevelTabs.push({
       id: 'docker-registry',
       content: 'Images',
@@ -42,6 +43,7 @@ module DockerRegistry {
       isActive: (workspace:Core.Workspace) => workspace.isLinkActive('docker-registry'),
       href: () => defaultRoute
     });
+    */
   }]);
 
   hawtioPluginLoader.addModule(pluginName);

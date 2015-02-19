@@ -8663,13 +8663,15 @@ var DockerRegistry;
     DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
         DockerRegistry.log.debug("Running");
         viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
+        /* TODO commenting this out until we fix the above service :-)
         workspace.topLevelTabs.push({
-            id: 'docker-registry',
-            content: 'Images',
-            isValid: function (workspace) { return true; },
-            isActive: function (workspace) { return workspace.isLinkActive('docker-registry'); },
-            href: function () { return DockerRegistry.defaultRoute; }
+          id: 'docker-registry',
+          content: 'Images',
+          isValid: (workspace:Core.Workspace) => true, // TODO workspace.treeContainsDomainAndProperties(Fabric.jmxDomain, { type: 'KubernetesManager' }),
+          isActive: (workspace:Core.Workspace) => workspace.isLinkActive('docker-registry'),
+          href: () => defaultRoute
         });
+        */
     }]);
     hawtioPluginLoader.addModule(DockerRegistry.pluginName);
 })(DockerRegistry || (DockerRegistry = {}));
