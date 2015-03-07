@@ -1055,9 +1055,14 @@ var Wiki;
      * Returns a relative URL to perform a GET or POST for the given branch/path
      */
     function gitRelativeURL(branch, path) {
+        var prefix = "";
+        var injector = HawtioCore.injector;
+        if (injector) {
+            prefix = injector.get("WikiGitUrlPrefix") || "";
+        }
         branch = branch || "master";
         path = path || "/";
-        return UrlHelpers.join("git/" + branch, path);
+        return UrlHelpers.join(prefix, "git/" + branch, path);
     }
     Wiki.gitRelativeURL = gitRelativeURL;
     /**
@@ -3031,6 +3036,987 @@ var ActiveMQ;
         }
     }]);
 })(ActiveMQ || (ActiveMQ = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Dozer
+ * @main Dozer
+ */
+var Dozer;
+(function (Dozer) {
+    /**
+     * The JMX domain for Dozer
+     * @property jmxDomain
+     * @for Dozer
+     * @type String
+     */
+    Dozer.jmxDomain = 'net.sourceforge.dozer';
+    Dozer.introspectorMBean = "hawtio:type=Introspector";
+    /**
+     * Don't try and load properties for these types
+     * @property excludedPackages
+     * @for Dozer
+     * @type {Array}
+     */
+    Dozer.excludedPackages = [
+        'java.lang',
+        'int',
+        'double',
+        'long'
+    ];
+    /**
+     * Lets map the class names to element names
+     * @property elementNameMappings
+     * @for Dozer
+     * @type {Array}
+     */
+    Dozer.elementNameMappings = {
+        "Mapping": "mapping",
+        "MappingClass": "class",
+        "Field": "field"
+    };
+    Dozer.log = Logger.get("Dozer");
+    /**
+     * Converts the XML string or DOM node to a Dozer model
+     * @method loadDozerModel
+     * @for Dozer
+     * @static
+     * @param {Object} xml
+     * @param {String} pageId
+     * @return {Mappings}
+     */
+    function loadDozerModel(xml, pageId) {
+        var doc = xml;
+        if (angular.isString(xml)) {
+            doc = $.parseXML(xml);
+        }
+        console.log("Has Dozer XML document: " + doc);
+        var model = new Dozer.Mappings(doc);
+        var mappingsElement = doc.documentElement;
+        copyAttributes(model, mappingsElement);
+        $(mappingsElement).children("mapping").each(function (idx, element) {
+            var mapping = createMapping(element);
+            model.mappings.push(mapping);
+        });
+        return model;
+    }
+    Dozer.loadDozerModel = loadDozerModel;
+    function saveToXmlText(model) {
+        // lets copy the original doc then replace the mapping elements
+        var element = model.doc.documentElement.cloneNode(false);
+        appendElement(model.mappings, element, null, 1);
+        Dozer.addTextNode(element, "\n");
+        var xmlText = Core.xmlNodeToString(element);
+        return '<?xml version="1.0" encoding="UTF-8"?>\n' + xmlText;
+    }
+    Dozer.saveToXmlText = saveToXmlText;
+    function findUnmappedFields(workspace, mapping, fn) {
+        // lets find the fields which are unmapped
+        var className = mapping.class_a.value;
+        findProperties(workspace, className, null, function (properties) {
+            var answer = [];
+            angular.forEach(properties, function (property) {
+                console.log("got property " + JSON.stringify(property, null, "  "));
+                var name = property.name;
+                if (name) {
+                    if (mapping.hasFromField(name)) {
+                    }
+                    else {
+                        // TODO auto-detect this property name in the to classes?
+                        answer.push(new Dozer.UnmappedField(name, property));
+                    }
+                }
+            });
+            fn(answer);
+        });
+    }
+    Dozer.findUnmappedFields = findUnmappedFields;
+    /**
+     * Finds the properties on the given class and returns them; and either invokes the given function
+     * or does a sync request and returns them
+     * @method findProperties
+     * @for Dozer
+     * @static
+     * @param {Core.Workspace} workspace
+     * @param {String} className
+     * @param {String} filter
+     * @param {Function} fn
+     * @return {any}
+     */
+    function findProperties(workspace, className, filter, fn) {
+        if (filter === void 0) { filter = null; }
+        if (fn === void 0) { fn = null; }
+        var mbean = getIntrospectorMBean(workspace);
+        if (mbean) {
+            if (filter) {
+                return workspace.jolokia.execute(mbean, "findProperties", className, filter, Core.onSuccess(fn));
+            }
+            else {
+                return workspace.jolokia.execute(mbean, "getProperties", className, Core.onSuccess(fn));
+            }
+        }
+        else {
+            if (fn) {
+                return fn([]);
+            }
+            else {
+                return [];
+            }
+        }
+    }
+    Dozer.findProperties = findProperties;
+    /**
+     * Finds class names matching the given search text and either invokes the function with the results
+     * or does a sync request and returns them.
+     * @method findClassNames
+     * @for Dozer
+     * @static
+     * @param {Core.Workspace} workspace
+     * @param {String} searchText
+     * @param {Number} limit @default 20
+     * @param {Function} fn
+     * @return {any}
+     */
+    function findClassNames(workspace, searchText, limit, fn) {
+        if (limit === void 0) { limit = 20; }
+        if (fn === void 0) { fn = null; }
+        var mbean = getIntrospectorMBean(workspace);
+        if (mbean) {
+            return workspace.jolokia.execute(mbean, "findClassNames", searchText, limit, Core.onSuccess(fn));
+        }
+        else {
+            if (fn) {
+                return fn([]);
+            }
+            else {
+                return [];
+            }
+        }
+    }
+    Dozer.findClassNames = findClassNames;
+    function getIntrospectorMBean(workspace) {
+        // lets hard code this so its easy to use in any JVM
+        return Dozer.introspectorMBean;
+        // return Core.getMBeanTypeObjectName(workspace, "hawtio", "Introspector");
+    }
+    Dozer.getIntrospectorMBean = getIntrospectorMBean;
+    function loadModelFromTree(rootTreeNode, oldModel) {
+        oldModel.mappings = [];
+        angular.forEach(rootTreeNode.childList, function (treeNode) {
+            var mapping = Core.pathGet(treeNode, ["data", "entity"]);
+            if (mapping) {
+                oldModel.mappings.push(mapping);
+            }
+        });
+        return oldModel;
+    }
+    Dozer.loadModelFromTree = loadModelFromTree;
+    function createDozerTree(model) {
+        var id = "mappings";
+        var folder = new Folder(id);
+        folder.addClass = "net-sourceforge-dozer-mappings";
+        folder.domain = Dozer.jmxDomain;
+        folder.typeName = "mappings";
+        folder.entity = model;
+        folder.key = Core.toSafeDomID(id);
+        angular.forEach(model.mappings, function (mapping) {
+            var mappingFolder = createMappingFolder(mapping, folder);
+            folder.children.push(mappingFolder);
+        });
+        return folder;
+    }
+    Dozer.createDozerTree = createDozerTree;
+    function createMappingFolder(mapping, parentFolder) {
+        var mappingName = mapping.name();
+        var mappingFolder = new Folder(mappingName);
+        mappingFolder.addClass = "net-sourceforge-dozer-mapping";
+        mappingFolder.typeName = "mapping";
+        mappingFolder.domain = Dozer.jmxDomain;
+        mappingFolder.key = (parentFolder ? parentFolder.key + "_" : "") + Core.toSafeDomID(mappingName);
+        mappingFolder.parent = parentFolder;
+        mappingFolder.entity = mapping;
+        mappingFolder.icon = Core.url("/plugins/dozer/img/class.gif");
+        /*
+              mappingFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
+              */
+        angular.forEach(mapping.fields, function (field) {
+            addMappingFieldFolder(field, mappingFolder);
+        });
+        return mappingFolder;
+    }
+    Dozer.createMappingFolder = createMappingFolder;
+    function addMappingFieldFolder(field, mappingFolder) {
+        var name = field.name();
+        var fieldFolder = new Folder(name);
+        fieldFolder.addClass = "net-sourceforge-dozer-field";
+        fieldFolder.typeName = "field";
+        fieldFolder.domain = Dozer.jmxDomain;
+        fieldFolder.key = mappingFolder.key + "_" + Core.toSafeDomID(name);
+        fieldFolder.parent = mappingFolder;
+        fieldFolder.entity = field;
+        fieldFolder.icon = Core.url("/plugins/dozer/img/attribute.gif");
+        /*
+              fieldFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
+              */
+        mappingFolder.children.push(fieldFolder);
+        return fieldFolder;
+    }
+    Dozer.addMappingFieldFolder = addMappingFieldFolder;
+    function createMapping(element) {
+        var mapping = new Dozer.Mapping();
+        var elementJQ = $(element);
+        mapping.class_a = createMappingClass(elementJQ.children("class-a"));
+        mapping.class_b = createMappingClass(elementJQ.children("class-b"));
+        elementJQ.children("field").each(function (idx, fieldElement) {
+            var field = createField(fieldElement);
+            mapping.fields.push(field);
+        });
+        copyAttributes(mapping, element);
+        return mapping;
+    }
+    function createField(element) {
+        if (element) {
+            var jqe = $(element);
+            var a = jqe.children("a").text();
+            var b = jqe.children("b").text();
+            var field = new Dozer.Field(new Dozer.FieldDefinition(a), new Dozer.FieldDefinition(b));
+            copyAttributes(field, element);
+            return field;
+        }
+        return new Dozer.Field(new Dozer.FieldDefinition(""), new Dozer.FieldDefinition(""));
+    }
+    function createMappingClass(jqElement) {
+        if (jqElement && jqElement[0]) {
+            var element = jqElement[0];
+            var text = element.textContent;
+            if (text) {
+                var mappingClass = new Dozer.MappingClass(text);
+                copyAttributes(mappingClass, element);
+                return mappingClass;
+            }
+        }
+        // lets create a default empty mapping
+        return new Dozer.MappingClass("");
+    }
+    function copyAttributes(object, element) {
+        var attributeMap = element.attributes;
+        for (var i = 0; i < attributeMap.length; i++) {
+            // TODO hacky work around for compiler issue ;)
+            //var attr = attributeMap.item(i);
+            var attMap = attributeMap;
+            var attr = attMap.item(i);
+            if (attr) {
+                var name = attr.localName;
+                var value = attr.value;
+                if (name && !name.startsWith("xmlns")) {
+                    var safeName = Forms.safeIdentifier(name);
+                    object[safeName] = value;
+                }
+            }
+        }
+    }
+    function appendAttributes(object, element, ignorePropertyNames) {
+        angular.forEach(object, function (value, key) {
+            if (ignorePropertyNames.any(key)) {
+            }
+            else {
+                // lets add an attribute value
+                if (value) {
+                    var text = value.toString();
+                    // lets replace any underscores with dashes
+                    var name = key.replace(/_/g, '-');
+                    element.setAttribute(name, text);
+                }
+            }
+        });
+    }
+    Dozer.appendAttributes = appendAttributes;
+    /**
+     * Adds a new child element for this mapping to the given element
+     * @method appendElement
+     * @for Dozer
+     * @static
+     * @param {any} object
+     * @param {any} element
+     * @param {String} elementName
+     * @param {Number} indentLevel
+     * @return the last child element created
+     */
+    function appendElement(object, element, elementName, indentLevel) {
+        if (elementName === void 0) { elementName = null; }
+        if (indentLevel === void 0) { indentLevel = 0; }
+        var answer = null;
+        if (angular.isArray(object)) {
+            angular.forEach(object, function (child) {
+                answer = appendElement(child, element, elementName, indentLevel);
+            });
+        }
+        else if (object) {
+            if (!elementName) {
+                var className = Core.pathGet(object, ["constructor", "name"]);
+                if (!className) {
+                    console.log("WARNING: no class name for value " + object);
+                }
+                else {
+                    elementName = Dozer.elementNameMappings[className];
+                    if (!elementName) {
+                        console.log("WARNING: could not map class name " + className + " to an XML element name");
+                    }
+                }
+            }
+            if (elementName) {
+                if (indentLevel) {
+                    var text = indentText(indentLevel);
+                    Dozer.addTextNode(element, text);
+                }
+                var doc = element.ownerDocument || document;
+                var child = doc.createElement(elementName);
+                // navigate child properties...
+                var fn = object.saveToElement;
+                if (fn) {
+                    fn.apply(object, [child]);
+                }
+                else {
+                    angular.forEach(object, function (value, key) {
+                        console.log("has key " + key + " value " + value);
+                    });
+                }
+                // if we have any element children then add newline text node
+                if ($(child).children().length) {
+                    //var text = indentText(indentLevel - 1);
+                    var text = indentText(indentLevel);
+                    Dozer.addTextNode(child, text);
+                }
+                element.appendChild(child);
+                answer = child;
+            }
+        }
+        return answer;
+    }
+    Dozer.appendElement = appendElement;
+    function nameOf(object) {
+        var text = angular.isObject(object) ? object["value"] : null;
+        if (!text && angular.isString(object)) {
+            text = object;
+        }
+        return text || "?";
+    }
+    Dozer.nameOf = nameOf;
+    function addTextNode(element, text) {
+        if (text) {
+            var doc = element.ownerDocument || document;
+            var child = doc.createTextNode(text);
+            element.appendChild(child);
+        }
+    }
+    Dozer.addTextNode = addTextNode;
+    function indentText(indentLevel) {
+        var text = "\n";
+        for (var i = 0; i < indentLevel; i++) {
+            text += "  ";
+        }
+        return text;
+    }
+})(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Dozer
+ */
+var Dozer;
+(function (Dozer) {
+    /**
+     * @class Mappings
+     */
+    var Mappings = (function () {
+        function Mappings(doc, mappings) {
+            if (mappings === void 0) { mappings = []; }
+            this.doc = doc;
+            this.mappings = mappings;
+        }
+        return Mappings;
+    })();
+    Dozer.Mappings = Mappings;
+    /**
+     * @class Mapping
+     */
+    var Mapping = (function () {
+        function Mapping() {
+            this.fields = [];
+            this.map_id = Core.getUUID();
+            this.class_a = new MappingClass('');
+            this.class_b = new MappingClass('');
+        }
+        Mapping.prototype.name = function () {
+            return Dozer.nameOf(this.class_a) + " -> " + Dozer.nameOf(this.class_b);
+        };
+        Mapping.prototype.hasFromField = function (name) {
+            return this.fields.find(function (f) { return name === f.a.value; });
+        };
+        Mapping.prototype.hasToField = function (name) {
+            return this.fields.find(function (f) { return name === f.b.value; });
+        };
+        Mapping.prototype.saveToElement = function (element) {
+            Dozer.appendElement(this.class_a, element, "class-a", 2);
+            Dozer.appendElement(this.class_b, element, "class-b", 2);
+            Dozer.appendElement(this.fields, element, "field", 2);
+            Dozer.appendAttributes(this, element, ["class_a", "class_b", "fields"]);
+        };
+        return Mapping;
+    })();
+    Dozer.Mapping = Mapping;
+    /**
+     * @class MappingClass
+     */
+    var MappingClass = (function () {
+        function MappingClass(value) {
+            this.value = value;
+        }
+        MappingClass.prototype.saveToElement = function (element) {
+            Dozer.addTextNode(element, this.value);
+            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
+        };
+        return MappingClass;
+    })();
+    Dozer.MappingClass = MappingClass;
+    /**
+     * @class Field
+     */
+    var Field = (function () {
+        function Field(a, b) {
+            this.a = a;
+            this.b = b;
+        }
+        Field.prototype.name = function () {
+            return Dozer.nameOf(this.a) + " -> " + Dozer.nameOf(this.b);
+        };
+        Field.prototype.saveToElement = function (element) {
+            Dozer.appendElement(this.a, element, "a", 3);
+            Dozer.appendElement(this.b, element, "b", 3);
+            Dozer.appendAttributes(this, element, ["a", "b"]);
+        };
+        return Field;
+    })();
+    Dozer.Field = Field;
+    /**
+     * @class FieldDefinition
+     */
+    var FieldDefinition = (function () {
+        function FieldDefinition(value) {
+            this.value = value;
+        }
+        FieldDefinition.prototype.saveToElement = function (element) {
+            Dozer.addTextNode(element, this.value);
+            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
+        };
+        return FieldDefinition;
+    })();
+    Dozer.FieldDefinition = FieldDefinition;
+    /**
+     * @class UnmappedField
+     */
+    var UnmappedField = (function () {
+        function UnmappedField(fromField, property, toField) {
+            if (toField === void 0) { toField = null; }
+            this.fromField = fromField;
+            this.property = property;
+            this.toField = toField;
+        }
+        return UnmappedField;
+    })();
+    Dozer.UnmappedField = UnmappedField;
+})(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Dozer
+ */
+var Dozer;
+(function (Dozer) {
+    /**
+     * Configures the JSON schemas to improve the UI models
+     * @method schemaConfigure
+     * @for Dozer
+     */
+    function schemaConfigure() {
+        Dozer.io_hawt_dozer_schema_Field["tabs"] = {
+            'Fields': ['a.value', 'b.value'],
+            'From Field': ['a\\..*'],
+            'To Field': ['b\\..*'],
+            'Field Configuration': ['*']
+        };
+        Dozer.io_hawt_dozer_schema_Mapping["tabs"] = {
+            'Classes': ['class-a.value', 'class-b.value'],
+            'From Class': ['class-a\\..*'],
+            'To Class': ['class-b\\..*'],
+            'Class Configuration': ['*']
+        };
+        // hide the fields table from the class configuration tab
+        Dozer.io_hawt_dozer_schema_Mapping.properties.fieldOrFieldExclude.hidden = true;
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "label"], "From Field");
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "label"], "To Field");
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "label"], "From Class");
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "label"], "To Class");
+        // ignore prefixes in the generated labels
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "ignorePrefixInLabel"], true);
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "ignorePrefixInLabel"], true);
+        // add custom widgets
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "formTemplate"], classNameWidget("class_a"));
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "formTemplate"], classNameWidget("class_b"));
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.a.value" ' + 'typeahead="title for title in fromFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
+        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.b.value" ' + 'typeahead="title for title in toFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
+        function classNameWidget(propertyName) {
+            return '<input type="text" ng-model="dozerEntity.' + propertyName + '.value" ' + 'typeahead="title for title in classNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>';
+        }
+    }
+    Dozer.schemaConfigure = schemaConfigure;
+})(Dozer || (Dozer = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * A bunch of API stubs for now until we remove references to Fabric or refactor the code
+ * to work nicely in Kubernetes
+ */
+var Fabric;
+(function (Fabric) {
+    Fabric.fabricTopLevel = "fabric/profiles/";
+    Fabric.profileSuffix = ".profile";
+    function initScope($scope, $location, jolokia, workspace) {
+    }
+    Fabric.initScope = initScope;
+    function brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName) {
+    }
+    Fabric.brokerConfigLink = brokerConfigLink;
+    function containerJolokia(jolokia, id, fn) {
+    }
+    Fabric.containerJolokia = containerJolokia;
+    function pagePathToProfileId(pageId) {
+    }
+    Fabric.pagePathToProfileId = pagePathToProfileId;
+    function profileJolokia(jolokia, profileId, versionId, callback) {
+    }
+    Fabric.profileJolokia = profileJolokia;
+    function getDefaultVersionId(jolokia) {
+    }
+    Fabric.getDefaultVersionId = getDefaultVersionId;
+    function getContainersFields(jolokia, fields, onFabricContainerData) {
+    }
+    Fabric.getContainersFields = getContainersFields;
+    function loadBrokerStatus(onBrokerData) {
+        /** TODO
+         Core.register(jolokia, $scope, {type: 'exec', mbean: Fabric.mqManagerMBean, operation: "loadBrokerStatus()"}, Core.onSuccess(onBrokerData));
+         */
+    }
+    Fabric.loadBrokerStatus = loadBrokerStatus;
+    function connectToBroker($scope, container, postfix) {
+    }
+    Fabric.connectToBroker = connectToBroker;
+    function createJolokia(url) {
+    }
+    Fabric.createJolokia = createJolokia;
+    function hasFabric(workspace) {
+    }
+    Fabric.hasFabric = hasFabric;
+    function profilePath(profileId) {
+    }
+    Fabric.profilePath = profilePath;
+    function getOverlayProfileProperties(versionId, profileId, pid, onProfilePropertiesLoaded) {
+        /**
+         * TODO
+         jolokia.execute(Fabric.managerMBean, "getOverlayProfileProperties", $scope.versionId, $scope.profileId, $scope.pid, Core.onSuccess(onProfilePropertiesLoaded));
+         */
+    }
+    Fabric.getOverlayProfileProperties = getOverlayProfileProperties;
+    function getProfileProperties(versionId, profileId, zkPid, onProfileProperties) {
+        /** TODO
+         jolokia.execute(Fabric.managerMBean, "getProfileProperties", $scope.versionId, $scope.profileId, $scope.zkPid, Core.onSuccess(onProfileProperties));
+         */
+    }
+    Fabric.getProfileProperties = getProfileProperties;
+    function setProfileProperties(versionId, profileId, pid, data, callback) {
+        /*
+         TODO
+         jolokia.execute(Fabric.managerMBean, "setProfileProperties", $scope.versionId, $scope.profileId, pid, data, callback);
+         */
+    }
+    Fabric.setProfileProperties = setProfileProperties;
+    function deleteConfigurationFile(versionId, profileId, configFile, successFn, errorFn) {
+        /** TODO
+        jolokia.execute(Fabric.managerMBean, "deleteConfigurationFile",
+          versionId, profileId, configFile,
+          Core.onSuccess(successFn, {error: errorFn}));
+         */
+    }
+    Fabric.deleteConfigurationFile = deleteConfigurationFile;
+    function getProfile(jolokia, branch, profileName, someFlag) {
+    }
+    Fabric.getProfile = getProfile;
+    function createProfile(jolokia, branch, profileName, baseProfiles, successFn, errorFn) {
+    }
+    Fabric.createProfile = createProfile;
+    function newConfigFile(jolokia, branch, profileName, fileName, successFn, errorFn) {
+    }
+    Fabric.newConfigFile = newConfigFile;
+    function saveConfigFile(jolokia, branch, profileName, fileName, contents, successFn, errorFn) {
+    }
+    Fabric.saveConfigFile = saveConfigFile;
+    function getVersionIds(jolokia) {
+    }
+    Fabric.getVersionIds = getVersionIds;
+})(Fabric || (Fabric = {}));
+
+/// <reference path="../../includes.ts"/>
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryInterfaces.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.context = '/docker-registry';
+    DockerRegistry.hash = UrlHelpers.join('#', DockerRegistry.context);
+    DockerRegistry.defaultRoute = UrlHelpers.join(DockerRegistry.hash, 'list');
+    DockerRegistry.basePath = UrlHelpers.join('plugins', DockerRegistry.context);
+    DockerRegistry.templatePath = UrlHelpers.join(DockerRegistry.basePath, 'html');
+    DockerRegistry.pluginName = 'DockerRegistry';
+    DockerRegistry.log = Logger.get(DockerRegistry.pluginName);
+    DockerRegistry.SEARCH_FRAGMENT = '/v1/search';
+    /**
+     * Fetch the available docker images in the registry, can only
+     * be called after app initialization
+     */
+    function getDockerImageRepositories(callback) {
+        var DockerRegistryRestURL = HawtioCore.injector.get("DockerRegistryRestURL");
+        var $http = HawtioCore.injector.get("$http");
+        DockerRegistryRestURL.then(function (restURL) {
+            $http.get(UrlHelpers.join(restURL, DockerRegistry.SEARCH_FRAGMENT)).success(function (data) {
+                callback(restURL, data);
+            }).error(function (data) {
+                DockerRegistry.log.debug("Error fetching image repositories:", data);
+                callback(restURL, null);
+            });
+        });
+    }
+    DockerRegistry.getDockerImageRepositories = getDockerImageRepositories;
+    function completeDockerRegistry() {
+        var $q = HawtioCore.injector.get("$q");
+        var $rootScope = HawtioCore.injector.get("$rootScope");
+        var deferred = $q.defer();
+        getDockerImageRepositories(function (restURL, repositories) {
+            if (repositories && repositories.results) {
+                // log.debug("Got back repositories: ", repositories);
+                var results = repositories.results;
+                results = results.sortBy(function (res) {
+                    return res.name;
+                }).first(15);
+                var names = results.map(function (res) {
+                    return res.name;
+                });
+                // log.debug("Results: ", names);
+                deferred.resolve(names);
+            }
+            else {
+                // log.debug("didn't get back anything, bailing");
+                deferred.reject([]);
+            }
+        });
+        return deferred.promise;
+    }
+    DockerRegistry.completeDockerRegistry = completeDockerRegistry;
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry._module = angular.module(DockerRegistry.pluginName, ['hawtio-core', 'ngResource']);
+    DockerRegistry.controller = PluginHelpers.createControllerFunction(DockerRegistry._module, DockerRegistry.pluginName);
+    DockerRegistry.route = PluginHelpers.createRoutingFunction(DockerRegistry.templatePath);
+    DockerRegistry._module.config(['$routeProvider', function ($routeProvider) {
+        $routeProvider.when(UrlHelpers.join(DockerRegistry.context, 'list'), DockerRegistry.route('list.html', false));
+    }]);
+    DockerRegistry._module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', function (jolokiaUrl, jolokia, $q, $rootScope) {
+        // TODO use the services plugin to find it?
+        /*
+            var answer = <ng.IDeferred<string>> $q.defer();
+            jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined,
+              <Jolokia.IParams> Core.onSuccess((response) => {
+                var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
+                log.debug("Discovered docker registry API URL: " , proxified);
+                answer.resolve(proxified);
+                Core.$apply($rootScope);
+              }, {
+                error: (response) => {
+                  log.debug("error fetching docker registry API details: ", response);
+                  answer.reject(response);
+                  Core.$apply($rootScope);
+                }
+              }));
+            return answer.promise;
+        */
+    }]);
+    DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
+        DockerRegistry.log.debug("Running");
+        viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
+        /* TODO commenting this out until we fix the above service :-)
+        workspace.topLevelTabs.push({
+          id: 'docker-registry',
+          content: 'Images',
+          isValid: (workspace:Core.Workspace) => true, // TODO workspace.treeContainsDomainAndProperties(Fabric.jmxDomain, { type: 'KubernetesManager' }),
+          isActive: (workspace:Core.Workspace) => workspace.isLinkActive('docker-registry'),
+          href: () => defaultRoute
+        });
+        */
+    }]);
+    hawtioPluginLoader.addModule(DockerRegistry.pluginName);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+/// <reference path="dockerRegistryPlugin.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.TopLevel = DockerRegistry.controller("TopLevel", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
+        $scope.repositories = [];
+        $scope.fetched = false;
+        $scope.restURL = '';
+        DockerRegistry.getDockerImageRepositories(function (restURL, repositories) {
+            $scope.restURL = restURL;
+            $scope.fetched = true;
+            if (repositories) {
+                $scope.repositories = repositories.results;
+                var previous = angular.toJson($scope.repositories);
+                $scope.fetch = PollHelpers.setupPolling($scope, function (next) {
+                    var searchURL = UrlHelpers.join($scope.restURL, DockerRegistry.SEARCH_FRAGMENT);
+                    $http.get(searchURL).success(function (repositories) {
+                        if (repositories && repositories.results) {
+                            if (previous !== angular.toJson(repositories.results)) {
+                                $scope.repositories = repositories.results;
+                                previous = angular.toJson($scope.repositories);
+                            }
+                        }
+                        next();
+                    });
+                });
+                $scope.fetch();
+            }
+            else {
+                DockerRegistry.log.debug("Failed initial fetch of image repositories");
+            }
+        });
+        $scope.$watchCollection('repositories', function (repositories) {
+            if (!Core.isBlank($scope.restURL)) {
+                if (!repositories || repositories.length === 0) {
+                    $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
+                    return;
+                }
+                // we've a new list of repositories, let's refresh our info on 'em
+                var outstanding = repositories.length;
+                function maybeNotify() {
+                    outstanding = outstanding - 1;
+                    if (outstanding <= 0) {
+                        $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
+                    }
+                }
+                repositories.forEach(function (repository) {
+                    var tagURL = UrlHelpers.join($scope.restURL, 'v1/repositories/' + repository.name + '/tags');
+                    // we'll give it half a second as sometimes tag info isn't instantly available
+                    $timeout(function () {
+                        DockerRegistry.log.debug("Fetching tags from URL: ", tagURL);
+                        $http.get(tagURL).success(function (tags) {
+                            DockerRegistry.log.debug("Got tags: ", tags, " for image repository: ", repository.name);
+                            repository.tags = tags;
+                            maybeNotify();
+                        }).error(function (data) {
+                            DockerRegistry.log.debug("Error fetching data for image repository: ", repository.name, " error: ", data);
+                            maybeNotify();
+                        });
+                    }, 500);
+                });
+            }
+        });
+    }]);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+/// <reference path="dockerRegistryPlugin.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.TagController = DockerRegistry.controller("TagController", ["$scope", function ($scope) {
+        $scope.selectImage = function (imageID) {
+            $scope.$emit("DockerRegistry.SelectedImageID", imageID);
+        };
+    }]);
+    DockerRegistry.ListController = DockerRegistry.controller("ListController", ["$scope", "$templateCache", "$http", function ($scope, $templateCache, $http) {
+        $scope.imageRepositories = [];
+        $scope.selectedImage = undefined;
+        $scope.tableConfig = {
+            data: 'imageRepositories',
+            showSelectionCheckbox: true,
+            enableRowClickSelection: false,
+            multiSelect: true,
+            selectedItems: [],
+            filterOptions: {
+                filterText: ''
+            },
+            columnDefs: [
+                { field: 'name', displayName: 'Name', defaultSort: true },
+                { field: 'description', displayName: 'Description' },
+                { field: 'tags', displayName: 'Tags', cellTemplate: $templateCache.get("tagsTemplate.html") }
+            ]
+        };
+        $scope.deletePrompt = function (selectedRepositories) {
+            UI.multiItemConfirmActionDialog({
+                collection: selectedRepositories,
+                index: 'name',
+                onClose: function (result) {
+                    if (result) {
+                        selectedRepositories.forEach(function (repository) {
+                            var deleteURL = UrlHelpers.join($scope.restURL, '/v1/repositories/' + repository.name + '/');
+                            DockerRegistry.log.debug("Using URL: ", deleteURL);
+                            $http.delete(deleteURL).success(function (data) {
+                                DockerRegistry.log.debug("Deleted repository: ", repository.name);
+                            }).error(function (data) {
+                                DockerRegistry.log.debug("Failed to delete repository: ", repository.name);
+                            });
+                        });
+                    }
+                },
+                title: 'Delete Repositories?',
+                action: 'The following repositories will be deleted:',
+                okText: 'Delete',
+                okClass: 'btn-danger',
+                custom: 'This operation is permanent once completed!',
+                customClass: 'alert alert-warning'
+            }).open();
+        };
+        $scope.$on("DockerRegistry.SelectedImageID", function ($event, imageID) {
+            var imageJsonURL = UrlHelpers.join($scope.restURL, '/v1/images/' + imageID + '/json');
+            $http.get(imageJsonURL).success(function (image) {
+                DockerRegistry.log.debug("Got image: ", image);
+                $scope.selectedImage = image;
+            });
+        });
+        $scope.$on('DockerRegistry.Repositories', function ($event, restURL, repositories) {
+            $scope.imageRepositories = repositories;
+        });
+    }]);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="gitHelpers.ts"/>
+/**
+ * @module Git
+ * @main Git
+ */
+var Git;
+(function (Git) {
+    /**
+     * A default implementation which uses jolokia and the
+     * GitFacadeMXBean over JMX
+     *
+     * @class JolokiaGit
+     * @uses GitRepository
+     *
+     */
+    var JolokiaGit = (function () {
+        function JolokiaGit(mbean, jolokia, localStorage, userDetails, branch) {
+            if (branch === void 0) { branch = "master"; }
+            this.mbean = mbean;
+            this.jolokia = jolokia;
+            this.localStorage = localStorage;
+            this.userDetails = userDetails;
+            this.branch = branch;
+        }
+        JolokiaGit.prototype.getRepositoryLabel = function (fn, error) {
+            return this.jolokia.request({ type: "read", mbean: this.mbean, attribute: ["RepositoryLabel"] }, Core.onSuccess(function (result) {
+                fn(result.value.RepositoryLabel);
+            }, { error: error }));
+        };
+        JolokiaGit.prototype.exists = function (branch, path, fn) {
+            var result;
+            if (angular.isDefined(fn) && fn) {
+                result = this.jolokia.execute(this.mbean, "exists", branch, path, Core.onSuccess(fn));
+            }
+            else {
+                result = this.jolokia.execute(this.mbean, "exists", branch, path);
+            }
+            if (angular.isDefined(result) && result) {
+                return true;
+            }
+            else {
+                return false;
+            }
+        };
+        JolokiaGit.prototype.read = function (branch, path, fn) {
+            return this.jolokia.execute(this.mbean, "read", branch, path, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.write = function (branch, path, commitMessage, contents, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "write", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.writeBase64 = function (branch, path, commitMessage, contents, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "writeBase64", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.createDirectory = function (branch, path, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "createDirectory", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.revertTo = function (branch, objectId, blobPath, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "revertTo", branch, objectId, blobPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.rename = function (branch, oldPath, newPath, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "rename", branch, oldPath, newPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.remove = function (branch, path, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "remove", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.completePath = function (branch, completionText, directoriesOnly, fn) {
+            return this.jolokia.execute(this.mbean, "completePath", branch, completionText, directoriesOnly, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.history = function (branch, objectId, path, limit, fn) {
+            return this.jolokia.execute(this.mbean, "history", branch, objectId, path, limit, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.commitTree = function (commitId, fn) {
+            return this.jolokia.execute(this.mbean, "getCommitTree", commitId, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.commitInfo = function (commitId, fn) {
+            return this.jolokia.execute(this.mbean, "getCommitInfo", commitId, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.diff = function (objectId, baseObjectId, path, fn) {
+            return this.jolokia.execute(this.mbean, "diff", objectId, baseObjectId, path, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.getContent = function (objectId, blobPath, fn) {
+            return this.jolokia.execute(this.mbean, "getContent", objectId, blobPath, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.readJsonChildContent = function (path, nameWildcard, search, fn) {
+            return this.jolokia.execute(this.mbean, "readJsonChildContent", this.branch, path, nameWildcard, search, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.branches = function (fn) {
+            return this.jolokia.execute(this.mbean, "branches", Core.onSuccess(fn));
+        };
+        // TODO move...
+        JolokiaGit.prototype.getUserName = function () {
+            return this.localStorage["gitUserName"] || this.userDetails.username || "anonymous";
+        };
+        JolokiaGit.prototype.getUserEmail = function () {
+            return this.localStorage["gitUserEmail"] || "anonymous@gmail.com";
+        };
+        return JolokiaGit;
+    })();
+    Git.JolokiaGit = JolokiaGit;
+})(Git || (Git = {}));
 
 /// <reference path="../../includes.ts"/>
 /**
@@ -8573,987 +9559,6 @@ var Camel;
 })(Camel || (Camel = {}));
 
 /// <reference path="../../includes.ts"/>
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryInterfaces.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.context = '/docker-registry';
-    DockerRegistry.hash = UrlHelpers.join('#', DockerRegistry.context);
-    DockerRegistry.defaultRoute = UrlHelpers.join(DockerRegistry.hash, 'list');
-    DockerRegistry.basePath = UrlHelpers.join('plugins', DockerRegistry.context);
-    DockerRegistry.templatePath = UrlHelpers.join(DockerRegistry.basePath, 'html');
-    DockerRegistry.pluginName = 'DockerRegistry';
-    DockerRegistry.log = Logger.get(DockerRegistry.pluginName);
-    DockerRegistry.SEARCH_FRAGMENT = '/v1/search';
-    /**
-     * Fetch the available docker images in the registry, can only
-     * be called after app initialization
-     */
-    function getDockerImageRepositories(callback) {
-        var DockerRegistryRestURL = HawtioCore.injector.get("DockerRegistryRestURL");
-        var $http = HawtioCore.injector.get("$http");
-        DockerRegistryRestURL.then(function (restURL) {
-            $http.get(UrlHelpers.join(restURL, DockerRegistry.SEARCH_FRAGMENT)).success(function (data) {
-                callback(restURL, data);
-            }).error(function (data) {
-                DockerRegistry.log.debug("Error fetching image repositories:", data);
-                callback(restURL, null);
-            });
-        });
-    }
-    DockerRegistry.getDockerImageRepositories = getDockerImageRepositories;
-    function completeDockerRegistry() {
-        var $q = HawtioCore.injector.get("$q");
-        var $rootScope = HawtioCore.injector.get("$rootScope");
-        var deferred = $q.defer();
-        getDockerImageRepositories(function (restURL, repositories) {
-            if (repositories && repositories.results) {
-                // log.debug("Got back repositories: ", repositories);
-                var results = repositories.results;
-                results = results.sortBy(function (res) {
-                    return res.name;
-                }).first(15);
-                var names = results.map(function (res) {
-                    return res.name;
-                });
-                // log.debug("Results: ", names);
-                deferred.resolve(names);
-            }
-            else {
-                // log.debug("didn't get back anything, bailing");
-                deferred.reject([]);
-            }
-        });
-        return deferred.promise;
-    }
-    DockerRegistry.completeDockerRegistry = completeDockerRegistry;
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry._module = angular.module(DockerRegistry.pluginName, ['hawtio-core', 'ngResource']);
-    DockerRegistry.controller = PluginHelpers.createControllerFunction(DockerRegistry._module, DockerRegistry.pluginName);
-    DockerRegistry.route = PluginHelpers.createRoutingFunction(DockerRegistry.templatePath);
-    DockerRegistry._module.config(['$routeProvider', function ($routeProvider) {
-        $routeProvider.when(UrlHelpers.join(DockerRegistry.context, 'list'), DockerRegistry.route('list.html', false));
-    }]);
-    DockerRegistry._module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', function (jolokiaUrl, jolokia, $q, $rootScope) {
-        // TODO use the services plugin to find it?
-        /*
-            var answer = <ng.IDeferred<string>> $q.defer();
-            jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined,
-              <Jolokia.IParams> Core.onSuccess((response) => {
-                var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
-                log.debug("Discovered docker registry API URL: " , proxified);
-                answer.resolve(proxified);
-                Core.$apply($rootScope);
-              }, {
-                error: (response) => {
-                  log.debug("error fetching docker registry API details: ", response);
-                  answer.reject(response);
-                  Core.$apply($rootScope);
-                }
-              }));
-            return answer.promise;
-        */
-    }]);
-    DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
-        DockerRegistry.log.debug("Running");
-        viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
-        /* TODO commenting this out until we fix the above service :-)
-        workspace.topLevelTabs.push({
-          id: 'docker-registry',
-          content: 'Images',
-          isValid: (workspace:Core.Workspace) => true, // TODO workspace.treeContainsDomainAndProperties(Fabric.jmxDomain, { type: 'KubernetesManager' }),
-          isActive: (workspace:Core.Workspace) => workspace.isLinkActive('docker-registry'),
-          href: () => defaultRoute
-        });
-        */
-    }]);
-    hawtioPluginLoader.addModule(DockerRegistry.pluginName);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-/// <reference path="dockerRegistryPlugin.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.TopLevel = DockerRegistry.controller("TopLevel", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
-        $scope.repositories = [];
-        $scope.fetched = false;
-        $scope.restURL = '';
-        DockerRegistry.getDockerImageRepositories(function (restURL, repositories) {
-            $scope.restURL = restURL;
-            $scope.fetched = true;
-            if (repositories) {
-                $scope.repositories = repositories.results;
-                var previous = angular.toJson($scope.repositories);
-                $scope.fetch = PollHelpers.setupPolling($scope, function (next) {
-                    var searchURL = UrlHelpers.join($scope.restURL, DockerRegistry.SEARCH_FRAGMENT);
-                    $http.get(searchURL).success(function (repositories) {
-                        if (repositories && repositories.results) {
-                            if (previous !== angular.toJson(repositories.results)) {
-                                $scope.repositories = repositories.results;
-                                previous = angular.toJson($scope.repositories);
-                            }
-                        }
-                        next();
-                    });
-                });
-                $scope.fetch();
-            }
-            else {
-                DockerRegistry.log.debug("Failed initial fetch of image repositories");
-            }
-        });
-        $scope.$watchCollection('repositories', function (repositories) {
-            if (!Core.isBlank($scope.restURL)) {
-                if (!repositories || repositories.length === 0) {
-                    $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
-                    return;
-                }
-                // we've a new list of repositories, let's refresh our info on 'em
-                var outstanding = repositories.length;
-                function maybeNotify() {
-                    outstanding = outstanding - 1;
-                    if (outstanding <= 0) {
-                        $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
-                    }
-                }
-                repositories.forEach(function (repository) {
-                    var tagURL = UrlHelpers.join($scope.restURL, 'v1/repositories/' + repository.name + '/tags');
-                    // we'll give it half a second as sometimes tag info isn't instantly available
-                    $timeout(function () {
-                        DockerRegistry.log.debug("Fetching tags from URL: ", tagURL);
-                        $http.get(tagURL).success(function (tags) {
-                            DockerRegistry.log.debug("Got tags: ", tags, " for image repository: ", repository.name);
-                            repository.tags = tags;
-                            maybeNotify();
-                        }).error(function (data) {
-                            DockerRegistry.log.debug("Error fetching data for image repository: ", repository.name, " error: ", data);
-                            maybeNotify();
-                        });
-                    }, 500);
-                });
-            }
-        });
-    }]);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-/// <reference path="dockerRegistryPlugin.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.TagController = DockerRegistry.controller("TagController", ["$scope", function ($scope) {
-        $scope.selectImage = function (imageID) {
-            $scope.$emit("DockerRegistry.SelectedImageID", imageID);
-        };
-    }]);
-    DockerRegistry.ListController = DockerRegistry.controller("ListController", ["$scope", "$templateCache", "$http", function ($scope, $templateCache, $http) {
-        $scope.imageRepositories = [];
-        $scope.selectedImage = undefined;
-        $scope.tableConfig = {
-            data: 'imageRepositories',
-            showSelectionCheckbox: true,
-            enableRowClickSelection: false,
-            multiSelect: true,
-            selectedItems: [],
-            filterOptions: {
-                filterText: ''
-            },
-            columnDefs: [
-                { field: 'name', displayName: 'Name', defaultSort: true },
-                { field: 'description', displayName: 'Description' },
-                { field: 'tags', displayName: 'Tags', cellTemplate: $templateCache.get("tagsTemplate.html") }
-            ]
-        };
-        $scope.deletePrompt = function (selectedRepositories) {
-            UI.multiItemConfirmActionDialog({
-                collection: selectedRepositories,
-                index: 'name',
-                onClose: function (result) {
-                    if (result) {
-                        selectedRepositories.forEach(function (repository) {
-                            var deleteURL = UrlHelpers.join($scope.restURL, '/v1/repositories/' + repository.name + '/');
-                            DockerRegistry.log.debug("Using URL: ", deleteURL);
-                            $http.delete(deleteURL).success(function (data) {
-                                DockerRegistry.log.debug("Deleted repository: ", repository.name);
-                            }).error(function (data) {
-                                DockerRegistry.log.debug("Failed to delete repository: ", repository.name);
-                            });
-                        });
-                    }
-                },
-                title: 'Delete Repositories?',
-                action: 'The following repositories will be deleted:',
-                okText: 'Delete',
-                okClass: 'btn-danger',
-                custom: 'This operation is permanent once completed!',
-                customClass: 'alert alert-warning'
-            }).open();
-        };
-        $scope.$on("DockerRegistry.SelectedImageID", function ($event, imageID) {
-            var imageJsonURL = UrlHelpers.join($scope.restURL, '/v1/images/' + imageID + '/json');
-            $http.get(imageJsonURL).success(function (image) {
-                DockerRegistry.log.debug("Got image: ", image);
-                $scope.selectedImage = image;
-            });
-        });
-        $scope.$on('DockerRegistry.Repositories', function ($event, restURL, repositories) {
-            $scope.imageRepositories = repositories;
-        });
-    }]);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Dozer
- * @main Dozer
- */
-var Dozer;
-(function (Dozer) {
-    /**
-     * The JMX domain for Dozer
-     * @property jmxDomain
-     * @for Dozer
-     * @type String
-     */
-    Dozer.jmxDomain = 'net.sourceforge.dozer';
-    Dozer.introspectorMBean = "hawtio:type=Introspector";
-    /**
-     * Don't try and load properties for these types
-     * @property excludedPackages
-     * @for Dozer
-     * @type {Array}
-     */
-    Dozer.excludedPackages = [
-        'java.lang',
-        'int',
-        'double',
-        'long'
-    ];
-    /**
-     * Lets map the class names to element names
-     * @property elementNameMappings
-     * @for Dozer
-     * @type {Array}
-     */
-    Dozer.elementNameMappings = {
-        "Mapping": "mapping",
-        "MappingClass": "class",
-        "Field": "field"
-    };
-    Dozer.log = Logger.get("Dozer");
-    /**
-     * Converts the XML string or DOM node to a Dozer model
-     * @method loadDozerModel
-     * @for Dozer
-     * @static
-     * @param {Object} xml
-     * @param {String} pageId
-     * @return {Mappings}
-     */
-    function loadDozerModel(xml, pageId) {
-        var doc = xml;
-        if (angular.isString(xml)) {
-            doc = $.parseXML(xml);
-        }
-        console.log("Has Dozer XML document: " + doc);
-        var model = new Dozer.Mappings(doc);
-        var mappingsElement = doc.documentElement;
-        copyAttributes(model, mappingsElement);
-        $(mappingsElement).children("mapping").each(function (idx, element) {
-            var mapping = createMapping(element);
-            model.mappings.push(mapping);
-        });
-        return model;
-    }
-    Dozer.loadDozerModel = loadDozerModel;
-    function saveToXmlText(model) {
-        // lets copy the original doc then replace the mapping elements
-        var element = model.doc.documentElement.cloneNode(false);
-        appendElement(model.mappings, element, null, 1);
-        Dozer.addTextNode(element, "\n");
-        var xmlText = Core.xmlNodeToString(element);
-        return '<?xml version="1.0" encoding="UTF-8"?>\n' + xmlText;
-    }
-    Dozer.saveToXmlText = saveToXmlText;
-    function findUnmappedFields(workspace, mapping, fn) {
-        // lets find the fields which are unmapped
-        var className = mapping.class_a.value;
-        findProperties(workspace, className, null, function (properties) {
-            var answer = [];
-            angular.forEach(properties, function (property) {
-                console.log("got property " + JSON.stringify(property, null, "  "));
-                var name = property.name;
-                if (name) {
-                    if (mapping.hasFromField(name)) {
-                    }
-                    else {
-                        // TODO auto-detect this property name in the to classes?
-                        answer.push(new Dozer.UnmappedField(name, property));
-                    }
-                }
-            });
-            fn(answer);
-        });
-    }
-    Dozer.findUnmappedFields = findUnmappedFields;
-    /**
-     * Finds the properties on the given class and returns them; and either invokes the given function
-     * or does a sync request and returns them
-     * @method findProperties
-     * @for Dozer
-     * @static
-     * @param {Core.Workspace} workspace
-     * @param {String} className
-     * @param {String} filter
-     * @param {Function} fn
-     * @return {any}
-     */
-    function findProperties(workspace, className, filter, fn) {
-        if (filter === void 0) { filter = null; }
-        if (fn === void 0) { fn = null; }
-        var mbean = getIntrospectorMBean(workspace);
-        if (mbean) {
-            if (filter) {
-                return workspace.jolokia.execute(mbean, "findProperties", className, filter, Core.onSuccess(fn));
-            }
-            else {
-                return workspace.jolokia.execute(mbean, "getProperties", className, Core.onSuccess(fn));
-            }
-        }
-        else {
-            if (fn) {
-                return fn([]);
-            }
-            else {
-                return [];
-            }
-        }
-    }
-    Dozer.findProperties = findProperties;
-    /**
-     * Finds class names matching the given search text and either invokes the function with the results
-     * or does a sync request and returns them.
-     * @method findClassNames
-     * @for Dozer
-     * @static
-     * @param {Core.Workspace} workspace
-     * @param {String} searchText
-     * @param {Number} limit @default 20
-     * @param {Function} fn
-     * @return {any}
-     */
-    function findClassNames(workspace, searchText, limit, fn) {
-        if (limit === void 0) { limit = 20; }
-        if (fn === void 0) { fn = null; }
-        var mbean = getIntrospectorMBean(workspace);
-        if (mbean) {
-            return workspace.jolokia.execute(mbean, "findClassNames", searchText, limit, Core.onSuccess(fn));
-        }
-        else {
-            if (fn) {
-                return fn([]);
-            }
-            else {
-                return [];
-            }
-        }
-    }
-    Dozer.findClassNames = findClassNames;
-    function getIntrospectorMBean(workspace) {
-        // lets hard code this so its easy to use in any JVM
-        return Dozer.introspectorMBean;
-        // return Core.getMBeanTypeObjectName(workspace, "hawtio", "Introspector");
-    }
-    Dozer.getIntrospectorMBean = getIntrospectorMBean;
-    function loadModelFromTree(rootTreeNode, oldModel) {
-        oldModel.mappings = [];
-        angular.forEach(rootTreeNode.childList, function (treeNode) {
-            var mapping = Core.pathGet(treeNode, ["data", "entity"]);
-            if (mapping) {
-                oldModel.mappings.push(mapping);
-            }
-        });
-        return oldModel;
-    }
-    Dozer.loadModelFromTree = loadModelFromTree;
-    function createDozerTree(model) {
-        var id = "mappings";
-        var folder = new Folder(id);
-        folder.addClass = "net-sourceforge-dozer-mappings";
-        folder.domain = Dozer.jmxDomain;
-        folder.typeName = "mappings";
-        folder.entity = model;
-        folder.key = Core.toSafeDomID(id);
-        angular.forEach(model.mappings, function (mapping) {
-            var mappingFolder = createMappingFolder(mapping, folder);
-            folder.children.push(mappingFolder);
-        });
-        return folder;
-    }
-    Dozer.createDozerTree = createDozerTree;
-    function createMappingFolder(mapping, parentFolder) {
-        var mappingName = mapping.name();
-        var mappingFolder = new Folder(mappingName);
-        mappingFolder.addClass = "net-sourceforge-dozer-mapping";
-        mappingFolder.typeName = "mapping";
-        mappingFolder.domain = Dozer.jmxDomain;
-        mappingFolder.key = (parentFolder ? parentFolder.key + "_" : "") + Core.toSafeDomID(mappingName);
-        mappingFolder.parent = parentFolder;
-        mappingFolder.entity = mapping;
-        mappingFolder.icon = Core.url("/plugins/dozer/img/class.gif");
-        /*
-              mappingFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
-              */
-        angular.forEach(mapping.fields, function (field) {
-            addMappingFieldFolder(field, mappingFolder);
-        });
-        return mappingFolder;
-    }
-    Dozer.createMappingFolder = createMappingFolder;
-    function addMappingFieldFolder(field, mappingFolder) {
-        var name = field.name();
-        var fieldFolder = new Folder(name);
-        fieldFolder.addClass = "net-sourceforge-dozer-field";
-        fieldFolder.typeName = "field";
-        fieldFolder.domain = Dozer.jmxDomain;
-        fieldFolder.key = mappingFolder.key + "_" + Core.toSafeDomID(name);
-        fieldFolder.parent = mappingFolder;
-        fieldFolder.entity = field;
-        fieldFolder.icon = Core.url("/plugins/dozer/img/attribute.gif");
-        /*
-              fieldFolder.tooltip = nodeSettings["tooltip"] || nodeSettings["description"] || id;
-              */
-        mappingFolder.children.push(fieldFolder);
-        return fieldFolder;
-    }
-    Dozer.addMappingFieldFolder = addMappingFieldFolder;
-    function createMapping(element) {
-        var mapping = new Dozer.Mapping();
-        var elementJQ = $(element);
-        mapping.class_a = createMappingClass(elementJQ.children("class-a"));
-        mapping.class_b = createMappingClass(elementJQ.children("class-b"));
-        elementJQ.children("field").each(function (idx, fieldElement) {
-            var field = createField(fieldElement);
-            mapping.fields.push(field);
-        });
-        copyAttributes(mapping, element);
-        return mapping;
-    }
-    function createField(element) {
-        if (element) {
-            var jqe = $(element);
-            var a = jqe.children("a").text();
-            var b = jqe.children("b").text();
-            var field = new Dozer.Field(new Dozer.FieldDefinition(a), new Dozer.FieldDefinition(b));
-            copyAttributes(field, element);
-            return field;
-        }
-        return new Dozer.Field(new Dozer.FieldDefinition(""), new Dozer.FieldDefinition(""));
-    }
-    function createMappingClass(jqElement) {
-        if (jqElement && jqElement[0]) {
-            var element = jqElement[0];
-            var text = element.textContent;
-            if (text) {
-                var mappingClass = new Dozer.MappingClass(text);
-                copyAttributes(mappingClass, element);
-                return mappingClass;
-            }
-        }
-        // lets create a default empty mapping
-        return new Dozer.MappingClass("");
-    }
-    function copyAttributes(object, element) {
-        var attributeMap = element.attributes;
-        for (var i = 0; i < attributeMap.length; i++) {
-            // TODO hacky work around for compiler issue ;)
-            //var attr = attributeMap.item(i);
-            var attMap = attributeMap;
-            var attr = attMap.item(i);
-            if (attr) {
-                var name = attr.localName;
-                var value = attr.value;
-                if (name && !name.startsWith("xmlns")) {
-                    var safeName = Forms.safeIdentifier(name);
-                    object[safeName] = value;
-                }
-            }
-        }
-    }
-    function appendAttributes(object, element, ignorePropertyNames) {
-        angular.forEach(object, function (value, key) {
-            if (ignorePropertyNames.any(key)) {
-            }
-            else {
-                // lets add an attribute value
-                if (value) {
-                    var text = value.toString();
-                    // lets replace any underscores with dashes
-                    var name = key.replace(/_/g, '-');
-                    element.setAttribute(name, text);
-                }
-            }
-        });
-    }
-    Dozer.appendAttributes = appendAttributes;
-    /**
-     * Adds a new child element for this mapping to the given element
-     * @method appendElement
-     * @for Dozer
-     * @static
-     * @param {any} object
-     * @param {any} element
-     * @param {String} elementName
-     * @param {Number} indentLevel
-     * @return the last child element created
-     */
-    function appendElement(object, element, elementName, indentLevel) {
-        if (elementName === void 0) { elementName = null; }
-        if (indentLevel === void 0) { indentLevel = 0; }
-        var answer = null;
-        if (angular.isArray(object)) {
-            angular.forEach(object, function (child) {
-                answer = appendElement(child, element, elementName, indentLevel);
-            });
-        }
-        else if (object) {
-            if (!elementName) {
-                var className = Core.pathGet(object, ["constructor", "name"]);
-                if (!className) {
-                    console.log("WARNING: no class name for value " + object);
-                }
-                else {
-                    elementName = Dozer.elementNameMappings[className];
-                    if (!elementName) {
-                        console.log("WARNING: could not map class name " + className + " to an XML element name");
-                    }
-                }
-            }
-            if (elementName) {
-                if (indentLevel) {
-                    var text = indentText(indentLevel);
-                    Dozer.addTextNode(element, text);
-                }
-                var doc = element.ownerDocument || document;
-                var child = doc.createElement(elementName);
-                // navigate child properties...
-                var fn = object.saveToElement;
-                if (fn) {
-                    fn.apply(object, [child]);
-                }
-                else {
-                    angular.forEach(object, function (value, key) {
-                        console.log("has key " + key + " value " + value);
-                    });
-                }
-                // if we have any element children then add newline text node
-                if ($(child).children().length) {
-                    //var text = indentText(indentLevel - 1);
-                    var text = indentText(indentLevel);
-                    Dozer.addTextNode(child, text);
-                }
-                element.appendChild(child);
-                answer = child;
-            }
-        }
-        return answer;
-    }
-    Dozer.appendElement = appendElement;
-    function nameOf(object) {
-        var text = angular.isObject(object) ? object["value"] : null;
-        if (!text && angular.isString(object)) {
-            text = object;
-        }
-        return text || "?";
-    }
-    Dozer.nameOf = nameOf;
-    function addTextNode(element, text) {
-        if (text) {
-            var doc = element.ownerDocument || document;
-            var child = doc.createTextNode(text);
-            element.appendChild(child);
-        }
-    }
-    Dozer.addTextNode = addTextNode;
-    function indentText(indentLevel) {
-        var text = "\n";
-        for (var i = 0; i < indentLevel; i++) {
-            text += "  ";
-        }
-        return text;
-    }
-})(Dozer || (Dozer = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Dozer
- */
-var Dozer;
-(function (Dozer) {
-    /**
-     * @class Mappings
-     */
-    var Mappings = (function () {
-        function Mappings(doc, mappings) {
-            if (mappings === void 0) { mappings = []; }
-            this.doc = doc;
-            this.mappings = mappings;
-        }
-        return Mappings;
-    })();
-    Dozer.Mappings = Mappings;
-    /**
-     * @class Mapping
-     */
-    var Mapping = (function () {
-        function Mapping() {
-            this.fields = [];
-            this.map_id = Core.getUUID();
-            this.class_a = new MappingClass('');
-            this.class_b = new MappingClass('');
-        }
-        Mapping.prototype.name = function () {
-            return Dozer.nameOf(this.class_a) + " -> " + Dozer.nameOf(this.class_b);
-        };
-        Mapping.prototype.hasFromField = function (name) {
-            return this.fields.find(function (f) { return name === f.a.value; });
-        };
-        Mapping.prototype.hasToField = function (name) {
-            return this.fields.find(function (f) { return name === f.b.value; });
-        };
-        Mapping.prototype.saveToElement = function (element) {
-            Dozer.appendElement(this.class_a, element, "class-a", 2);
-            Dozer.appendElement(this.class_b, element, "class-b", 2);
-            Dozer.appendElement(this.fields, element, "field", 2);
-            Dozer.appendAttributes(this, element, ["class_a", "class_b", "fields"]);
-        };
-        return Mapping;
-    })();
-    Dozer.Mapping = Mapping;
-    /**
-     * @class MappingClass
-     */
-    var MappingClass = (function () {
-        function MappingClass(value) {
-            this.value = value;
-        }
-        MappingClass.prototype.saveToElement = function (element) {
-            Dozer.addTextNode(element, this.value);
-            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
-        };
-        return MappingClass;
-    })();
-    Dozer.MappingClass = MappingClass;
-    /**
-     * @class Field
-     */
-    var Field = (function () {
-        function Field(a, b) {
-            this.a = a;
-            this.b = b;
-        }
-        Field.prototype.name = function () {
-            return Dozer.nameOf(this.a) + " -> " + Dozer.nameOf(this.b);
-        };
-        Field.prototype.saveToElement = function (element) {
-            Dozer.appendElement(this.a, element, "a", 3);
-            Dozer.appendElement(this.b, element, "b", 3);
-            Dozer.appendAttributes(this, element, ["a", "b"]);
-        };
-        return Field;
-    })();
-    Dozer.Field = Field;
-    /**
-     * @class FieldDefinition
-     */
-    var FieldDefinition = (function () {
-        function FieldDefinition(value) {
-            this.value = value;
-        }
-        FieldDefinition.prototype.saveToElement = function (element) {
-            Dozer.addTextNode(element, this.value);
-            Dozer.appendAttributes(this, element, ["value", "properties", "error"]);
-        };
-        return FieldDefinition;
-    })();
-    Dozer.FieldDefinition = FieldDefinition;
-    /**
-     * @class UnmappedField
-     */
-    var UnmappedField = (function () {
-        function UnmappedField(fromField, property, toField) {
-            if (toField === void 0) { toField = null; }
-            this.fromField = fromField;
-            this.property = property;
-            this.toField = toField;
-        }
-        return UnmappedField;
-    })();
-    Dozer.UnmappedField = UnmappedField;
-})(Dozer || (Dozer = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Dozer
- */
-var Dozer;
-(function (Dozer) {
-    /**
-     * Configures the JSON schemas to improve the UI models
-     * @method schemaConfigure
-     * @for Dozer
-     */
-    function schemaConfigure() {
-        Dozer.io_hawt_dozer_schema_Field["tabs"] = {
-            'Fields': ['a.value', 'b.value'],
-            'From Field': ['a\\..*'],
-            'To Field': ['b\\..*'],
-            'Field Configuration': ['*']
-        };
-        Dozer.io_hawt_dozer_schema_Mapping["tabs"] = {
-            'Classes': ['class-a.value', 'class-b.value'],
-            'From Class': ['class-a\\..*'],
-            'To Class': ['class-b\\..*'],
-            'Class Configuration': ['*']
-        };
-        // hide the fields table from the class configuration tab
-        Dozer.io_hawt_dozer_schema_Mapping.properties.fieldOrFieldExclude.hidden = true;
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "label"], "From Field");
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "label"], "To Field");
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "label"], "From Class");
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "label"], "To Class");
-        // ignore prefixes in the generated labels
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "ignorePrefixInLabel"], true);
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "ignorePrefixInLabel"], true);
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "ignorePrefixInLabel"], true);
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "ignorePrefixInLabel"], true);
-        // add custom widgets
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-a", "properties", "value", "formTemplate"], classNameWidget("class_a"));
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Mapping, ["properties", "class-b", "properties", "value", "formTemplate"], classNameWidget("class_b"));
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "a", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.a.value" ' + 'typeahead="title for title in fromFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
-        Core.pathSet(Dozer.io_hawt_dozer_schema_Field, ["properties", "b", "properties", "value", "formTemplate"], '<input type="text" ng-model="dozerEntity.b.value" ' + 'typeahead="title for title in toFieldNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>');
-        function classNameWidget(propertyName) {
-            return '<input type="text" ng-model="dozerEntity.' + propertyName + '.value" ' + 'typeahead="title for title in classNames($viewValue) | filter:$viewValue" ' + 'typeahead-editable="true"  title="The Java class name"/>';
-        }
-    }
-    Dozer.schemaConfigure = schemaConfigure;
-})(Dozer || (Dozer = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * A bunch of API stubs for now until we remove references to Fabric or refactor the code
- * to work nicely in Kubernetes
- */
-var Fabric;
-(function (Fabric) {
-    Fabric.fabricTopLevel = "fabric/profiles/";
-    Fabric.profileSuffix = ".profile";
-    function initScope($scope, $location, jolokia, workspace) {
-    }
-    Fabric.initScope = initScope;
-    function brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName) {
-    }
-    Fabric.brokerConfigLink = brokerConfigLink;
-    function containerJolokia(jolokia, id, fn) {
-    }
-    Fabric.containerJolokia = containerJolokia;
-    function pagePathToProfileId(pageId) {
-    }
-    Fabric.pagePathToProfileId = pagePathToProfileId;
-    function profileJolokia(jolokia, profileId, versionId, callback) {
-    }
-    Fabric.profileJolokia = profileJolokia;
-    function getDefaultVersionId(jolokia) {
-    }
-    Fabric.getDefaultVersionId = getDefaultVersionId;
-    function getContainersFields(jolokia, fields, onFabricContainerData) {
-    }
-    Fabric.getContainersFields = getContainersFields;
-    function loadBrokerStatus(onBrokerData) {
-        /** TODO
-         Core.register(jolokia, $scope, {type: 'exec', mbean: Fabric.mqManagerMBean, operation: "loadBrokerStatus()"}, Core.onSuccess(onBrokerData));
-         */
-    }
-    Fabric.loadBrokerStatus = loadBrokerStatus;
-    function connectToBroker($scope, container, postfix) {
-    }
-    Fabric.connectToBroker = connectToBroker;
-    function createJolokia(url) {
-    }
-    Fabric.createJolokia = createJolokia;
-    function hasFabric(workspace) {
-    }
-    Fabric.hasFabric = hasFabric;
-    function profilePath(profileId) {
-    }
-    Fabric.profilePath = profilePath;
-    function getOverlayProfileProperties(versionId, profileId, pid, onProfilePropertiesLoaded) {
-        /**
-         * TODO
-         jolokia.execute(Fabric.managerMBean, "getOverlayProfileProperties", $scope.versionId, $scope.profileId, $scope.pid, Core.onSuccess(onProfilePropertiesLoaded));
-         */
-    }
-    Fabric.getOverlayProfileProperties = getOverlayProfileProperties;
-    function getProfileProperties(versionId, profileId, zkPid, onProfileProperties) {
-        /** TODO
-         jolokia.execute(Fabric.managerMBean, "getProfileProperties", $scope.versionId, $scope.profileId, $scope.zkPid, Core.onSuccess(onProfileProperties));
-         */
-    }
-    Fabric.getProfileProperties = getProfileProperties;
-    function setProfileProperties(versionId, profileId, pid, data, callback) {
-        /*
-         TODO
-         jolokia.execute(Fabric.managerMBean, "setProfileProperties", $scope.versionId, $scope.profileId, pid, data, callback);
-         */
-    }
-    Fabric.setProfileProperties = setProfileProperties;
-    function deleteConfigurationFile(versionId, profileId, configFile, successFn, errorFn) {
-        /** TODO
-        jolokia.execute(Fabric.managerMBean, "deleteConfigurationFile",
-          versionId, profileId, configFile,
-          Core.onSuccess(successFn, {error: errorFn}));
-         */
-    }
-    Fabric.deleteConfigurationFile = deleteConfigurationFile;
-    function getProfile(jolokia, branch, profileName, someFlag) {
-    }
-    Fabric.getProfile = getProfile;
-    function createProfile(jolokia, branch, profileName, baseProfiles, successFn, errorFn) {
-    }
-    Fabric.createProfile = createProfile;
-    function newConfigFile(jolokia, branch, profileName, fileName, successFn, errorFn) {
-    }
-    Fabric.newConfigFile = newConfigFile;
-    function saveConfigFile(jolokia, branch, profileName, fileName, contents, successFn, errorFn) {
-    }
-    Fabric.saveConfigFile = saveConfigFile;
-    function getVersionIds(jolokia) {
-    }
-    Fabric.getVersionIds = getVersionIds;
-})(Fabric || (Fabric = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="gitHelpers.ts"/>
-/**
- * @module Git
- * @main Git
- */
-var Git;
-(function (Git) {
-    /**
-     * A default implementation which uses jolokia and the
-     * GitFacadeMXBean over JMX
-     *
-     * @class JolokiaGit
-     * @uses GitRepository
-     *
-     */
-    var JolokiaGit = (function () {
-        function JolokiaGit(mbean, jolokia, localStorage, userDetails, branch) {
-            if (branch === void 0) { branch = "master"; }
-            this.mbean = mbean;
-            this.jolokia = jolokia;
-            this.localStorage = localStorage;
-            this.userDetails = userDetails;
-            this.branch = branch;
-        }
-        JolokiaGit.prototype.getRepositoryLabel = function (fn, error) {
-            return this.jolokia.request({ type: "read", mbean: this.mbean, attribute: ["RepositoryLabel"] }, Core.onSuccess(function (result) {
-                fn(result.value.RepositoryLabel);
-            }, { error: error }));
-        };
-        JolokiaGit.prototype.exists = function (branch, path, fn) {
-            var result;
-            if (angular.isDefined(fn) && fn) {
-                result = this.jolokia.execute(this.mbean, "exists", branch, path, Core.onSuccess(fn));
-            }
-            else {
-                result = this.jolokia.execute(this.mbean, "exists", branch, path);
-            }
-            if (angular.isDefined(result) && result) {
-                return true;
-            }
-            else {
-                return false;
-            }
-        };
-        JolokiaGit.prototype.read = function (branch, path, fn) {
-            return this.jolokia.execute(this.mbean, "read", branch, path, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.write = function (branch, path, commitMessage, contents, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "write", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.writeBase64 = function (branch, path, commitMessage, contents, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "writeBase64", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.createDirectory = function (branch, path, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "createDirectory", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.revertTo = function (branch, objectId, blobPath, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "revertTo", branch, objectId, blobPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.rename = function (branch, oldPath, newPath, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "rename", branch, oldPath, newPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.remove = function (branch, path, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "remove", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.completePath = function (branch, completionText, directoriesOnly, fn) {
-            return this.jolokia.execute(this.mbean, "completePath", branch, completionText, directoriesOnly, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.history = function (branch, objectId, path, limit, fn) {
-            return this.jolokia.execute(this.mbean, "history", branch, objectId, path, limit, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.commitTree = function (commitId, fn) {
-            return this.jolokia.execute(this.mbean, "getCommitTree", commitId, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.commitInfo = function (commitId, fn) {
-            return this.jolokia.execute(this.mbean, "getCommitInfo", commitId, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.diff = function (objectId, baseObjectId, path, fn) {
-            return this.jolokia.execute(this.mbean, "diff", objectId, baseObjectId, path, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.getContent = function (objectId, blobPath, fn) {
-            return this.jolokia.execute(this.mbean, "getContent", objectId, blobPath, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.readJsonChildContent = function (path, nameWildcard, search, fn) {
-            return this.jolokia.execute(this.mbean, "readJsonChildContent", this.branch, path, nameWildcard, search, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.branches = function (fn) {
-            return this.jolokia.execute(this.mbean, "branches", Core.onSuccess(fn));
-        };
-        // TODO move...
-        JolokiaGit.prototype.getUserName = function () {
-            return this.localStorage["gitUserName"] || this.userDetails.username || "anonymous";
-        };
-        JolokiaGit.prototype.getUserEmail = function () {
-            return this.localStorage["gitUserEmail"] || "anonymous@gmail.com";
-        };
-        return JolokiaGit;
-    })();
-    Git.JolokiaGit = JolokiaGit;
-})(Git || (Git = {}));
-
-/// <reference path="../../includes.ts"/>
 /**
  * @module Karaf
  */
@@ -11227,2875 +11232,6 @@ var Maven;
 })(Maven || (Maven = {}));
 
 /// <reference path="../../includes.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    Osgi.log = Logger.get("OSGi");
-    function defaultBundleValues(workspace, $scope, values) {
-        var allValues = values;
-        angular.forEach(values, function (row) {
-            row["ImportData"] = parseActualPackages(row["ImportedPackages"]);
-            row["ExportData"] = parseActualPackages(row["ExportedPackages"]);
-            row["IdentifierLink"] = bundleLinks(workspace, row["Identifier"]);
-            row["Hosts"] = labelBundleLinks(workspace, row["Hosts"], allValues);
-            row["Fragments"] = labelBundleLinks(workspace, row["Fragments"], allValues);
-            row["ImportedPackages"] = row["ImportedPackages"].union([]);
-            row["StateStyle"] = getStateStyle("label", row["State"]);
-            row["RequiringBundles"] = labelBundleLinks(workspace, row["RequiringBundles"], allValues);
-        });
-        return values;
-    }
-    Osgi.defaultBundleValues = defaultBundleValues;
-    function getStateStyle(prefix, state) {
-        switch (state) {
-            case "INSTALLED":
-                return prefix + "-important";
-            case "RESOLVED":
-                return prefix + "-inverse";
-            case "STARTING":
-                return prefix + "-warning";
-            case "ACTIVE":
-                return prefix + "-success";
-            case "STOPPING":
-                return prefix + "-info";
-            case "UNINSTALLED":
-                return "";
-            default:
-                return prefix + "-important";
-        }
-    }
-    Osgi.getStateStyle = getStateStyle;
-    function defaultServiceValues(workspace, $scope, values) {
-        angular.forEach(values, function (row) {
-            row["BundleIdentifier"] = bundleLinks(workspace, row["BundleIdentifier"]);
-        });
-        return values;
-    }
-    Osgi.defaultServiceValues = defaultServiceValues;
-    function defaultPackageValues(workspace, $scope, values) {
-        var packages = [];
-        function onPackageEntry(packageEntry, row) {
-            if (!row)
-                row = packageEntry;
-            var name = packageEntry["Name"];
-            var version = packageEntry["Version"];
-            if (name && !name.startsWith("#")) {
-                packageEntry["VersionLink"] = "<a href='" + Core.url("#/osgi/package/" + name + "/" + version + workspace.hash()) + "'>" + version + "</a>";
-                var importingBundles = row["ImportingBundles"] || packageEntry["ImportingBundles"];
-                var exportingBundles = row["ExportingBundles"] || packageEntry["ExportingBundles"];
-                packageEntry["ImportingBundleLinks"] = bundleLinks(workspace, importingBundles);
-                packageEntry["ImportingBundleLinks"] = bundleLinks(workspace, importingBundles);
-                packageEntry["ExportingBundleLinks"] = bundleLinks(workspace, exportingBundles);
-                packages.push(packageEntry);
-            }
-        }
-        // the values could contain a child 'values' array of objects so use those directly
-        var childValues = values.values;
-        if (childValues) {
-            angular.forEach(childValues, onPackageEntry);
-        }
-        angular.forEach(values, function (row) {
-            angular.forEach(row, function (version) {
-                angular.forEach(version, function (packageEntry) {
-                    onPackageEntry(packageEntry, row);
-                });
-            });
-        });
-        return packages;
-    }
-    Osgi.defaultPackageValues = defaultPackageValues;
-    function defaultConfigurationValues(workspace, $scope, values) {
-        var array = [];
-        angular.forEach(values, function (row) {
-            var map = {};
-            map["Pid"] = row[0];
-            map["PidLink"] = "<a href='" + Core.url("#/osgi/pid/" + row[0] + workspace.hash()) + "'>" + row[0] + "</a>";
-            map["Bundle"] = row[1];
-            array.push(map);
-        });
-        return array;
-    }
-    Osgi.defaultConfigurationValues = defaultConfigurationValues;
-    function parseActualPackages(packages) {
-        var result = {};
-        for (var i = 0; i < packages.length; i++) {
-            var pkg = packages[i];
-            var idx = pkg.indexOf(";");
-            if (idx > 0) {
-                var name = pkg.substring(0, idx);
-                var ver = pkg.substring(idx + 1);
-                var data = result[name];
-                if (data === undefined) {
-                    data = {};
-                    result[name] = data;
-                }
-                data["ReportedVersion"] = ver;
-            }
-        }
-        return result;
-    }
-    Osgi.parseActualPackages = parseActualPackages;
-    function parseManifestHeader(headers, name) {
-        var result = {};
-        var data = {};
-        var hdr = headers[name];
-        if (hdr === undefined) {
-            return result;
-        }
-        var ephdr = hdr.Value;
-        var inPkg = true;
-        var inQuotes = false;
-        var pkgName = "";
-        var daDecl = "";
-        for (var i = 0; i < ephdr.length; i++) {
-            var c = ephdr[i];
-            if (c === '"') {
-                inQuotes = !inQuotes;
-                continue;
-            }
-            if (inQuotes) {
-                daDecl += c;
-                continue;
-            }
-            // from here on we are never inside quotes
-            if (c === ';') {
-                if (inPkg) {
-                    inPkg = false;
-                }
-                else {
-                    handleDADecl(data, daDecl);
-                    // reset directive and attribute variable
-                    daDecl = "";
-                }
-                continue;
-            }
-            if (c === ',') {
-                handleDADecl(data, daDecl);
-                result[pkgName] = data;
-                // reset data
-                data = {};
-                pkgName = "";
-                daDecl = "";
-                inPkg = true;
-                continue;
-            }
-            if (inPkg) {
-                pkgName += c;
-            }
-            else {
-                daDecl += c;
-            }
-        }
-        handleDADecl(data, daDecl);
-        result[pkgName] = data;
-        return result;
-    }
-    Osgi.parseManifestHeader = parseManifestHeader;
-    function handleDADecl(data, daDecl) {
-        var didx = daDecl.indexOf(":=");
-        if (didx > 0) {
-            data["D" + daDecl.substring(0, didx)] = daDecl.substring(didx + 2);
-            return;
-        }
-        var aidx = daDecl.indexOf("=");
-        if (aidx > 0) {
-            data["A" + daDecl.substring(0, aidx)] = daDecl.substring(aidx + 1);
-            return;
-        }
-    }
-    function toCollection(values) {
-        var collection = values;
-        if (!angular.isArray(values)) {
-            collection = [values];
-        }
-        return collection;
-    }
-    Osgi.toCollection = toCollection;
-    function labelBundleLinks(workspace, values, allValues) {
-        var answer = "";
-        var sorted = toCollection(values).sort(function (a, b) {
-            return a - b;
-        });
-        angular.forEach(sorted, function (value, key) {
-            var prefix = "";
-            if (answer.length > 0) {
-                prefix = " ";
-            }
-            var info = allValues[value] || {};
-            var labelText = info.SymbolicName;
-            answer += prefix + "<a class='label' href='" + Core.url("#/osgi/bundle/" + value + workspace.hash()) + "'>" + labelText + "</a>";
-        });
-        return answer;
-    }
-    Osgi.labelBundleLinks = labelBundleLinks;
-    function bundleLinks(workspace, values) {
-        var answer = "";
-        var sorted = toCollection(values).sort(function (a, b) {
-            return a - b;
-        });
-        angular.forEach(sorted, function (value, key) {
-            var prefix = "";
-            if (answer.length > 0) {
-                prefix = " ";
-            }
-            answer += prefix + "<a class='label' href='" + Core.url("#/osgi/bundle/" + value + workspace.hash()) + "'>" + value + "</a>";
-        });
-        return answer;
-    }
-    Osgi.bundleLinks = bundleLinks;
-    function pidLinks(workspace, values) {
-        var answer = "";
-        angular.forEach(toCollection(values), function (value, key) {
-            var prefix = "";
-            if (answer.length > 0) {
-                prefix = " ";
-            }
-            answer += prefix + "<a href='" + Core.url("#/osgi/bundle/" + value + workspace.hash()) + "'>" + value + "</a>";
-        });
-        return answer;
-    }
-    Osgi.pidLinks = pidLinks;
-    /**
-     * Finds a bundle by id
-     *
-     * @method findBundle
-     * @for Osgi
-     * @param {String} bundleId
-     * @param {Array} values
-     * @return {any}
-     *
-     */
-    function findBundle(bundleId, values) {
-        var answer = "";
-        angular.forEach(values, function (row) {
-            var id = row["Identifier"];
-            if (bundleId === id.toString()) {
-                answer = row;
-                return answer;
-            }
-        });
-        return answer;
-    }
-    Osgi.findBundle = findBundle;
-    function getSelectionBundleMBean(workspace) {
-        if (workspace) {
-            // lets navigate to the tree item based on paths
-            var folder = workspace.tree.navigate("osgi.core", "bundleState");
-            return Osgi.findFirstObjectName(folder);
-        }
-        return null;
-    }
-    Osgi.getSelectionBundleMBean = getSelectionBundleMBean;
-    /**
-     * Walks the tree looking in the first child all the way down until we find an objectName
-     * @method findFirstObjectName
-     * @for Osgi
-     * @param {Folder} node
-     * @return {String}
-     *
-     */
-    function findFirstObjectName(node) {
-        if (node) {
-            var answer = node.objectName;
-            if (answer) {
-                return answer;
-            }
-            else {
-                var children = node.children;
-                if (children && children.length) {
-                    return findFirstObjectName(children[0]);
-                }
-            }
-        }
-        return null;
-    }
-    Osgi.findFirstObjectName = findFirstObjectName;
-    function getSelectionFrameworkMBean(workspace) {
-        if (workspace) {
-            // lets navigate to the tree item based on paths
-            var folder = workspace.tree.navigate("osgi.core", "framework");
-            return Osgi.findFirstObjectName(folder);
-        }
-        return null;
-    }
-    Osgi.getSelectionFrameworkMBean = getSelectionFrameworkMBean;
-    function getSelectionServiceMBean(workspace) {
-        if (workspace) {
-            // lets navigate to the tree item based on paths
-            var folder = workspace.tree.navigate("osgi.core", "serviceState");
-            return Osgi.findFirstObjectName(folder);
-        }
-        return null;
-    }
-    Osgi.getSelectionServiceMBean = getSelectionServiceMBean;
-    function getSelectionPackageMBean(workspace) {
-        if (workspace) {
-            // lets navigate to the tree item based on paths
-            var folder = workspace.tree.navigate("osgi.core", "packageState");
-            return Osgi.findFirstObjectName(folder);
-        }
-        return null;
-    }
-    Osgi.getSelectionPackageMBean = getSelectionPackageMBean;
-    function getSelectionConfigAdminMBean(workspace) {
-        if (workspace) {
-            // lets navigate to the tree item based on paths
-            var folder = workspace.tree.navigate("osgi.compendium", "cm");
-            return Osgi.findFirstObjectName(folder);
-        }
-        return null;
-    }
-    Osgi.getSelectionConfigAdminMBean = getSelectionConfigAdminMBean;
-    function getMetaTypeMBean(workspace) {
-        if (workspace) {
-            var mbeanTypesToDomain = workspace.mbeanTypesToDomain;
-            var typeFolder = mbeanTypesToDomain["MetaTypeFacade"] || {};
-            var mbeanFolder = typeFolder["io.fabric8"] || {};
-            return mbeanFolder["objectName"];
-        }
-        return null;
-    }
-    Osgi.getMetaTypeMBean = getMetaTypeMBean;
-    function getProfileMetadataMBean(workspace) {
-        if (workspace) {
-            var mbeanTypesToDomain = workspace.mbeanTypesToDomain;
-            var typeFolder = mbeanTypesToDomain["ProfileMetadata"] || {};
-            var mbeanFolder = typeFolder["io.fabric8"] || {};
-            return mbeanFolder["objectName"];
-        }
-        return null;
-    }
-    Osgi.getProfileMetadataMBean = getProfileMetadataMBean;
-    function getHawtioOSGiToolsMBean(workspace) {
-        if (workspace) {
-            var mbeanTypesToDomain = workspace.mbeanTypesToDomain;
-            var toolsFacades = mbeanTypesToDomain["OSGiTools"] || {};
-            var hawtioFolder = toolsFacades["hawtio"] || {};
-            return hawtioFolder["objectName"];
-        }
-        return null;
-    }
-    Osgi.getHawtioOSGiToolsMBean = getHawtioOSGiToolsMBean;
-    function getHawtioConfigAdminMBean(workspace) {
-        if (workspace) {
-            var mbeanTypesToDomain = workspace.mbeanTypesToDomain;
-            var typeFolder = mbeanTypesToDomain["ConfigAdmin"] || {};
-            var mbeanFolder = typeFolder["hawtio"] || {};
-            return mbeanFolder["objectName"];
-        }
-        return null;
-    }
-    Osgi.getHawtioConfigAdminMBean = getHawtioConfigAdminMBean;
-    /**
-     * Creates a link to the given configuration pid and/or factoryPid
-     */
-    function createConfigPidLink($scope, workspace, pid, isFactory) {
-        if (isFactory === void 0) { isFactory = false; }
-        return Core.url("#" + createConfigPidPath($scope, pid, isFactory) + workspace.hash());
-    }
-    Osgi.createConfigPidLink = createConfigPidLink;
-    /**
-     * Creates a path to the given configuration pid and/or factoryPid
-     */
-    function createConfigPidPath($scope, pid, isFactory) {
-        if (isFactory === void 0) { isFactory = false; }
-        var link = pid;
-        var versionId = $scope.versionId;
-        var profileId = $scope.profileId;
-        if (versionId && versionId) {
-            var configPage = isFactory ? "/newConfiguration/" : "/configuration/";
-            return "/wiki/branch/" + versionId + configPage + link + "/" + $scope.pageId;
-        }
-        else {
-            return "/osgi/pid/" + link;
-        }
-    }
-    Osgi.createConfigPidPath = createConfigPidPath;
-    /**
-     * A helper method which initialises a scope's jolokia to refer to a profile's jolokia if used in a Fabric
-     * or use a local jolokia
-     */
-    function initProfileScope($scope, $routeParams, $location, localStorage, jolokia, workspace, initFn) {
-        if (initFn === void 0) { initFn = null; }
-        Wiki.initScope($scope, $routeParams, $location);
-        $scope.versionId = $routeParams.versionId || $scope.branch;
-        $scope.profileId = $routeParams.profileId || Fabric.pagePathToProfileId($scope.pageId);
-        if (!$scope.pageId) {
-            $scope.pageId = Fabric.fabricTopLevel + Fabric.profilePath($scope.profileId);
-        }
-        if (!initFn) {
-            initFn = function () { return null; };
-        }
-        var versionId = $scope.versionId;
-        var profileId = $scope.profileId;
-        $scope.profileNotRunning = false;
-        $scope.profileMetadataMBean = null;
-        if (versionId && profileId) {
-            $scope.inFabricProfile = true;
-            $scope.configurationsLink = "/wiki/branch/" + versionId + "/configurations/" + $scope.pageId;
-            $scope.profileMetadataMBean = getProfileMetadataMBean(workspace);
-            if ($scope.profileMetadataMBean) {
-                $scope.profileNotRunning = true;
-                $scope.jolokia = jolokia;
-                $scope.workspace = workspace;
-                initFn();
-            }
-            else {
-                Fabric.profileJolokia(jolokia, profileId, versionId, function (profileJolokia) {
-                    if (profileJolokia) {
-                        $scope.jolokia = profileJolokia;
-                        $scope.workspace = Core.createRemoteWorkspace(profileJolokia, $location, localStorage);
-                    }
-                    else {
-                        // lets deal with the case we have no profile running right now so we have to have a plan B
-                        // for fetching the profile configuration metadata
-                        $scope.jolokia = jolokia;
-                        $scope.workspace = workspace;
-                        $scope.profileNotRunning = true;
-                        $scope.profileMetadataMBean = getProfileMetadataMBean(workspace);
-                    }
-                    initFn();
-                });
-            }
-        }
-        else {
-            $scope.configurationsLink = "/osgi/configurations";
-            $scope.jolokia = jolokia;
-            $scope.workspace = workspace;
-            initFn();
-        }
-    }
-    Osgi.initProfileScope = initProfileScope;
-    function getConfigurationProperties(workspace, jolokia, pid, onDataFn) {
-        var mbean = getSelectionConfigAdminMBean(workspace);
-        var answer = null;
-        if (jolokia && mbean) {
-            answer = jolokia.execute(mbean, 'getProperties', pid, Core.onSuccess(onDataFn));
-        }
-        return answer;
-    }
-    Osgi.getConfigurationProperties = getConfigurationProperties;
-    /**
-     * For a pid of the form "foo.generatedId" for a pid "foo" or "foo.bar" remove the "foo." prefix
-     */
-    function removeFactoryPidPrefix(pid, factoryPid) {
-        if (pid && factoryPid) {
-            if (pid.startsWith(factoryPid)) {
-                return pid.substring(factoryPid.length + 1);
-            }
-            var idx = factoryPid.lastIndexOf(".");
-            if (idx > 0) {
-                var prefix = factoryPid.substring(0, idx + 1);
-                return Core.trimLeading(pid, prefix);
-            }
-        }
-        return pid;
-    }
-    Osgi.removeFactoryPidPrefix = removeFactoryPidPrefix;
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    var OsgiDataService = (function () {
-        function OsgiDataService(workspace, jolokia) {
-            this.jolokia = jolokia;
-            this.workspace = workspace;
-        }
-        OsgiDataService.prototype.getBundles = function () {
-            var bundles = {};
-            // TODO make this async,especially given this returns lots of data
-            var response = this.jolokia.request({
-                type: 'exec',
-                mbean: Osgi.getSelectionBundleMBean(this.workspace),
-                operation: 'listBundles()'
-            }, Core.onSuccess(null));
-            angular.forEach(response.value, function (value, key) {
-                var obj = {
-                    Identifier: value.Identifier,
-                    Name: "",
-                    SymbolicName: value.SymbolicName,
-                    Fragment: value.Fragment,
-                    State: value.State,
-                    Version: value.Version,
-                    LastModified: new Date(Number(value.LastModified)),
-                    Location: value.Location,
-                    StartLevel: undefined,
-                    RegisteredServices: value.RegisteredServices,
-                    ServicesInUse: value.ServicesInUse
-                };
-                if (value.Headers['Bundle-Name']) {
-                    obj.Name = value.Headers['Bundle-Name']['Value'];
-                }
-                bundles[value.Identifier] = obj;
-            });
-            return bundles;
-        };
-        OsgiDataService.prototype.getServices = function () {
-            var services = {};
-            var response = this.jolokia.request({
-                type: 'exec',
-                mbean: Osgi.getSelectionServiceMBean(this.workspace),
-                operation: 'listServices()'
-            }, Core.onSuccess(null));
-            var answer = response.value;
-            angular.forEach(answer, function (value, key) {
-                services[value.Identifier] = value;
-            });
-            return services;
-        };
-        OsgiDataService.prototype.getPackages = function () {
-            var packages = {};
-            var response = this.jolokia.request({
-                type: 'exec',
-                mbean: Osgi.getSelectionPackageMBean(this.workspace),
-                operation: 'listPackages()'
-            }, Core.onSuccess(null));
-            var answer = response.value.values;
-            answer.forEach(function (value) {
-                packages[value.Name + "-" + value.Version] = value;
-            });
-            return packages;
-        };
-        return OsgiDataService;
-    })();
-    Osgi.OsgiDataService = OsgiDataService;
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiData.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="../../karaf/ts/karafHelpers.ts"/>
-/**
- * @module Osgi
- * @main Osgi
- */
-var Osgi;
-(function (Osgi) {
-    Osgi.pluginName = 'osgi';
-    Osgi._module = angular.module(Osgi.pluginName, []);
-    Osgi._module.config(["$routeProvider", function ($routeProvider) {
-        $routeProvider.when('/osgi', { redirectTo: '/osgi/bundle-list' }).when('/osgi/bundle-list', { templateUrl: 'plugins/osgi/html/bundle-list.html' }).when('/osgi/bundles', { templateUrl: 'plugins/osgi/html/bundles.html' }).when('/osgi/bundle/:bundleId', { templateUrl: 'plugins/osgi/html/bundle.html' }).when('/osgi/services', { templateUrl: 'plugins/osgi/html/services.html' }).when('/osgi/packages', { templateUrl: 'plugins/osgi/html/packages.html' }).when('/osgi/package/:package/:version', { templateUrl: 'plugins/osgi/html/package.html' }).when('/osgi/configurations', { templateUrl: 'plugins/osgi/html/configurations.html' }).when('/osgi/pid/:pid/:factoryPid', { templateUrl: 'plugins/osgi/html/pid.html' }).when('/osgi/pid/:pid', { templateUrl: 'plugins/osgi/html/pid.html' }).when('/osgi/fwk', { templateUrl: 'plugins/osgi/html/framework.html' }).when('/osgi/dependencies', { templateUrl: 'plugins/osgi/html/svc-dependencies.html', reloadOnSearch: false });
-    }]);
-    Osgi._module.run(["HawtioNav", "workspace", "viewRegistry", "helpRegistry", function (nav, workspace, viewRegistry, helpRegistry) {
-        //viewRegistry['osgi'] = "plugins/osgi/html/layoutOsgi.html";
-        helpRegistry.addUserDoc('osgi', 'plugins/osgi/doc/help.md', function () {
-            return workspace.treeContainsDomainAndProperties("osgi.core");
-        });
-        var builder = nav.builder();
-        var configuration = builder.id('osgi-configuration').href(function () { return '/osgi/configurations' + workspace.hash(); }).title(function () { return 'Configuration'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/configuration') || workspace.isLinkPrefixActive('/osgi/pid'); }).build();
-        var bundles = builder.id('osgi-bundles').href(function () { return '/osgi/bundle-list' + workspace.hash(); }).title(function () { return 'Bundles'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/bundle'); }).build();
-        var features = builder.id('osgi-features').href(function () { return '/osgi/features' + workspace.hash(); }).title(function () { return 'Features'; }).show(function () { return !Core.isBlank(Karaf.getSelectionFeaturesMBean(workspace)); }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/feature'); }).build();
-        var packages = builder.id('osgi-packages').href(function () { return '/osgi/packages' + workspace.hash(); }).title(function () { return 'Packages'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/package'); }).build();
-        var services = builder.id('osgi-services').href(function () { return '/osgi/services' + workspace.hash(); }).title(function () { return 'Services'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/service'); }).build();
-        var scrComponents = builder.id('osgi-scr-components').href(function () { return '/osgi/scr-components' + workspace.hash(); }).title(function () { return 'Declarative Services'; }).show(function () { return !Core.isBlank(Karaf.getSelectionScrMBean(workspace)); }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/scr-component'); }).build();
-        var server = builder.id('osgi-server').href(function () { return '/osgi/server' + workspace.hash(); }).title(function () { return 'Server'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/server'); }).build();
-        var fwk = builder.id('osgi-fwk').href(function () { return '/osgi/fwk' + workspace.hash(); }).title(function () { return 'Framework'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/fwk'); }).build();
-        var dependencies = builder.id('osgi-dependencies').href(function () { return '/osgi/dependencies' + workspace.hash(); }).title(function () { return 'Dependencies'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/dependencies'); }).build();
-        var tab = builder.id('osgi').title(function () { return 'OSGi'; }).href(function () { return '/osgi'; }).isValid(function () { return workspace.treeContainsDomainAndProperties("osgi.core"); }).isSelected(function () { return workspace.isLinkActive('osgi'); }).tabs(configuration, bundles, features, packages, services, scrComponents, server, fwk, dependencies).build();
-        nav.add(tab);
-        /*
-        workspace.topLevelTabs.push({
-          id: "osgi",
-          content: "OSGi",
-          title: "Visualise and manage the bundles and services in this OSGi container",
-          isValid: (workspace: Workspace) => workspace.treeContainsDomainAndProperties("osgi.core"),
-          href: () => "#/osgi/bundle-list",
-          isActive: (workspace: Workspace) => workspace.isLinkActive("osgi")
-        });
-        */
-    }]);
-    Osgi._module.factory('osgiDataService', ["workspace", "jolokia", function (workspace, jolokia) {
-        return new Osgi.OsgiDataService(workspace, jolokia);
-    }]);
-    hawtioPluginLoader.addModule(Osgi.pluginName);
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    Osgi._module.controller("Osgi.BundleListController", ["$scope", "workspace", "jolokia", "localStorage", function ($scope, workspace, jolokia, localStorage) {
-        $scope.result = {};
-        $scope.bundles = [];
-        $scope.bundleUrl = "";
-        $scope.display = {
-            bundleField: "Name",
-            sortField: "Identifier",
-            bundleFilter: "",
-            startLevelFilter: 0,
-            showActiveMQBundles: false,
-            showCamelBundles: false,
-            showCxfBundles: false,
-            showPlatformBundles: false
-        };
-        if ('bundleList' in localStorage) {
-            $scope.display = angular.fromJson(localStorage['bundleList']);
-        }
-        $scope.$watch('display', function (newValue, oldValue) {
-            if (newValue !== oldValue) {
-                localStorage['bundleList'] = angular.toJson(newValue);
-            }
-        }, true);
-        $scope.installDisabled = function () {
-            return $scope.bundleUrl === "";
-        };
-        $scope.install = function () {
-            jolokia.request({
-                type: 'exec',
-                mbean: Osgi.getSelectionFrameworkMBean(workspace),
-                operation: "installBundle(java.lang.String)",
-                arguments: [$scope.bundleUrl]
-            }, {
-                success: function (response) {
-                    var bundleID = response.value;
-                    jolokia.request({
-                        type: 'exec',
-                        mbean: Osgi.getSelectionBundleMBean(workspace),
-                        operation: "isFragment(long)",
-                        arguments: [bundleID]
-                    }, {
-                        success: function (response) {
-                            var isFragment = response.value;
-                            if (isFragment) {
-                                Core.notification("success", "Fragment installed successfully.");
-                                $scope.bundleUrl = "";
-                                Core.$apply($scope);
-                            }
-                            else {
-                                jolokia.request({
-                                    type: 'exec',
-                                    mbean: Osgi.getSelectionFrameworkMBean(workspace),
-                                    operation: "startBundle(long)",
-                                    arguments: [bundleID]
-                                }, {
-                                    success: function (response) {
-                                        Core.notification("success", "Bundle installed and started successfully.");
-                                        $scope.bundleUrl = "";
-                                        Core.$apply($scope);
-                                    },
-                                    error: function (response) {
-                                        Core.notification("error", response.error);
-                                    }
-                                });
-                            }
-                        },
-                        error: function (response) {
-                            Core.notification("error", response.error);
-                        }
-                    });
-                },
-                error: function (response) {
-                    Core.notification("error", response.error);
-                }
-            });
-        };
-        $scope.$watch('display.sortField', function (newValue, oldValue) {
-            if (newValue !== oldValue) {
-                $scope.bundles = $scope.bundles.sortBy(newValue);
-            }
-        });
-        $scope.getStateStyle = function (state) {
-            return Osgi.getStateStyle("badge", state);
-        };
-        $scope.getLabel = function (bundleObject) {
-            var labelText;
-            if ($scope.display.bundleField === "Name") {
-                labelText = bundleObject.Name;
-                if (labelText === "") {
-                    labelText = bundleObject.SymbolicName;
-                }
-            }
-            else {
-                labelText = bundleObject.SymbolicName;
-            }
-            return labelText;
-        };
-        $scope.filterBundle = function (bundle) {
-            if ($scope.display.startLevelFilter > 0 && bundle.StartLevel < $scope.display.startLevelFilter) {
-                return false;
-            }
-            var labelText = $scope.getLabel(bundle);
-            if ($scope.display.bundleFilter && !labelText.toLowerCase().has($scope.display.bundleFilter.toLowerCase())) {
-                return false;
-            }
-            if (Core.isBlank($scope.display.bundleFilter)) {
-                var answer = true;
-                if (!$scope.display.showPlatformBundles) {
-                    answer = !Karaf.isPlatformBundle(bundle['SymbolicName']);
-                }
-                if (answer && !$scope.display.showActiveMQBundles) {
-                    answer = !Karaf.isActiveMQBundle(bundle['SymbolicName']);
-                }
-                if (answer && !$scope.display.showCxfBundles) {
-                    answer = !Karaf.isCxfBundle(bundle['SymbolicName']);
-                }
-                if (answer && !$scope.display.showCamelBundles) {
-                    answer = !Karaf.isCamelBundle(bundle['SymbolicName']);
-                }
-                return answer;
-            }
-            return true;
-        };
-        function processResponse(response) {
-            var value = response['value'];
-            var responseJson = angular.toJson(value);
-            if ($scope.responseJson !== responseJson) {
-                $scope.responseJson = responseJson;
-                $scope.bundles = [];
-                angular.forEach(value, function (value, key) {
-                    var obj = {
-                        Identifier: value.Identifier,
-                        Name: "",
-                        SymbolicName: value.SymbolicName,
-                        Fragment: value.Fragment,
-                        State: value.State,
-                        Version: value.Version,
-                        LastModified: new Date(Number(value.LastModified)),
-                        Location: value.Location,
-                        StartLevel: undefined
-                    };
-                    if (value.Headers['Bundle-Name']) {
-                        obj.Name = value.Headers['Bundle-Name']['Value'];
-                    }
-                    $scope.bundles.push(obj);
-                });
-                $scope.bundles = $scope.bundles.sortBy($scope.display.sortField);
-                Core.$apply($scope);
-                // Obtain start level information for all the bundles, let's do this async though
-                setTimeout(function () {
-                    var requests = [];
-                    for (var i = 0; i < $scope.bundles.length; i++) {
-                        var b = $scope.bundles[i];
-                        requests.push({
-                            type: 'exec',
-                            mbean: Osgi.getSelectionBundleMBean(workspace),
-                            operation: 'getStartLevel(long)',
-                            arguments: [b.Identifier]
-                        });
-                    }
-                    var outstanding = requests.length;
-                    jolokia.request(requests, Core.onSuccess(function (response) {
-                        var id = response['request']['arguments'].first();
-                        if (angular.isDefined(id)) {
-                            var bundle = $scope.bundles[id];
-                            if (bundle) {
-                                Osgi.log.debug("Setting bundle: ", bundle['Identifier'], " start level to: ", response['value']);
-                                bundle['StartLevel'] = response['value'];
-                            }
-                        }
-                        outstanding = outstanding - 1;
-                        Osgi.log.debug("oustanding responses: ", outstanding);
-                        if (outstanding === 0) {
-                            Osgi.log.debug("Updating page...");
-                            Core.$apply($scope);
-                        }
-                    }));
-                }, 500);
-            }
-        }
-        Core.register(jolokia, $scope, {
-            type: 'exec',
-            mbean: Osgi.getSelectionBundleMBean(workspace),
-            operation: 'listBundles()'
-        }, Core.onSuccess(processResponse));
-    }]);
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    // These functions are exported independently to facilitate unit testing
-    function readBSNHeaderData(header) {
-        var idx = header.indexOf(";");
-        if (idx <= 0) {
-            return "";
-        }
-        return header.substring(idx + 1).trim();
-    }
-    Osgi.readBSNHeaderData = readBSNHeaderData;
-    function formatAttributesAndDirectivesForPopover(data, skipVersion) {
-        var str = "";
-        if (!data) {
-            return str;
-        }
-        var sortedKeys = Object.keys(data).sort();
-        for (var i = 0; i < sortedKeys.length; i++) {
-            var da = sortedKeys[i];
-            var type = da.charAt(0);
-            var separator = "";
-            var txtClass;
-            if (type === "A") {
-                separator = "=";
-                txtClass = "text-info";
-            }
-            if (type === "D") {
-                separator = ":=";
-                txtClass = "muted";
-            }
-            if (separator !== "") {
-                if (skipVersion) {
-                    if (da === "Aversion") {
-                        continue;
-                    }
-                }
-                var value = data[da];
-                if (value.length > 15) {
-                    value = value.replace(/[,]/g, ",<br/>&nbsp;&nbsp;");
-                }
-                str += "<tr><td><strong class='" + txtClass + "'>" + da.substring(1) + "</strong>" + separator + value + "</td></tr>";
-            }
-        }
-        return str;
-    }
-    Osgi.formatAttributesAndDirectivesForPopover = formatAttributesAndDirectivesForPopover;
-    function formatServiceName(objClass) {
-        if (angular.isArray(objClass)) {
-            return formatServiceNameArray(objClass);
-        }
-        var name = objClass.toString();
-        var idx = name.lastIndexOf('.');
-        return name.substring(idx + 1);
-    }
-    Osgi.formatServiceName = formatServiceName;
-    function formatServiceNameArray(objClass) {
-        var rv = [];
-        for (var i = 0; i < objClass.length; i++) {
-            rv.add(formatServiceName(objClass[i]));
-        }
-        rv = rv.filter(function (elem, pos, self) {
-            return self.indexOf(elem) === pos;
-        });
-        rv.sort();
-        return rv.toString();
-    }
-    Osgi._module.controller("Osgi.BundleController", ["$scope", "$location", "workspace", "$routeParams", "jolokia", function ($scope, $location, workspace, $routeParams, jolokia) {
-        $scope.bundleId = $routeParams.bundleId;
-        updateTableContents();
-        $scope.showValue = function (key) {
-            switch (key) {
-                case "Bundle-Name":
-                case "Bundle-SymbolicName":
-                case "Bundle-Version":
-                case "Export-Package":
-                case "Import-Package":
-                    return false;
-                default:
-                    return true;
-            }
-        };
-        $scope.executeLoadClass = function (clazz) {
-            var mbean = Osgi.getHawtioOSGiToolsMBean(workspace);
-            if (mbean) {
-                jolokia.request({ type: 'exec', mbean: mbean, operation: 'getLoadClassOrigin', arguments: [$scope.bundleId, clazz] }, {
-                    success: function (response) {
-                        var divEl = document.getElementById("loadClassResult");
-                        var resultBundle = response.value;
-                        var style;
-                        var resultTxt;
-                        if (resultBundle === -1) {
-                            style = "";
-                            resultTxt = "Class can not be loaded from this bundle.";
-                        }
-                        else {
-                            style = "alert-success";
-                            resultTxt = "Class is served from Bundle " + Osgi.bundleLinks(workspace, resultBundle);
-                        }
-                        divEl.innerHTML += "<div class='alert " + style + "'>" + "<button type='button' class='close' data-dismiss='alert'>&times;</button>" + "Loading class <strong>" + clazz + "</strong> in Bundle " + $scope.bundleId + ". " + resultTxt + "</div>";
-                    },
-                    error: function (response) {
-                        inspectReportError(response);
-                    }
-                });
-            }
-            else {
-                inspectReportNoMBeanFound();
-            }
-        };
-        $scope.executeFindResource = function (resource) {
-            var mbean = Osgi.getHawtioOSGiToolsMBean(workspace);
-            if (mbean) {
-                jolokia.request({ type: 'exec', mbean: mbean, operation: 'getResourceURL', arguments: [$scope.bundleId, resource] }, {
-                    success: function (response) {
-                        var divEl = document.getElementById("loadClassResult");
-                        var resultURL = response.value;
-                        var style;
-                        var resultTxt;
-                        if (resultURL === null) {
-                            style = "";
-                            resultTxt = "Resource can not be found from this bundle.";
-                        }
-                        else {
-                            style = "alert-success";
-                            resultTxt = "Resource is available from: " + resultURL;
-                        }
-                        divEl.innerHTML += "<div class='alert " + style + "'>" + "<button type='button' class='close' data-dismiss='alert'>&times;</button>" + "Finding resource <strong>" + resource + "</strong> in Bundle " + $scope.bundleId + ". " + resultTxt + "</div>";
-                    },
-                    error: function (response) {
-                        inspectReportError(response);
-                    }
-                });
-            }
-            else {
-                inspectReportNoMBeanFound();
-            }
-        };
-        $scope.mavenLink = function (row) {
-            if (angular.isObject(row)) {
-                return Maven.mavenLink(row.Location);
-            }
-            // TODO try using the LogQuery mbean to find the mvn coords for a bundle id?
-            return "";
-        };
-        $scope.startBundle = function (bundleId) {
-            jolokia.request([
-                { type: 'exec', mbean: Osgi.getSelectionFrameworkMBean(workspace), operation: 'startBundle', arguments: [bundleId] }
-            ], Core.onSuccess(updateTableContents));
-        };
-        $scope.stopBundle = function (bundleId) {
-            jolokia.request([
-                { type: 'exec', mbean: Osgi.getSelectionFrameworkMBean(workspace), operation: 'stopBundle', arguments: [bundleId] }
-            ], Core.onSuccess(updateTableContents));
-        };
-        $scope.updatehBundle = function (bundleId) {
-            jolokia.request([
-                { type: 'exec', mbean: Osgi.getSelectionFrameworkMBean(workspace), operation: 'updateBundle', arguments: [bundleId] }
-            ], Core.onSuccess(updateTableContents));
-        };
-        $scope.refreshBundle = function (bundleId) {
-            jolokia.request([
-                { type: 'exec', mbean: Osgi.getSelectionFrameworkMBean(workspace), operation: 'refreshBundle', arguments: [bundleId] }
-            ], Core.onSuccess(updateTableContents));
-        };
-        $scope.uninstallBundle = function (bundleId) {
-            jolokia.request([{
-                type: 'exec',
-                mbean: Osgi.getSelectionFrameworkMBean(workspace),
-                operation: 'uninstallBundle',
-                arguments: [bundleId]
-            }], Core.onSuccess(function () {
-                $location.path("/osgi/bundle-list");
-                Core.$apply($scope);
-            }));
-        };
-        function inspectReportNoMBeanFound() {
-            var divEl = document.getElementById("loadClassResult");
-            divEl.innerHTML += "<div class='alert alert-error'>" + "<button type='button' class='close' data-dismiss='alert'>&times;</button>" + "The hawtio.OSGiTools MBean is not available. Please contact technical support." + "</div>";
-        }
-        function inspectReportError(response) {
-            var divEl = document.getElementById("loadClassResult");
-            divEl.innerHTML += "<div class='alert alert-error'>" + "<button type='button' class='close' data-dismiss='alert'>&times;</button>" + "Problem invoking hawtio.OSGiTools MBean. " + response + "</div>";
-        }
-        function populateTable(response) {
-            var values = response.value;
-            $scope.bundles = values;
-            // now find the row based on the selection ui
-            Osgi.defaultBundleValues(workspace, $scope, values);
-            $scope.row = Osgi.findBundle($scope.bundleId, values);
-            Core.$apply($scope);
-            // This trick is to ensure that the popover is properly visible if it is
-            // smaller than the accordion
-            $('.accordion-body.collapse').hover(function () {
-                $(this).css('overflow', 'visible');
-            }, function () {
-                $(this).css('overflow', 'hidden');
-            });
-            // setup tooltips
-            $("#bsn").tooltip({ title: readBSNHeaderData($scope.row.Headers["Bundle-SymbolicName"].Value), placement: "right" });
-            createImportPackageSection();
-            createExportPackageSection();
-            populateServicesSection();
-        }
-        function createImportPackageSection() {
-            // setup popovers
-            var importPackageHeaders = Osgi.parseManifestHeader($scope.row.Headers, "Import-Package");
-            for (var pkg in $scope.row.ImportData) {
-                var data = importPackageHeaders[pkg];
-                var po = "<small><table>" + "<tr><td><strong>Imported Version=</strong>" + $scope.row.ImportData[pkg].ReportedVersion + "</td></tr>";
-                if (data !== undefined) {
-                    // This happens in case the package was imported due to a DynamicImport-Package
-                    po += formatAttributesAndDirectivesForPopover(data, false);
-                    if (importPackageHeaders[pkg]["Dresolution"] !== "optional") {
-                        $(document.getElementById("import." + pkg)).addClass("badge-info");
-                    }
-                }
-                else {
-                    // This is a dynamic import
-                    $(document.getElementById("import." + pkg)).addClass("badge-important");
-                    var reason = $scope.row.Headers["DynamicImport-Package"];
-                    if (reason !== undefined) {
-                        reason = reason.Value;
-                        po += "<tr><td>Dynamic Import. Imported due to:</td></tr>";
-                        po += "<tr><td><strong>DynamicImport-Package=</strong>" + reason + "</td></tr>";
-                    }
-                }
-                po += "</table></small>";
-                $(document.getElementById("import." + pkg)).popover({ title: "attributes and directives", content: po, trigger: "hover", html: true });
-                // Unset the value so that we can see whether there are any unbound optional imports left...
-                importPackageHeaders[pkg] = undefined;
-            }
-            var unsatisfied = "";
-            for (var pkg in importPackageHeaders) {
-                if (importPackageHeaders[pkg] === undefined) {
-                    continue;
-                }
-                if ($scope.row.ExportData[pkg] !== undefined) {
-                    continue;
-                }
-                unsatisfied += "<tr><td><div class='less-big badge badge-warning' id='unsatisfied." + pkg + "'>" + pkg + "</div></td></tr>";
-            }
-            if (unsatisfied !== "") {
-                unsatisfied = "<p/><p class='text-warning'>The following optional imports were not satisfied:<table>" + unsatisfied + "</table></p>";
-                document.getElementById("unsatisfiedOptionalImports").innerHTML = unsatisfied;
-            }
-            for (var pkg in importPackageHeaders) {
-                if (importPackageHeaders[pkg] === undefined) {
-                    continue;
-                }
-                var po = "<small><table>";
-                po += formatAttributesAndDirectivesForPopover(importPackageHeaders[pkg], false);
-                po += "</table></small>";
-                $(document.getElementById("unsatisfied." + pkg)).popover({ title: "attributes and directives", content: po, trigger: "hover", html: true });
-            }
-        }
-        function createExportPackageSection() {
-            // setup popovers
-            var exportPackageHeaders = Osgi.parseManifestHeader($scope.row.Headers, "Export-Package");
-            for (var pkg in $scope.row.ExportData) {
-                var po = "<small><table>" + "<tr><td><strong>Exported Version=</strong>" + $scope.row.ExportData[pkg].ReportedVersion + "</td></tr>";
-                po += formatAttributesAndDirectivesForPopover(exportPackageHeaders[pkg], true);
-                po += "</table></small>";
-                $(document.getElementById("export." + pkg)).popover({ title: "attributes and directives", content: po, trigger: "hover", html: true });
-            }
-        }
-        function populateServicesSection() {
-            if (($scope.row.RegisteredServices === undefined || $scope.row.RegisteredServices.length === 0) && ($scope.row.ServicesInUse === undefined || $scope.row.ServicesInUse === 0)) {
-                // no services for this bundle
-                return;
-            }
-            var mbean = Osgi.getSelectionServiceMBean(workspace);
-            if (mbean) {
-                jolokia.request({ type: 'exec', mbean: mbean, operation: 'listServices()' }, Core.onSuccess(updateServices));
-            }
-        }
-        function updateServices(result) {
-            var data = result.value;
-            for (var id in data) {
-                var reg = document.getElementById("registers.service." + id);
-                var uses = document.getElementById("uses.service." + id);
-                if ((reg === undefined || reg === null) && (uses === undefined || uses === null)) {
-                    continue;
-                }
-                jolokia.request({
-                    type: 'exec',
-                    mbean: Osgi.getSelectionServiceMBean(workspace),
-                    operation: 'getProperties',
-                    arguments: [id]
-                }, Core.onSuccess(function (svcId, regEl, usesEl) {
-                    return function (resp) {
-                        var props = resp.value;
-                        var sortedKeys = Object.keys(props).sort();
-                        var po = "<small><table>";
-                        for (var i = 0; i < sortedKeys.length; i++) {
-                            var value = props[sortedKeys[i]];
-                            if (value !== undefined) {
-                                var fval = value.Value;
-                                if (fval.length > 15) {
-                                    fval = fval.replace(/[,]/g, ",<br/>&nbsp;&nbsp;");
-                                }
-                                po += "<tr><td valign='top'>" + sortedKeys[i] + "</td><td>" + fval + "</td></tr>";
-                            }
-                        }
-                        var regBID = data[svcId].BundleIdentifier;
-                        po += "<tr><td>Registered&nbsp;by</td><td>Bundle " + regBID + " <div class='less-big label'>" + $scope.bundles[regBID].SymbolicName + "</div></td></tr>";
-                        po += "</table></small>";
-                        if (regEl !== undefined && regEl !== null) {
-                            regEl.innerText = " " + formatServiceName(data[svcId].objectClass);
-                            $(regEl).popover({ title: "service properties", content: po, trigger: "hover", html: true });
-                        }
-                        if (usesEl !== undefined && usesEl !== null) {
-                            usesEl.innerText = " " + formatServiceName(data[svcId].objectClass);
-                            $(usesEl).popover({ title: "service properties", content: po, trigger: "hover", html: true });
-                        }
-                    };
-                }(id, reg, uses)));
-            }
-        }
-        function updateTableContents() {
-            //console.log("Loading the bundles");
-            var mbean = Osgi.getSelectionBundleMBean(workspace);
-            if (mbean) {
-                jolokia.request({ type: 'exec', mbean: mbean, operation: 'listBundles()' }, Core.onSuccess(populateTable));
-            }
-        }
-    }]);
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    Osgi._module.controller("Osgi.BundlesController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
-        $scope.result = {};
-        $scope.bundles = [];
-        $scope.selected = [];
-        $scope.loading = true;
-        $scope.bundleUrl = "";
-        $scope.installDisabled = function () {
-            return $scope.bundleUrl === "";
-        };
-        var columnDefs = [
-            {
-                field: 'Identifier',
-                displayName: 'Identifier',
-                width: "48",
-                headerCellTemplate: '<div ng-click="col.sort()" class="ngHeaderSortColumn {{col.headerClass}}" ng-style="{\'cursor\': col.cursor}" ng-class="{ \'ngSorted\': !noSortVisible }"><div class="ngHeaderText colt{{$index}} pagination-centered" title="Identifier"><i class="fa fa-tag"></i></div><div class="ngSortButtonDown" ng-show="col.showSortButtonDown()"></div><div class="ngSortButtonUp" ng-show="col.showSortButtonUp()"></div></div>',
-            },
-            {
-                field: 'State',
-                displayName: 'Bundle State',
-                width: "24",
-                headerCellTemplate: '<div ng-click="col.sort()" class="ngHeaderSortColumn {{col.headerClass}}" ng-style="{\'cursor\': col.cursor}" ng-class="{ \'ngSorted\': !noSortVisible }"><div class="ngHeaderText colt{{$index}} pagination-centered" title="State"><i class="fa fa-tasks"></i></div><div class="ngSortButtonDown" ng-show="col.showSortButtonDown()"></div><div class="ngSortButtonUp" ng-show="col.showSortButtonUp()"></div></div>',
-                cellTemplate: '<div class="ngCellText" title="{{row.getProperty(col.field)}}"><i class="{{row.getProperty(col.field)}}"></i></div>'
-            },
-            {
-                field: 'Name',
-                displayName: 'Name',
-                width: "***",
-                cellTemplate: '<div class="ngCellText"><a href="#/osgi/bundle/{{row.entity.Identifier}}?p=container">{{row.getProperty(col.field)}}</a></div>'
-            },
-            {
-                field: 'SymbolicName',
-                displayName: 'Symbolic Name',
-                width: "***",
-                cellTemplate: '<div class="ngCellText"><a href="#/osgi/bundle/{{row.entity.Identifier}}?p=container">{{row.getProperty(col.field)}}</a></div>'
-            },
-            {
-                field: 'Version',
-                displayName: 'Version',
-                width: "**"
-            },
-            {
-                field: 'Location',
-                displayName: 'Update Location',
-                width: "***"
-            }
-        ];
-        $scope.gridOptions = {
-            data: 'bundles',
-            showFilter: false,
-            selectedItems: $scope.selected,
-            selectWithCheckboxOnly: true,
-            columnDefs: columnDefs,
-            filterOptions: {
-                filterText: ''
-            }
-        };
-        $scope.onResponse = function () {
-            jolokia.request({
-                type: 'exec',
-                mbean: Osgi.getSelectionBundleMBean(workspace),
-                operation: 'listBundles()'
-            }, {
-                success: render,
-                error: render
-            });
-        };
-        $scope.controlBundles = function (op) {
-            var startBundle = function (response) {
-            };
-            var ids = $scope.selected.map(function (b) {
-                return b.Identifier;
-            });
-            if (!angular.isArray(ids)) {
-                ids = [ids];
-            }
-            jolokia.request({
-                type: 'exec',
-                mbean: Osgi.getSelectionFrameworkMBean(workspace),
-                operation: op,
-                arguments: [ids]
-            }, {
-                success: $scope.onResponse,
-                error: $scope.onResponse
-            });
-        };
-        $scope.stop = function () {
-            $scope.controlBundles('stopBundles([J)');
-        };
-        $scope.start = function () {
-            $scope.controlBundles('startBundles([J)');
-        };
-        $scope.update = function () {
-            $scope.controlBundles('updateBundles([J)');
-        };
-        $scope.refresh = function () {
-            $scope.controlBundles('refreshBundles([J)');
-        };
-        $scope.uninstall = function () {
-            $scope.controlBundles('uninstallBundles([J)');
-        };
-        $scope.install = function () {
-            jolokia.request({
-                type: 'exec',
-                mbean: Osgi.getSelectionFrameworkMBean(workspace),
-                operation: "installBundle(java.lang.String)",
-                arguments: [$scope.bundleUrl]
-            }, {
-                success: function (response) {
-                    console.log("Got: ", response);
-                    $scope.bundleUrl = "";
-                    jolokia.request({
-                        type: 'exec',
-                        mbean: Osgi.getSelectionFrameworkMBean(workspace),
-                        operation: "startBundle(long)",
-                        arguments: [response.value]
-                    }, {
-                        success: $scope.onResponse,
-                        error: $scope.onResponse
-                    });
-                },
-                error: function (response) {
-                    $scope.bundleUrl = "";
-                    $scope.onResponse();
-                }
-            });
-        };
-        function render(response) {
-            if (!angular.equals($scope.result, response.value)) {
-                $scope.selected.length = 0;
-                $scope.result = response.value;
-                $scope.bundles = [];
-                angular.forEach($scope.result, function (value, key) {
-                    var obj = {
-                        Identifier: value.Identifier,
-                        Name: "",
-                        SymbolicName: value.SymbolicName,
-                        State: value.State,
-                        Version: value.Version,
-                        LastModified: value.LastModified,
-                        Location: value.Location
-                    };
-                    if (value.Headers['Bundle-Name']) {
-                        obj.Name = value.Headers['Bundle-Name']['Value'];
-                    }
-                    $scope.bundles.push(obj);
-                });
-                $scope.loading = false;
-                Core.$apply($scope);
-            }
-        }
-        Core.register(jolokia, $scope, {
-            type: 'exec',
-            mbean: Osgi.getSelectionBundleMBean(workspace),
-            operation: 'listBundles()'
-        }, Core.onSuccess(render));
-    }]);
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    Osgi._module.controller("Osgi.ConfigurationsController", ["$scope", "$routeParams", "$location", "workspace", "jolokia", function ($scope, $routeParams, $location, workspace, jolokia) {
-        $scope.selectedItems = [];
-        $scope.grid = {
-            data: 'configurations',
-            showFilter: false,
-            showColumnMenu: false,
-            multiSelect: false,
-            filterOptions: {
-                filterText: "",
-                useExternalFilter: false
-            },
-            selectedItems: $scope.selectedItems,
-            showSelectionCheckbox: false,
-            displaySelectionCheckbox: false,
-            columnDefs: [
-                {
-                    field: 'Pid',
-                    displayName: 'Configuration',
-                    cellTemplate: '<div class="ngCellText"><a ng-href="{{row.entity.pidLink}}" title="{{row.entity.description}}">{{row.entity.name}}</a></div>'
-                }
-            ]
-        };
-        /** the kinds of config */
-        var configKinds = {
-            factory: {
-                class: "badge badge-info",
-                title: "Configuration factory used to create separate instances of the configuration"
-            },
-            pid: {
-                class: "badge badge-success",
-                title: "Configuration which has a set of properties associated with it"
-            },
-            pidNoValue: {
-                class: "badge badge-warning",
-                title: "Configuration which does not yet have any bound values"
-            }
-        };
-        $scope.addPidDialog = new UI.Dialog();
-        Osgi.initProfileScope($scope, $routeParams, $location, localStorage, jolokia, workspace, function () {
-            $scope.$watch('workspace.selection', function () {
-                updateTableContents();
-            });
-            updateTableContents();
-        });
-        $scope.addPid = function (newPid) {
-            $scope.addPidDialog.close();
-            var mbean = Osgi.getHawtioConfigAdminMBean($scope.workspace);
-            if (mbean && newPid) {
-                var json = JSON.stringify({});
-                $scope.jolokia.execute(mbean, "configAdminUpdate", newPid, json, Core.onSuccess(function (response) {
-                    Core.notification("success", "Successfully created pid: " + newPid);
-                    updateTableContents();
-                }));
-            }
-        };
-        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
-            // lets do this asynchronously to avoid Error: $digest already in progress
-            setTimeout(updateTableContents, 50);
-        });
-        function onConfigPids(response) {
-            var pids = {};
-            angular.forEach(response, function (row) {
-                var pid = row[0];
-                var bundle = row[1];
-                var config = createPidConfig(pid, bundle);
-                if (!ignorePid(pid)) {
-                    config["hasValue"] = true;
-                    config["kind"] = configKinds.pid;
-                    pids[pid] = config;
-                }
-            });
-            $scope.pids = pids;
-            // lets load the factory pids
-            var mbean = Osgi.getSelectionConfigAdminMBean($scope.workspace);
-            if (mbean) {
-                $scope.jolokia.execute(mbean, 'getConfigurations', '(service.factoryPid=*)', Core.onSuccess(onConfigFactoryPids, errorHandler("Failed to load factory PID configurations: ")));
-            }
-            loadMetaType();
-        }
-        /**
-         * For each factory PID lets find the underlying PID to use to edit it, then lets make a link between them
-         */
-        function onConfigFactoryPids(response) {
-            var mbean = Osgi.getSelectionConfigAdminMBean($scope.workspace);
-            var pids = $scope.pids;
-            if (pids && mbean) {
-                angular.forEach(response, function (row) {
-                    var pid = row[0];
-                    var bundle = row[1];
-                    if (pid && !ignorePid(pid)) {
-                        var config = pids[pid];
-                        if (config) {
-                            config["isFactoryInstance"] = true;
-                            $scope.jolokia.execute(mbean, 'getFactoryPid', pid, Core.onSuccess(function (factoryPid) {
-                                config["factoryPid"] = factoryPid;
-                                config["name"] = Osgi.removeFactoryPidPrefix(pid, factoryPid);
-                                if (factoryPid) {
-                                    var factoryConfig = getOrCreatePidConfig(factoryPid, bundle, pids);
-                                    if (factoryConfig) {
-                                        configureFactoryPidConfig(pid, factoryConfig, config);
-                                        if ($scope.inFabricProfile) {
-                                            Osgi.getConfigurationProperties($scope.workspace, $scope.jolokia, pid, function (configValues) {
-                                                var zkPid = Core.pathGet(configValues, ["fabric.zookeeper.pid", "Value"]);
-                                                if (zkPid) {
-                                                    config["name"] = Osgi.removeFactoryPidPrefix(zkPid, factoryPid);
-                                                    config["zooKeeperPid"] = zkPid;
-                                                    Core.$apply($scope);
-                                                }
-                                            });
-                                        }
-                                        Core.$apply($scope);
-                                    }
-                                }
-                            }));
-                        }
-                    }
-                });
-            }
-            updateMetaType();
-        }
-        function onMetaType(response) {
-            $scope.metaType = response;
-            updateMetaType();
-        }
-        function updateConfigurations() {
-            var pids = $scope.pids;
-            var configurations = [];
-            angular.forEach(pids, function (config, pid) {
-                if (!config["isFactoryInstance"]) {
-                    configurations.push(config);
-                }
-            });
-            $scope.configurations = configurations.sortBy("name");
-            Core.$apply($scope);
-        }
-        function updateMetaType(lazilyCreateConfigs) {
-            if (lazilyCreateConfigs === void 0) { lazilyCreateConfigs = true; }
-            var metaType = $scope.metaType;
-            if (metaType) {
-                var pidMetadata = Osgi.configuration.pidMetadata;
-                var pids = $scope.pids || {};
-                angular.forEach(metaType.pids, function (value, pid) {
-                    var bundle = null;
-                    var config = lazilyCreateConfigs ? getOrCreatePidConfig(pid, bundle) : pids[pid];
-                    if (config) {
-                        var factoryPidBundleIds = value.factoryPidBundleIds;
-                        if (factoryPidBundleIds && factoryPidBundleIds.length) {
-                            setFactoryPid(config);
-                        }
-                        config["name"] = Core.pathGet(pidMetadata, [pid, "name"]) || trimUnnecessaryPrefixes(value.name) || pid;
-                        var description = Core.pathGet(pidMetadata, [pid, "description"]) || value.description;
-                        /*
-                                    if (description) {
-                                      description = description + "\n" + pidBundleDescription(pid, config.bundle);
-                                    }
-                        */
-                        config["description"] = description;
-                    }
-                });
-            }
-            updateConfigurations();
-        }
-        function loadMetaType() {
-            if ($scope.pids) {
-                if ($scope.profileNotRunning && $scope.profileMetadataMBean && $scope.versionId && $scope.profileId) {
-                    jolokia.execute($scope.profileMetadataMBean, "metaTypeSummary", $scope.versionId, $scope.profileId, Core.onSuccess(onMetaType));
-                }
-                else {
-                    var metaTypeMBean = Osgi.getMetaTypeMBean($scope.workspace);
-                    if (metaTypeMBean) {
-                        $scope.jolokia.execute(metaTypeMBean, "metaTypeSummary", Core.onSuccess(onMetaType));
-                    }
-                }
-            }
-        }
-        function updateTableContents() {
-            $scope.configurations = [];
-            if ($scope.profileNotRunning && $scope.profileMetadataMBean && $scope.versionId && $scope.profileId) {
-                jolokia.execute($scope.profileMetadataMBean, "metaTypeSummary", $scope.versionId, $scope.profileId, Core.onSuccess(onProfileMetaType, { silent: true }));
-            }
-            else {
-                if ($scope.jolokia) {
-                    var mbean = Osgi.getSelectionConfigAdminMBean($scope.workspace);
-                    if (mbean) {
-                        $scope.jolokia.execute(mbean, 'getConfigurations', '(service.pid=*)', Core.onSuccess(onConfigPids, errorHandler("Failed to load PID configurations: ")));
-                    }
-                }
-            }
-        }
-        function onProfileMetaType(response) {
-            var metaType = response;
-            if (metaType) {
-                var pids = {};
-                angular.forEach(metaType.pids, function (value, pid) {
-                    if (value && !ignorePid(pid)) {
-                        // TODO we don't have a bundle ID
-                        var bundle = "mvn:" + pid;
-                        var config = {
-                            pid: pid,
-                            name: value.name,
-                            class: 'pid',
-                            description: value.description,
-                            bundle: bundle,
-                            kind: configKinds.pid,
-                            pidLink: createPidLink(pid)
-                        };
-                        pids[pid] = config;
-                    }
-                });
-                angular.forEach(pids, function (config, pid) {
-                    var idx = pid.indexOf('-');
-                    if (idx > 0) {
-                        var factoryPid = pid.substring(0, idx);
-                        var name = pid.substring(idx + 1, pid.length);
-                        var factoryConfig = pids[factoryPid];
-                        if (!factoryConfig) {
-                            var bundle = config.bundle;
-                            factoryConfig = getOrCreatePidConfig(factoryPid, bundle, pids);
-                        }
-                        if (factoryConfig) {
-                            configureFactoryPidConfig(pid, factoryConfig, config, factoryPid);
-                            config.name = name;
-                            pids[factoryPid] = factoryConfig;
-                            // lets remove the pid instance as its now a child of the factory
-                            delete pids[pid];
-                        }
-                    }
-                });
-                $scope.pids = pids;
-            }
-            // now lets process the response and replicate the getConfigurations / getProperties API
-            // calls on the OSGi API
-            // to get the tree of factory pids or pids
-            $scope.metaType = metaType;
-            updateMetaType(false);
-        }
-        function trimUnnecessaryPrefixes(name) {
-            angular.forEach(["Fabric8 ", "Apache "], function (prefix) {
-                if (name && name.startsWith(prefix) && name.length > prefix.length) {
-                    name = name.substring(prefix.length);
-                }
-            });
-            return name;
-        }
-        function pidBundleDescription(pid, bundle) {
-            var pidMetadata = Osgi.configuration.pidMetadata;
-            return Core.pathGet(pidMetadata, [pid, "description"]) || "pid: " + pid + "\nbundle: " + bundle;
-        }
-        function createPidConfig(pid, bundle) {
-            var pidMetadata = Osgi.configuration.pidMetadata;
-            var config = {
-                pid: pid,
-                name: Core.pathGet(pidMetadata, [pid, "name"]) || pid,
-                class: 'pid',
-                description: Core.pathGet(pidMetadata, [pid, "description"]) || pidBundleDescription(pid, bundle),
-                bundle: bundle,
-                kind: configKinds.pidNoValue,
-                pidLink: createPidLink(pid)
-            };
-            return config;
-        }
-        function ignorePid(pid) {
-            var answer = false;
-            angular.forEach(Osgi.configuration.ignorePids, function (pattern) {
-                if (pid.startsWith(pattern)) {
-                    answer = true;
-                }
-            });
-            return answer;
-        }
-        function getOrCreatePidConfig(pid, bundle, pids) {
-            if (pids === void 0) { pids = null; }
-            if (ignorePid(pid)) {
-                Osgi.log.info("ignoring pid " + pid);
-                return null;
-            }
-            else {
-                if (!pids) {
-                    pids = $scope.pids;
-                }
-                var factoryConfig = pids[pid];
-                if (!factoryConfig) {
-                    factoryConfig = createPidConfig(pid, bundle);
-                    pids[pid] = factoryConfig;
-                    updateConfigurations();
-                }
-                return factoryConfig;
-            }
-        }
-        function configureFactoryPidConfig(pid, factoryConfig, config, factoryPid) {
-            if (factoryPid === void 0) { factoryPid = null; }
-            setFactoryPid(factoryConfig, factoryPid, pid);
-            //config["pidLink"] = createPidLink(pid, factoryPid);
-            var children = factoryConfig.children;
-            if (factoryPid) {
-                factoryConfig.pidLink = createPidLink(factoryPid, true);
-            }
-            if (!children) {
-                children = {};
-                factoryConfig["children"] = children;
-            }
-            children[pid] = config;
-        }
-        function setFactoryPid(factoryConfig, factoryPid, pid) {
-            if (factoryPid === void 0) { factoryPid = null; }
-            if (pid === void 0) { pid = null; }
-            factoryConfig["isFactory"] = true;
-            factoryConfig["class"] = "factoryPid";
-            factoryConfig["kind"] = configKinds.factory;
-            if (!factoryPid) {
-                factoryPid = factoryConfig["factoryPid"] || "";
-            }
-            if (!pid) {
-                pid = factoryConfig["pid"] || "";
-            }
-            if (!factoryPid) {
-                factoryPid = pid;
-                pid = null;
-            }
-            factoryConfig["pidLink"] = createPidLink(factoryPid);
-        }
-        function createPidLink(pid, isFactory) {
-            if (isFactory === void 0) { isFactory = false; }
-            return Osgi.createConfigPidLink($scope, workspace, pid, isFactory);
-        }
-        function errorHandler(message) {
-            return {
-                error: function (response) {
-                    Core.notification("error", message + response['error'] || response);
-                    Core.defaultJolokiaErrorHandler(response);
-                }
-            };
-        }
-    }]);
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    Osgi._module.controller("Osgi.FrameworkController", ["$scope", "$dialog", "workspace", function ($scope, $dialog, workspace) {
-        $scope.editDialog = new UI.Dialog();
-        updateContents();
-        $scope.edit = function (attr, displayName) {
-            $scope.editAttr = attr;
-            $scope.editDisplayName = displayName;
-            $scope.editDialog.open();
-        };
-        $scope.edited = function (name, displayName, res) {
-            $scope.editDialog.close();
-            if (angular.isNumber(res)) {
-                var mbean = Osgi.getSelectionFrameworkMBean(workspace);
-                if (mbean) {
-                    var jolokia = workspace.jolokia;
-                    jolokia.request({
-                        type: 'write',
-                        mbean: mbean,
-                        attribute: name,
-                        value: res
-                    }, {
-                        error: function (response) {
-                            editWritten("error", response.error);
-                        },
-                        success: function (response) {
-                            editWritten("success", displayName + " changed to " + res);
-                        }
-                    });
-                }
-            }
-        };
-        function editWritten(status, message) {
-            Core.notification(status, message);
-            updateContents();
-        }
-        function populatePage(response) {
-            $scope.startLevel = response.value.FrameworkStartLevel;
-            $scope.initialBundleStartLevel = response.value.InitialBundleStartLevel;
-            Core.$apply($scope);
-        }
-        function updateContents() {
-            var mbean = Osgi.getSelectionFrameworkMBean(workspace);
-            if (mbean) {
-                var jolokia = workspace.jolokia;
-                jolokia.request({ type: 'read', mbean: mbean }, Core.onSuccess(populatePage));
-            }
-        }
-    }]);
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    Osgi.configuration = {
-        // extra metadata per config admin PID
-        pidMetadata: {
-            "io.fabric8.container.java": {
-                name: "Java Container"
-            },
-            "io.fabric8.container.process": {
-                name: "Process Container"
-            },
-            "io.fabric8.container.process.overlay.resources": {
-                name: "Container Overlay Resources",
-                description: "The resources overlaid over the distribution of the process",
-                schemaExtensions: {
-                    disableHumanizeLabel: true
-                }
-            },
-            "io.fabric8.dosgi": {
-                name: "Fabric8 DOSGi",
-                description: "The configuration for the Distributed OSGi implementation in Fabric8"
-            },
-            "io.fabric8.environment": {
-                name: "Environment Variables",
-                description: "The operating system Environment Variables which are exported into any child processes",
-                schemaExtensions: {
-                    disableHumanizeLabel: true
-                }
-            },
-            "io.fabric8.fab.osgi.url": {
-                name: "FAB URL",
-                description: "Configures the 'fab:' URL handler for deploying JARs as bundles"
-            },
-            "io.fabric8.mq.fabric.server": {
-                name: "ActiveMQ Broker",
-                description: "The configuration of the Apache ActiveMQ server configured via the fabric"
-            },
-            "io.fabric8.openshift": {
-                name: "OpenShift"
-            },
-            "io.fabric8.ports": {
-                name: "Ports",
-                description: "The network ports exported by the container",
-                schemaExtensions: {
-                    disableHumanizeLabel: true
-                }
-            },
-            "io.fabric8.system": {
-                name: "System Properties",
-                description: "The Java System Properties which are exported into any child Java processes",
-                schemaExtensions: {
-                    disableHumanizeLabel: true
-                }
-            },
-            "io.fabric8.version": {
-                name: "Versions",
-                schemaExtensions: {
-                    disableHumanizeLabel: true
-                }
-            },
-            "org.ops4j.pax.logging": {
-                name: "Logging",
-                description: "The configuration of the logging subsystem"
-            },
-            "org.ops4j.pax.url.mvn": {
-                name: "Maven URL",
-                description: "Configures the Maven 'mvn:' URL handler for referencing maven artifacts"
-            },
-            "org.ops4j.pax.url.war": {
-                name: "WAR URL",
-                description: "Configures the 'war:' URL handler for referencing WAR deployments"
-            },
-            "org.ops4j.pax.url.wrap": {
-                name: "Wrap URL",
-                description: "Configures the 'wrap:' URL handler for wrapping JARs as bundles"
-            }
-        },
-        // pids to ignore from the config UI
-        ignorePids: [
-            "jmx.acl",
-            "io.fabric8.agent",
-            "io.fabric8.git",
-            "io.fabric8.mq.fabric.template",
-            "io.fabric8.openshift.agent",
-            "io.fabric8.service.ZkDataStoreImpl",
-            "org.apache.felix.fileinstall",
-            "org.apache.karaf.command.acl.",
-            "org.apache.karaf.service.acl."
-        ],
-        // UI tabs
-        tabs: {
-            "fabric8": {
-                label: "Fabric8",
-                description: "Configuration options for the Fabric8 services",
-                pids: ["io.fabric8"]
-            },
-            "karaf": {
-                label: "Karaf",
-                description: "Configuration options for the Apache Karaf container and subsystem",
-                pids: ["org.apache.karaf"]
-            }
-        }
-    };
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    var OsgiGraphBuilder = (function () {
-        function OsgiGraphBuilder(osgiDataService, bundleFilter, packageFilter, showServices, showPackages, hideUnused) {
-            this.filteredBundles = {};
-            this.bundles = null;
-            this.services = null;
-            this.packages = null;
-            this.PREFIX_BUNDLE = "Bundle-";
-            this.PREFIX_SVC = "Service-";
-            this.PREFIX_PKG = "Package-";
-            this.osgiDataService = osgiDataService;
-            this.bundleFilter = bundleFilter;
-            this.packageFilter = packageFilter;
-            this.showServices = showServices;
-            this.showPackages = showPackages;
-            this.hideUnused = hideUnused;
-            this.graphBuilder = new ForceGraph.GraphBuilder();
-        }
-        OsgiGraphBuilder.prototype.getBundles = function () {
-            if (this.bundles == null) {
-                this.bundles = this.osgiDataService.getBundles();
-            }
-            return this.bundles;
-        };
-        OsgiGraphBuilder.prototype.getServices = function () {
-            if (this.services == null) {
-                this.services = this.osgiDataService.getServices();
-            }
-            return this.services;
-        };
-        OsgiGraphBuilder.prototype.getPackages = function () {
-            if (this.packages == null) {
-                this.packages = this.osgiDataService.getPackages();
-            }
-            return this.packages;
-        };
-        OsgiGraphBuilder.prototype.bundleNodeId = function (bundle) {
-            return this.PREFIX_BUNDLE + bundle.Identifier;
-        };
-        OsgiGraphBuilder.prototype.serviceNodeId = function (service) {
-            return this.PREFIX_SVC + service.Identifier;
-        };
-        OsgiGraphBuilder.prototype.pkgNodeId = function (pkg) {
-            return this.PREFIX_PKG + pkg.Name + "-" + pkg.Version;
-        };
-        // Create a service node from a given service
-        OsgiGraphBuilder.prototype.buildSvcNode = function (service) {
-            return {
-                id: this.serviceNodeId(service),
-                name: "" + service.Identifier,
-                type: "service",
-                used: false,
-                //                image: {
-                //                    url: "/hawtio/img/icons/osgi/service.png",
-                //                    width: 32,
-                //                    height:32
-                //                },
-                popup: {
-                    title: "Service [" + service.Identifier + "]",
-                    content: (function () {
-                        var result = "";
-                        if (service != null) {
-                            service.objectClass.forEach(function (clazz) {
-                                if (result.length > 0) {
-                                    result = result + "<br/>";
-                                }
-                                result = result + clazz;
-                            });
-                        }
-                        return result;
-                    })
-                }
-            };
-        };
-        // Create a bundle node for a given bundle
-        OsgiGraphBuilder.prototype.buildBundleNode = function (bundle) {
-            return {
-                id: this.bundleNodeId(bundle),
-                name: bundle.SymbolicName,
-                type: "bundle",
-                used: false,
-                navUrl: "#/osgi/bundle/" + bundle.Identifier,
-                //                image: {
-                //                    url: "/hawtio/img/icons/osgi/bundle.png",
-                //                    width: 32,
-                //                    height:32
-                //                },
-                popup: {
-                    title: "Bundle [" + bundle.Identifier + "]",
-                    content: "<p>" + bundle.SymbolicName + "<br/>Version " + bundle.Version + "</p>"
-                }
-            };
-        };
-        OsgiGraphBuilder.prototype.buildPackageNode = function (pkg) {
-            return {
-                id: this.pkgNodeId(pkg),
-                name: pkg.Name,
-                type: "package",
-                used: false,
-                popup: {
-                    title: "Package [" + pkg.Name + "]",
-                    content: "<p>" + pkg.Version + "</p>"
-                }
-            };
-        };
-        OsgiGraphBuilder.prototype.exportingBundle = function (pkg) {
-            var _this = this;
-            var result = null;
-            pkg.ExportingBundles.forEach(function (bundleId) {
-                if (_this.filteredBundles[_this.PREFIX_BUNDLE + bundleId] != null) {
-                    result = bundleId;
-                }
-            });
-            return result;
-        };
-        OsgiGraphBuilder.prototype.addFilteredBundles = function () {
-            var _this = this;
-            d3.values(this.getBundles()).forEach(function (bundle) {
-                if (_this.bundleFilter == null || _this.bundleFilter == "" || bundle.SymbolicName.startsWith(_this.bundleFilter)) {
-                    var bundleNode = _this.buildBundleNode(bundle);
-                    _this.filteredBundles[bundleNode.id] = bundle;
-                    bundleNode.used = true;
-                    _this.graphBuilder.addNode(bundleNode);
-                    if (_this.showServices) {
-                        var services = _this.getServices();
-                        bundle.RegisteredServices.forEach(function (sid) {
-                            var svc = services[sid];
-                            if (svc) {
-                                var svcNode = _this.buildSvcNode(services[sid]);
-                                _this.graphBuilder.addNode(svcNode);
-                                _this.graphBuilder.addLink(bundleNode.id, svcNode.id, "registered");
-                            }
-                        });
-                    }
-                }
-            });
-        };
-        OsgiGraphBuilder.prototype.addFilteredServices = function () {
-            var _this = this;
-            if (this.showServices) {
-                d3.values(this.getBundles()).forEach(function (bundle) {
-                    bundle.ServicesInUse.forEach(function (sid) {
-                        var svcNodeId = _this.PREFIX_SVC + sid;
-                        if (_this.graphBuilder.getNode(svcNodeId) != null) {
-                            _this.graphBuilder.getNode(svcNodeId).used = true;
-                            var bundleNode = _this.graphBuilder.getNode(_this.bundleNodeId(bundle)) || _this.buildBundleNode(bundle);
-                            bundleNode.used = true;
-                            _this.graphBuilder.addNode(bundleNode);
-                            _this.graphBuilder.addLink(svcNodeId, bundleNode.id, "inuse");
-                        }
-                    });
-                });
-            }
-        };
-        OsgiGraphBuilder.prototype.addFilteredPackages = function () {
-            var _this = this;
-            if (this.showPackages) {
-                d3.values(this.getPackages()).forEach(function (pkg) {
-                    if (_this.packageFilter == null || _this.packageFilter == "" || pkg.Name.startsWith(_this.packageFilter)) {
-                        var exportingId = _this.exportingBundle(pkg);
-                        if (exportingId != null) {
-                            var bundleNode = _this.graphBuilder.getNode(_this.PREFIX_BUNDLE + exportingId);
-                            bundleNode.used = true;
-                            var pkgNode = _this.buildPackageNode(pkg);
-                            _this.graphBuilder.addNode(pkgNode);
-                            _this.graphBuilder.addLink(bundleNode.id, pkgNode.id, "registered");
-                            pkg.ImportingBundles.forEach(function (bundleId) {
-                                var bundleNode = _this.graphBuilder.getNode(_this.PREFIX_BUNDLE + bundleId) || _this.buildBundleNode(_this.getBundles()[bundleId]);
-                                bundleNode.used = true;
-                                pkgNode.used = true;
-                                _this.graphBuilder.addNode(bundleNode);
-                                _this.graphBuilder.addLink(bundleNode.id, pkgNode.id, "inuse");
-                            });
-                        }
-                    }
-                });
-            }
-        };
-        OsgiGraphBuilder.prototype.buildGraph = function () {
-            var _this = this;
-            this.addFilteredBundles();
-            this.addFilteredServices();
-            this.addFilteredPackages();
-            if (this.hideUnused) {
-                // this will filter out all nodes that are not marked as used in our data model
-                this.graphBuilder.filterNodes(function (node) {
-                    return node.used;
-                });
-                // this will remove all nodes that do not have connections after filtering the unused nodes
-                this.graphBuilder.filterNodes(function (node) {
-                    return _this.graphBuilder.hasLinks(node.id);
-                });
-            }
-            return this.graphBuilder.buildGraph();
-        };
-        return OsgiGraphBuilder;
-    })();
-    Osgi.OsgiGraphBuilder = OsgiGraphBuilder;
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-var Osgi;
-(function (Osgi) {
-    Osgi.TopLevelController = Osgi._module.controller("Osgi.TopLevelController", ["$scope", "workspace", function ($scope, workspace) {
-        $scope.frameworkMBean = Osgi.getSelectionFrameworkMBean(workspace);
-        $scope.bundleMBean = Osgi.getSelectionBundleMBean(workspace);
-        $scope.serviceMBean = Osgi.getSelectionServiceMBean(workspace);
-        $scope.packageMBean = Osgi.getSelectionPackageMBean(workspace);
-        $scope.configAdminMBean = Osgi.getSelectionConfigAdminMBean(workspace);
-        $scope.metaTypeMBean = Osgi.getMetaTypeMBean(workspace);
-        $scope.osgiToolsMBean = Osgi.getHawtioOSGiToolsMBean(workspace);
-        $scope.hawtioConfigAdminMBean = Osgi.getHawtioConfigAdminMBean(workspace);
-        $scope.scrMBean = Karaf.getSelectionScrMBean(workspace);
-        $scope.featuresMBean = Karaf.getSelectionFeaturesMBean(workspace);
-    }]);
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    Osgi._module.controller("Osgi.PackageController", ["$scope", "$filter", "workspace", "$routeParams", function ($scope, $filter, workspace, $routeParams) {
-        $scope.package = $routeParams.package;
-        $scope.version = $routeParams.version;
-        updateTableContents();
-        function populateTable(response) {
-            var packages = Osgi.defaultPackageValues(workspace, $scope, response.value);
-            $scope.row = packages.filter({ "Name": $scope.package, "Version": $scope.version })[0];
-            Core.$apply($scope);
-        }
-        ;
-        function updateTableContents() {
-            var mbean = Osgi.getSelectionPackageMBean(workspace);
-            if (mbean) {
-                var jolokia = workspace.jolokia;
-                jolokia.request({ type: 'exec', mbean: mbean, operation: 'listPackages' }, Core.onSuccess(populateTable));
-            }
-        }
-    }]);
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    Osgi.PackagesController = Osgi._module.controller("Osgi.PackagesController", ["$scope", "$filter", "workspace", "$templateCache", "$compile", function ($scope, $filter, workspace, $templateCache, $compile) {
-        var dateFilter = $filter('date');
-        $scope.packages = [];
-        $scope.selectedItems = [];
-        $scope.mygrid = {
-            data: 'packages',
-            showFilter: false,
-            showColumnMenu: false,
-            filterOptions: {
-                filterText: "",
-                useExternalFilter: false
-            },
-            selectedItems: $scope.selectedItems,
-            rowHeight: 32,
-            selectWithCheckboxOnly: true,
-            columnDefs: [
-                {
-                    field: 'Name',
-                    displayName: 'Name',
-                    width: "***"
-                },
-                {
-                    field: 'VersionLink',
-                    displayName: 'Version',
-                    width: "***"
-                },
-                {
-                    field: 'RemovalPending',
-                    displayName: 'Removal Pending',
-                    width: "***"
-                }
-            ]
-        };
-        /*
-            $scope.widget = new DataTable.TableWidget($scope, $templateCache, $compile, [
-              <DataTable.TableColumnConfig> {
-                "mDataProp": null,
-                "sClass": "control center",
-                "sDefaultContent": '<i class="fa fa-plus"></i>'
-              },
-              <DataTable.TableColumnConfig> { "mDataProp": "Name" },
-              <DataTable.TableColumnConfig> { "mDataProp": "VersionLink" },
-              <DataTable.TableColumnConfig> { "mDataProp": "RemovalPending" }
-        
-            ], {
-              rowDetailTemplateId: 'packageBundlesTemplate',
-              disableAddColumns: true
-            });
-        
-        */
-        $scope.$watch('workspace.selection', function () {
-            updateTableContents();
-        });
-        function populateTable(response) {
-            var packages = Osgi.defaultPackageValues(workspace, $scope, response.value);
-            augmentPackagesInfo(packages);
-        }
-        function augmentPackagesInfo(packages) {
-            var bundleMap = {};
-            var createBundleMap = function (response) {
-                angular.forEach(response.value, function (value, key) {
-                    var obj = {
-                        Identifier: value.Identifier,
-                        Name: "",
-                        SymbolicName: value.SymbolicName,
-                        State: value.State,
-                        Version: value.Version,
-                        LastModified: value.LastModified,
-                        Location: value.Location
-                    };
-                    if (value.Headers['Bundle-Name']) {
-                        obj.Name = value.Headers['Bundle-Name']['Value'];
-                    }
-                    bundleMap[obj.Identifier] = obj;
-                });
-                angular.forEach(packages, function (p, key) {
-                    angular.forEach(p["ExportingBundles"], function (b, key) {
-                        p["ExportingBundles"][key] = bundleMap[b];
-                    });
-                    angular.forEach(p["ImportingBundles"], function (b, key) {
-                        p["ImportingBundles"][key] = bundleMap[b];
-                    });
-                });
-                $scope.packages = packages;
-                Core.$apply($scope);
-            };
-            workspace.jolokia.request({
-                type: 'exec',
-                mbean: Osgi.getSelectionBundleMBean(workspace),
-                operation: 'listBundles()'
-            }, {
-                success: createBundleMap,
-                error: createBundleMap
-            });
-        }
-        function updateTableContents() {
-            var mbean = Osgi.getSelectionPackageMBean(workspace);
-            if (mbean) {
-                var jolokia = workspace.jolokia;
-                // bundles first:
-                jolokia.request({
-                    type: 'exec',
-                    mbean: mbean,
-                    operation: 'listPackages'
-                }, Core.onSuccess(populateTable));
-            }
-        }
-    }]);
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    Osgi._module.controller("Osgi.PidController", ["$scope", "$timeout", "$routeParams", "$location", "workspace", "jolokia", function ($scope, $timeout, $routeParams, $location, workspace, jolokia) {
-        $scope.deletePropDialog = new UI.Dialog();
-        $scope.deletePidDialog = new UI.Dialog();
-        $scope.addPropertyDialog = new UI.Dialog();
-        $scope.factoryPid = $routeParams.factoryPid;
-        $scope.pid = $routeParams.pid;
-        $scope.createForm = {
-            pidInstanceName: null
-        };
-        $scope.newPid = $scope.factoryPid && !$scope.pid;
-        if ($scope.newPid) {
-            $scope.editMode = true;
-        }
-        if ($scope.pid && !$scope.factoryPid) {
-            var idx = $scope.pid.indexOf("-");
-            if (idx > 0) {
-                $scope.factoryPid = $scope.pid.substring(0, idx);
-                $scope.factoryInstanceName = $scope.pid.substring(idx + 1, $scope.pid.length);
-            }
-        }
-        $scope.selectValues = {};
-        $scope.modelLoaded = false;
-        $scope.canSave = false;
-        $scope.setEditMode = function (flag) {
-            $scope.editMode = flag;
-            $scope.formMode = flag ? "edit" : "view";
-            if (!flag || !$scope.entity) {
-                $scope.entity = {};
-                updateTableContents();
-            }
-        };
-        var startInEditMode = $scope.factoryPid && !$routeParams.pid;
-        $scope.setEditMode(startInEditMode);
-        $scope.$on("hawtio.form.modelChange", function () {
-            if ($scope.modelLoaded) {
-                // TODO lets check if we've really changed the values!
-                enableCanSave();
-                Core.$apply($scope);
-            }
-        });
-        Osgi.initProfileScope($scope, $routeParams, $location, localStorage, jolokia, workspace, function () {
-            updateTableContents();
-        });
-        function updatePid(mbean, pid, data) {
-            var completeFn = function (response) {
-                Core.notification("success", "Successfully updated pid: " + pid);
-                if (pid && $scope.factoryPid && $scope.newPid) {
-                    // we've just created a new pid so lets move to the full pid URL
-                    var newPath = Osgi.createConfigPidPath($scope, pid);
-                    $location.path(newPath);
-                }
-                else {
-                    $scope.setEditMode(false);
-                    $scope.canSave = false;
-                    $scope.saved = true;
-                }
-            };
-            var callback = Core.onSuccess(completeFn, errorHandler("Failed to update: " + pid));
-            if ($scope.inFabricProfile) {
-                Fabric.setProfileProperties($scope.versionId, $scope.profileId, pid, data, callback);
-            }
-            else {
-                var json = JSON.stringify(data);
-                $scope.jolokia.execute(mbean, "configAdminUpdate", pid, json, callback);
-            }
-        }
-        $scope.pidSave = function () {
-            var data = {};
-            angular.forEach($scope.entity, function (value, key) {
-                var text = undefined;
-                if (angular.isString(value)) {
-                    text = value;
-                }
-                else if (angular.isDefined(value)) {
-                    text = value.toString();
-                }
-                if (angular.isDefined(text)) {
-                    data[decodeKey(key, $scope.pid)] = text;
-                }
-            });
-            //log.info("about to update value " + angular.toJson(data));
-            var mbean = Osgi.getHawtioConfigAdminMBean(workspace);
-            if (mbean || $scope.inFabricProfile) {
-                var pidMBean = Osgi.getSelectionConfigAdminMBean($scope.workspace);
-                var pid = $scope.pid;
-                var zkPid = $scope.zkPid;
-                var factoryPid = $scope.factoryPid;
-                if (!$scope.inFabricProfile && factoryPid && pidMBean && !zkPid) {
-                    // lets generate a new pid
-                    $scope.jolokia.execute(pidMBean, "createFactoryConfiguration", factoryPid, Core.onSuccess(function (response) {
-                        pid = response;
-                        if (pid) {
-                            updatePid(mbean, pid, data);
-                        }
-                    }, errorHandler("Failed to create new PID: ")));
-                }
-                else {
-                    if ($scope.newPid) {
-                        var pidInstanceName = $scope.createForm.pidInstanceName;
-                        if (!pidInstanceName || !factoryPid) {
-                            return;
-                        }
-                        pid = factoryPid + "-" + pidInstanceName;
-                    }
-                    else if (zkPid) {
-                        pid = zkPid;
-                    }
-                    updatePid(mbean, pid, data);
-                }
-            }
-        };
-        function errorHandler(message) {
-            return {
-                error: function (response) {
-                    Core.notification("error", message + "\n" + response['error'] || response);
-                    Core.defaultJolokiaErrorHandler(response);
-                }
-            };
-        }
-        function enableCanSave() {
-            if ($scope.editMode) {
-                $scope.canSave = true;
-            }
-        }
-        $scope.addPropertyConfirmed = function (key, value) {
-            $scope.addPropertyDialog.close();
-            $scope.configValues[key] = {
-                Key: key,
-                Value: value,
-                Type: "String"
-            };
-            enableCanSave();
-            updateSchema();
-        };
-        $scope.deletePidProp = function (e) {
-            $scope.deleteKey = e.Key;
-            $scope.deletePropDialog.open();
-        };
-        $scope.deletePidPropConfirmed = function () {
-            $scope.deletePropDialog.close();
-            var cell = document.getElementById("pid." + $scope.deleteKey);
-            cell.parentElement.remove();
-            enableCanSave();
-        };
-        $scope.deletePidConfirmed = function () {
-            $scope.deletePidDialog.close();
-            function errorFn(response) {
-                Core.notification("error", response.error);
-            }
-            function successFn(response) {
-                Core.notification("success", "Successfully deleted pid: " + $scope.pid);
-                $location.path($scope.configurationsLink);
-            }
-            if ($scope.inFabricProfile) {
-                if ($scope.pid) {
-                    var configFile = $scope.pid + ".properties";
-                    Fabric.deleteConfigurationFile($scope.versionId, $scope.profileId, configFile, successFn, errorFn);
-                }
-            }
-            else {
-                var mbean = Osgi.getSelectionConfigAdminMBean($scope.workspace);
-                if (mbean) {
-                    $scope.jolokia.request({
-                        type: "exec",
-                        mbean: mbean,
-                        operation: 'delete',
-                        arguments: [$scope.pid]
-                    }, {
-                        error: errorFn,
-                        success: successFn
-                    });
-                }
-            }
-        };
-        function populateTable(response) {
-            $scope.modelLoaded = true;
-            var configValues = response || {};
-            $scope.configValues = configValues;
-            $scope.zkPid = Core.pathGet(configValues, ["fabric.zookeeper.pid", "Value"]);
-            if ($scope.zkPid && $scope.saved) {
-                // lets load the current properties direct from git
-                // in case we have just saved them into git and config admin hasn't yet
-                // quite caught up yet (to avoid freaking the user out that things look like
-                // changes got reverted ;)
-                function onProfileProperties(gitProperties) {
-                    angular.forEach(gitProperties, function (value, key) {
-                        var configProperty = configValues[key];
-                        if (configProperty) {
-                            configProperty.Value = value;
-                        }
-                    });
-                    updateSchemaAndLoadMetaType();
-                    Core.$apply($scope);
-                }
-                Fabric.getProfileProperties($scope.versionId, $scope.profileId, $scope.zkPid, onProfileProperties);
-            }
-            else {
-                updateSchemaAndLoadMetaType();
-            }
-        }
-        function updateSchemaAndLoadMetaType() {
-            updateSchema();
-            var configValues = $scope.configValues;
-            if (configValues) {
-                if ($scope.profileNotRunning && $scope.profileMetadataMBean && $scope.versionId && $scope.profileId) {
-                    var pid = $scope.factoryPid || $scope.pid;
-                    jolokia.execute($scope.profileMetadataMBean, "getPidMetaTypeObject", $scope.versionId, $scope.profileId, pid, Core.onSuccess(onMetaType));
-                }
-                else {
-                    var locale = null;
-                    var pid = null;
-                    var factoryId = configValues["service.factoryPid"];
-                    if (factoryId && !pid) {
-                        pid = factoryId["Value"];
-                    }
-                    var metaTypeMBean = Osgi.getMetaTypeMBean($scope.workspace);
-                    if (metaTypeMBean) {
-                        $scope.jolokia.execute(metaTypeMBean, "getPidMetaTypeObject", pid, locale, Core.onSuccess(onMetaType));
-                    }
-                }
-            }
-            Core.$apply($scope);
-        }
-        function onMetaType(response) {
-            $scope.metaType = response;
-            updateSchema();
-            Core.$apply($scope);
-        }
-        /**
-         * Updates the JSON schema model
-         */
-        function updateSchema() {
-            var properties = {};
-            var required = [];
-            $scope.defaultValues = {};
-            var schema = {
-                type: "object",
-                required: required,
-                properties: properties
-            };
-            var inputClass = "span12";
-            var labelClass = "control-label";
-            //var inputClassArray = "span11";
-            var inputClassArray = "";
-            var labelClassArray = labelClass;
-            var metaType = $scope.metaType;
-            if (metaType) {
-                var pidMetadata = Osgi.configuration.pidMetadata;
-                var pid = metaType.id;
-                schema["id"] = pid;
-                schema["name"] = Core.pathGet(pidMetadata, [pid, "name"]) || metaType.name;
-                schema["description"] = Core.pathGet(pidMetadata, [pid, "description"]) || metaType.description;
-                var disableHumanizeLabel = Core.pathGet(pidMetadata, [pid, "schemaExtensions", "disableHumanizeLabel"]);
-                angular.forEach(metaType.attributes, function (attribute) {
-                    var id = attribute.id;
-                    if (isValidProperty(id)) {
-                        var key = encodeKey(id, pid);
-                        var typeName = asJsonSchemaType(attribute.typeName, attribute.id);
-                        var attributeProperties = {
-                            title: attribute.name,
-                            tooltip: attribute.description,
-                            'input-attributes': {
-                                class: inputClass
-                            },
-                            'label-attributes': {
-                                class: labelClass
-                            },
-                            type: typeName
-                        };
-                        if (disableHumanizeLabel) {
-                            attributeProperties.title = id;
-                        }
-                        if (attribute.typeName === "char") {
-                            attributeProperties["maxLength"] = 1;
-                            attributeProperties["minLength"] = 1;
-                        }
-                        var cardinality = attribute.cardinality;
-                        if (cardinality) {
-                            // lets clear the span on arrays to fix layout issues
-                            attributeProperties['input-attributes']['class'] = null;
-                            attributeProperties.type = "array";
-                            attributeProperties["items"] = {
-                                'input-attributes': {
-                                    class: inputClassArray
-                                },
-                                'label-attributes': {
-                                    class: labelClassArray
-                                },
-                                "type": typeName
-                            };
-                        }
-                        if (attribute.required) {
-                            required.push(id);
-                        }
-                        var defaultValue = attribute.defaultValue;
-                        if (defaultValue) {
-                            if (angular.isArray(defaultValue) && defaultValue.length === 1) {
-                                defaultValue = defaultValue[0];
-                            }
-                            //attributeProperties["default"] = defaultValue;
-                            // TODO convert to boolean / number?
-                            $scope.defaultValues[key] = defaultValue;
-                        }
-                        var optionLabels = attribute.optionLabels;
-                        var optionValues = attribute.optionValues;
-                        if (optionLabels && optionLabels.length && optionValues && optionValues.length) {
-                            var enumObject = {};
-                            for (var i = 0; i < optionLabels.length; i++) {
-                                var label = optionLabels[i];
-                                var value = optionValues[i];
-                                enumObject[value] = label;
-                            }
-                            $scope.selectValues[key] = enumObject;
-                            Core.pathSet(attributeProperties, ['input-element'], "select");
-                            Core.pathSet(attributeProperties, ['input-attributes', "ng-options"], "key as value for (key, value) in selectValues." + key);
-                        }
-                        properties[key] = attributeProperties;
-                    }
-                });
-                // now lets override anything from the custom metadata
-                var schemaExtensions = Core.pathGet(Osgi.configuration.pidMetadata, [pid, "schemaExtensions"]);
-                if (schemaExtensions) {
-                    // now lets copy over the schema extensions
-                    overlayProperties(schema, schemaExtensions);
-                }
-            }
-            // now add all the missing properties...
-            var entity = {};
-            angular.forEach($scope.configValues, function (value, rawKey) {
-                if (isValidProperty(rawKey)) {
-                    var key = encodeKey(rawKey, pid);
-                    var attrValue = value;
-                    var attrType = "string";
-                    if (angular.isObject(value)) {
-                        attrValue = value.Value;
-                        attrType = asJsonSchemaType(value.Type, rawKey);
-                    }
-                    var property = properties[key];
-                    if (!property) {
-                        property = {
-                            'input-attributes': {
-                                class: inputClass
-                            },
-                            'label-attributes': {
-                                class: labelClass
-                            },
-                            type: attrType
-                        };
-                        properties[key] = property;
-                    }
-                    else {
-                        var propertyType = property["type"];
-                        if ("array" === propertyType) {
-                            if (!angular.isArray(attrValue)) {
-                                attrValue = attrValue ? attrValue.split(",") : [];
-                            }
-                        }
-                    }
-                    if (disableHumanizeLabel) {
-                        property.title = rawKey;
-                    }
-                    //comply with Forms.safeIdentifier in 'forms/js/formHelpers.ts'
-                    key = key.replace(/-/g, "_");
-                    entity[key] = attrValue;
-                }
-            });
-            // add default values for missing values
-            angular.forEach($scope.defaultValues, function (value, key) {
-                var current = entity[key];
-                if (!angular.isDefined(current)) {
-                    //log.info("updating entity " + key + " with default: " + value + " as was: " + current);
-                    entity[key] = value;
-                }
-            });
-            //log.info("default values: " + angular.toJson($scope.defaultValues));
-            $scope.entity = entity;
-            $scope.schema = schema;
-            $scope.fullSchema = schema;
-        }
-        /**
-         * Recursively overlays the properties in the overlay into the object; so any atttributes are added into the object
-         * and any nested objects in the overlay are inserted into the object at the correct path.
-         */
-        function overlayProperties(object, overlay) {
-            if (angular.isObject(object)) {
-                if (angular.isObject(overlay)) {
-                    angular.forEach(overlay, function (value, key) {
-                        if (angular.isObject(value)) {
-                            var child = object[key];
-                            if (!child) {
-                                child = {};
-                                object[key] = child;
-                            }
-                            overlayProperties(child, value);
-                        }
-                        else {
-                            object[key] = value;
-                        }
-                    });
-                }
-            }
-        }
-        var ignorePropertyIds = ["service.pid", "service.factoryPid", "fabric.zookeeper.pid"];
-        function isValidProperty(id) {
-            return id && ignorePropertyIds.indexOf(id) < 0;
-        }
-        function encodeKey(key, pid) {
-            return key.replace(/\./g, "__");
-        }
-        function decodeKey(key, pid) {
-            return key.replace(/__/g, ".");
-        }
-        function asJsonSchemaType(typeName, id) {
-            if (typeName) {
-                var lower = typeName.toLowerCase();
-                if (lower.startsWith("int") || lower === "long" || lower === "short" || lower === "byte" || lower.endsWith("int")) {
-                    return "integer";
-                }
-                if (lower === "double" || lower === "float" || lower === "bigdecimal") {
-                    return "number";
-                }
-                if (lower === "string") {
-                    // TODO hack to try force password type on dodgy metadata such as pax web
-                    if (id && id.endsWith("password")) {
-                        return "password";
-                    }
-                    return "string";
-                }
-                return typeName;
-            }
-            else {
-                return "string";
-            }
-        }
-        function onProfilePropertiesLoaded(response) {
-            $scope.modelLoaded = true;
-            var configValues = {};
-            $scope.configValues = configValues;
-            angular.forEach(response, function (value, oKey) {
-                // lets remove any dodgy characters
-                var key = oKey.replace(/:/g, '_').replace(/\//g, '_');
-                configValues[key] = {
-                    Key: key,
-                    Value: value
-                };
-            });
-            $scope.zkPid = Core.pathGet(configValues, ["fabric.zookeeper.pid", "Value"]);
-            updateSchemaAndLoadMetaType();
-            Core.$apply($scope);
-        }
-        function updateTableContents() {
-            $scope.modelLoaded = false;
-            if ($scope.inFabricProfile || $scope.profileNotRunning) {
-                Fabric.getOverlayProfileProperties($scope.versionId, $scope.profileId, $scope.pid, onProfilePropertiesLoaded);
-            }
-            else {
-                Osgi.getConfigurationProperties($scope.workspace, $scope.jolokia, $scope.pid, populateTable);
-            }
-        }
-    }]);
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    Osgi.ServiceController = Osgi._module.controller("Osgi.ServiceController", ["$scope", "$filter", "workspace", "$templateCache", "$compile", function ($scope, $filter, workspace, $templateCache, $compile) {
-        var dateFilter = $filter('date');
-        $scope.services = [];
-        $scope.selectedItems = [];
-        $scope.mygrid = {
-            data: 'services',
-            showFilter: false,
-            showColumnMenu: false,
-            filterOptions: {
-                filterText: "",
-                useExternalFilter: false
-            },
-            selectedItems: $scope.selectedItems,
-            rowHeight: 32,
-            selectWithCheckboxOnly: true,
-            columnDefs: [
-                {
-                    field: 'Identifier',
-                    displayName: 'ID',
-                    width: "***"
-                },
-                {
-                    field: 'BundleIdentifier',
-                    displayName: 'Bundle',
-                    width: "***"
-                },
-                {
-                    field: 'objectClass',
-                    displayName: 'Object Class(es)',
-                    width: "***"
-                }
-            ]
-        };
-        /*
-            $scope.widget = new DataTable.TableWidget($scope, $templateCache, $compile, [
-              <DataTable.TableColumnConfig> {
-                "mDataProp": null,
-                "sClass": "control center",
-                "sDefaultContent": '<i class="fa fa-plus"></i>'
-              },
-              <DataTable.TableColumnConfig> { "mDataProp": "Identifier" },
-              <DataTable.TableColumnConfig> { "mDataProp": "BundleIdentifier" },
-              <DataTable.TableColumnConfig> { "mDataProp": "objectClass" }
-            ], {
-              rowDetailTemplateId: 'osgiServiceTemplate',
-              disableAddColumns: true
-            });
-        */
-        $scope.$watch('workspace.selection', function () {
-            var mbean = Osgi.getSelectionServiceMBean(workspace);
-            if (mbean) {
-                var jolokia = workspace.jolokia;
-                jolokia.request({
-                    type: 'exec',
-                    mbean: mbean,
-                    operation: 'listServices()'
-                }, Core.onSuccess(populateTable));
-            }
-        });
-        var populateTable = function (response) {
-            var services = Osgi.defaultServiceValues(workspace, $scope, response.value);
-            augmentServicesInfo(services);
-        };
-        function augmentServicesInfo(services) {
-            var bundleMap = {};
-            var createBundleMap = function (response) {
-                angular.forEach(response.value, function (value, key) {
-                    var obj = {
-                        Identifier: value.Identifier,
-                        Name: "",
-                        SymbolicName: value.SymbolicName,
-                        State: value.State,
-                        Version: value.Version,
-                        LastModified: value.LastModified,
-                        Location: value.Location
-                    };
-                    if (value.Headers['Bundle-Name']) {
-                        obj.Name = value.Headers['Bundle-Name']['Value'];
-                    }
-                    bundleMap[obj.Identifier] = obj;
-                });
-                angular.forEach(services, function (s, key) {
-                    angular.forEach(s["UsingBundles"], function (b, key) {
-                        s["UsingBundles"][key] = bundleMap[b];
-                    });
-                });
-                $scope.services = services;
-                Core.$apply($scope);
-            };
-            workspace.jolokia.request({
-                type: 'exec',
-                mbean: Osgi.getSelectionBundleMBean(workspace),
-                operation: 'listBundles()'
-            }, {
-                success: createBundleMap,
-                error: createBundleMap
-            });
-        }
-    }]);
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="osgiHelpers.ts"/>
-/// <reference path="osgiPlugin.ts"/>
-/**
- * @module Osgi
- */
-var Osgi;
-(function (Osgi) {
-    Osgi._module.controller("Osgi.ServiceDependencyController", ["$scope", "$location", "$routeParams", "workspace", "osgiDataService", function ($scope, $location, $routeParams, workspace, osgiDataService) {
-        $scope.init = function () {
-            if ($routeParams["bundleFilter"]) {
-                $scope.bundleFilter = $routeParams["bundleFilter"];
-            }
-            else {
-                $scope.bundleFilter = "";
-            }
-            if ($routeParams["pkgFilter"]) {
-                $scope.packageFilter = $routeParams["pkgFilter"];
-            }
-            else {
-                $scope.packageFilter = "";
-            }
-            if ($routeParams["view"] == "packages") {
-                $scope.selectView = "packages";
-            }
-            else {
-                $scope.selectView = "services";
-            }
-            if ($routeParams['hideUnused']) {
-                $scope.hideUnused = $routeParams['hideUnused'] == "true";
-            }
-            else {
-                $scope.hideUnused = true;
-            }
-        };
-        $scope.updateLink = function () {
-            var search = $location.search();
-            if ($scope.bundleFilter && $scope.bundleFilter != "") {
-                search["bundleFilter"] = $scope.bundleFilter;
-            }
-            else {
-                delete search["bundleFilter"];
-            }
-            if ($scope.packageFilter && $scope.packageFilter != "") {
-                search["pkgFilter"] = $scope.packageFilter;
-            }
-            else {
-                delete search["pkgFilter"];
-            }
-            search["view"] = $scope.selectView;
-            if ($scope.hideUnused) {
-                search["hideUnused"] = "true";
-            }
-            else {
-                search["hideUnused"] = "false";
-            }
-            $location.search(search);
-        };
-        $scope.addToDashboardLink = function () {
-            var routeParams = angular.toJson($routeParams);
-            var href = "#/osgi/dependencies";
-            var title = "OSGi dependencies";
-            var size = angular.toJson({
-                size_x: 2,
-                size_y: 2
-            });
-            var addLink = "#/dashboard/add?tab=dashboard" + "&href=" + encodeURIComponent(href) + "&routeParams=" + encodeURIComponent(routeParams) + "&size=" + encodeURIComponent(size) + "&title=" + encodeURIComponent(title);
-            return addLink;
-        };
-        $scope.$on('$routeUpdate', function () {
-            var search = $location.search;
-            if (search["bundleFilter"]) {
-                $scope.bundleFilter = $routeParams["bundleFilter"];
-            }
-            else {
-                $scope.bundleFilter = "";
-            }
-            if (search["pkgFilter"]) {
-                $scope.packageFilter = $routeParams["pkgFilter"];
-            }
-            else {
-                $scope.packageFilter = "";
-            }
-            if (search["view"] == "packages") {
-                $scope.selectView = "packages";
-            }
-            else {
-                $scope.selectView = "services";
-            }
-            if (search['hideUnused']) {
-                $scope.hideUnused = $routeParams['hideUnused'] == "true";
-            }
-            else {
-                $scope.hideUnused = true;
-            }
-            $scope.updateLink();
-            $scope.updateGraph();
-        });
-        $scope.updateGraph = function () {
-            $scope.updateLink();
-            $scope.updatePkgFilter();
-            var graphBuilder = new Osgi.OsgiGraphBuilder(osgiDataService, $scope.bundleFilter, $scope.packageFilter, $scope.selectView == "services", $scope.selectView == "packages", $scope.hideUnused);
-            $scope.graph = graphBuilder.buildGraph();
-            Core.$apply($scope);
-        };
-        $scope.updatePkgFilter = function () {
-            if ($scope.packageFilter == null || $scope.packageFilter == "") {
-                $scope.selectView = "services";
-                $scope.disablePkg = true;
-            }
-            else {
-                $scope.disablePkg = false;
-            }
-        };
-        $scope.init();
-        $scope.updateGraph();
-    }]);
-})(Osgi || (Osgi = {}));
-
-/// <reference path="../../includes.ts"/>
 /// <reference path="../../git/ts/gitHelpers.ts"/>
 /// <reference path="wikiHelpers.ts"/>
 /**
@@ -14144,6 +11280,9 @@ var Wiki;
             }
         };
         return self;
+    });
+    Wiki._module.factory('WikiGitUrlPrefix', function () {
+        return "";
     });
     Wiki._module.factory('fileExtensionTypeRegistry', function () {
         return {
@@ -17660,6 +14799,2875 @@ var Wiki;
         */
     }]);
 })(Wiki || (Wiki = {}));
+
+/// <reference path="../../includes.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    Osgi.log = Logger.get("OSGi");
+    function defaultBundleValues(workspace, $scope, values) {
+        var allValues = values;
+        angular.forEach(values, function (row) {
+            row["ImportData"] = parseActualPackages(row["ImportedPackages"]);
+            row["ExportData"] = parseActualPackages(row["ExportedPackages"]);
+            row["IdentifierLink"] = bundleLinks(workspace, row["Identifier"]);
+            row["Hosts"] = labelBundleLinks(workspace, row["Hosts"], allValues);
+            row["Fragments"] = labelBundleLinks(workspace, row["Fragments"], allValues);
+            row["ImportedPackages"] = row["ImportedPackages"].union([]);
+            row["StateStyle"] = getStateStyle("label", row["State"]);
+            row["RequiringBundles"] = labelBundleLinks(workspace, row["RequiringBundles"], allValues);
+        });
+        return values;
+    }
+    Osgi.defaultBundleValues = defaultBundleValues;
+    function getStateStyle(prefix, state) {
+        switch (state) {
+            case "INSTALLED":
+                return prefix + "-important";
+            case "RESOLVED":
+                return prefix + "-inverse";
+            case "STARTING":
+                return prefix + "-warning";
+            case "ACTIVE":
+                return prefix + "-success";
+            case "STOPPING":
+                return prefix + "-info";
+            case "UNINSTALLED":
+                return "";
+            default:
+                return prefix + "-important";
+        }
+    }
+    Osgi.getStateStyle = getStateStyle;
+    function defaultServiceValues(workspace, $scope, values) {
+        angular.forEach(values, function (row) {
+            row["BundleIdentifier"] = bundleLinks(workspace, row["BundleIdentifier"]);
+        });
+        return values;
+    }
+    Osgi.defaultServiceValues = defaultServiceValues;
+    function defaultPackageValues(workspace, $scope, values) {
+        var packages = [];
+        function onPackageEntry(packageEntry, row) {
+            if (!row)
+                row = packageEntry;
+            var name = packageEntry["Name"];
+            var version = packageEntry["Version"];
+            if (name && !name.startsWith("#")) {
+                packageEntry["VersionLink"] = "<a href='" + Core.url("#/osgi/package/" + name + "/" + version + workspace.hash()) + "'>" + version + "</a>";
+                var importingBundles = row["ImportingBundles"] || packageEntry["ImportingBundles"];
+                var exportingBundles = row["ExportingBundles"] || packageEntry["ExportingBundles"];
+                packageEntry["ImportingBundleLinks"] = bundleLinks(workspace, importingBundles);
+                packageEntry["ImportingBundleLinks"] = bundleLinks(workspace, importingBundles);
+                packageEntry["ExportingBundleLinks"] = bundleLinks(workspace, exportingBundles);
+                packages.push(packageEntry);
+            }
+        }
+        // the values could contain a child 'values' array of objects so use those directly
+        var childValues = values.values;
+        if (childValues) {
+            angular.forEach(childValues, onPackageEntry);
+        }
+        angular.forEach(values, function (row) {
+            angular.forEach(row, function (version) {
+                angular.forEach(version, function (packageEntry) {
+                    onPackageEntry(packageEntry, row);
+                });
+            });
+        });
+        return packages;
+    }
+    Osgi.defaultPackageValues = defaultPackageValues;
+    function defaultConfigurationValues(workspace, $scope, values) {
+        var array = [];
+        angular.forEach(values, function (row) {
+            var map = {};
+            map["Pid"] = row[0];
+            map["PidLink"] = "<a href='" + Core.url("#/osgi/pid/" + row[0] + workspace.hash()) + "'>" + row[0] + "</a>";
+            map["Bundle"] = row[1];
+            array.push(map);
+        });
+        return array;
+    }
+    Osgi.defaultConfigurationValues = defaultConfigurationValues;
+    function parseActualPackages(packages) {
+        var result = {};
+        for (var i = 0; i < packages.length; i++) {
+            var pkg = packages[i];
+            var idx = pkg.indexOf(";");
+            if (idx > 0) {
+                var name = pkg.substring(0, idx);
+                var ver = pkg.substring(idx + 1);
+                var data = result[name];
+                if (data === undefined) {
+                    data = {};
+                    result[name] = data;
+                }
+                data["ReportedVersion"] = ver;
+            }
+        }
+        return result;
+    }
+    Osgi.parseActualPackages = parseActualPackages;
+    function parseManifestHeader(headers, name) {
+        var result = {};
+        var data = {};
+        var hdr = headers[name];
+        if (hdr === undefined) {
+            return result;
+        }
+        var ephdr = hdr.Value;
+        var inPkg = true;
+        var inQuotes = false;
+        var pkgName = "";
+        var daDecl = "";
+        for (var i = 0; i < ephdr.length; i++) {
+            var c = ephdr[i];
+            if (c === '"') {
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (inQuotes) {
+                daDecl += c;
+                continue;
+            }
+            // from here on we are never inside quotes
+            if (c === ';') {
+                if (inPkg) {
+                    inPkg = false;
+                }
+                else {
+                    handleDADecl(data, daDecl);
+                    // reset directive and attribute variable
+                    daDecl = "";
+                }
+                continue;
+            }
+            if (c === ',') {
+                handleDADecl(data, daDecl);
+                result[pkgName] = data;
+                // reset data
+                data = {};
+                pkgName = "";
+                daDecl = "";
+                inPkg = true;
+                continue;
+            }
+            if (inPkg) {
+                pkgName += c;
+            }
+            else {
+                daDecl += c;
+            }
+        }
+        handleDADecl(data, daDecl);
+        result[pkgName] = data;
+        return result;
+    }
+    Osgi.parseManifestHeader = parseManifestHeader;
+    function handleDADecl(data, daDecl) {
+        var didx = daDecl.indexOf(":=");
+        if (didx > 0) {
+            data["D" + daDecl.substring(0, didx)] = daDecl.substring(didx + 2);
+            return;
+        }
+        var aidx = daDecl.indexOf("=");
+        if (aidx > 0) {
+            data["A" + daDecl.substring(0, aidx)] = daDecl.substring(aidx + 1);
+            return;
+        }
+    }
+    function toCollection(values) {
+        var collection = values;
+        if (!angular.isArray(values)) {
+            collection = [values];
+        }
+        return collection;
+    }
+    Osgi.toCollection = toCollection;
+    function labelBundleLinks(workspace, values, allValues) {
+        var answer = "";
+        var sorted = toCollection(values).sort(function (a, b) {
+            return a - b;
+        });
+        angular.forEach(sorted, function (value, key) {
+            var prefix = "";
+            if (answer.length > 0) {
+                prefix = " ";
+            }
+            var info = allValues[value] || {};
+            var labelText = info.SymbolicName;
+            answer += prefix + "<a class='label' href='" + Core.url("#/osgi/bundle/" + value + workspace.hash()) + "'>" + labelText + "</a>";
+        });
+        return answer;
+    }
+    Osgi.labelBundleLinks = labelBundleLinks;
+    function bundleLinks(workspace, values) {
+        var answer = "";
+        var sorted = toCollection(values).sort(function (a, b) {
+            return a - b;
+        });
+        angular.forEach(sorted, function (value, key) {
+            var prefix = "";
+            if (answer.length > 0) {
+                prefix = " ";
+            }
+            answer += prefix + "<a class='label' href='" + Core.url("#/osgi/bundle/" + value + workspace.hash()) + "'>" + value + "</a>";
+        });
+        return answer;
+    }
+    Osgi.bundleLinks = bundleLinks;
+    function pidLinks(workspace, values) {
+        var answer = "";
+        angular.forEach(toCollection(values), function (value, key) {
+            var prefix = "";
+            if (answer.length > 0) {
+                prefix = " ";
+            }
+            answer += prefix + "<a href='" + Core.url("#/osgi/bundle/" + value + workspace.hash()) + "'>" + value + "</a>";
+        });
+        return answer;
+    }
+    Osgi.pidLinks = pidLinks;
+    /**
+     * Finds a bundle by id
+     *
+     * @method findBundle
+     * @for Osgi
+     * @param {String} bundleId
+     * @param {Array} values
+     * @return {any}
+     *
+     */
+    function findBundle(bundleId, values) {
+        var answer = "";
+        angular.forEach(values, function (row) {
+            var id = row["Identifier"];
+            if (bundleId === id.toString()) {
+                answer = row;
+                return answer;
+            }
+        });
+        return answer;
+    }
+    Osgi.findBundle = findBundle;
+    function getSelectionBundleMBean(workspace) {
+        if (workspace) {
+            // lets navigate to the tree item based on paths
+            var folder = workspace.tree.navigate("osgi.core", "bundleState");
+            return Osgi.findFirstObjectName(folder);
+        }
+        return null;
+    }
+    Osgi.getSelectionBundleMBean = getSelectionBundleMBean;
+    /**
+     * Walks the tree looking in the first child all the way down until we find an objectName
+     * @method findFirstObjectName
+     * @for Osgi
+     * @param {Folder} node
+     * @return {String}
+     *
+     */
+    function findFirstObjectName(node) {
+        if (node) {
+            var answer = node.objectName;
+            if (answer) {
+                return answer;
+            }
+            else {
+                var children = node.children;
+                if (children && children.length) {
+                    return findFirstObjectName(children[0]);
+                }
+            }
+        }
+        return null;
+    }
+    Osgi.findFirstObjectName = findFirstObjectName;
+    function getSelectionFrameworkMBean(workspace) {
+        if (workspace) {
+            // lets navigate to the tree item based on paths
+            var folder = workspace.tree.navigate("osgi.core", "framework");
+            return Osgi.findFirstObjectName(folder);
+        }
+        return null;
+    }
+    Osgi.getSelectionFrameworkMBean = getSelectionFrameworkMBean;
+    function getSelectionServiceMBean(workspace) {
+        if (workspace) {
+            // lets navigate to the tree item based on paths
+            var folder = workspace.tree.navigate("osgi.core", "serviceState");
+            return Osgi.findFirstObjectName(folder);
+        }
+        return null;
+    }
+    Osgi.getSelectionServiceMBean = getSelectionServiceMBean;
+    function getSelectionPackageMBean(workspace) {
+        if (workspace) {
+            // lets navigate to the tree item based on paths
+            var folder = workspace.tree.navigate("osgi.core", "packageState");
+            return Osgi.findFirstObjectName(folder);
+        }
+        return null;
+    }
+    Osgi.getSelectionPackageMBean = getSelectionPackageMBean;
+    function getSelectionConfigAdminMBean(workspace) {
+        if (workspace) {
+            // lets navigate to the tree item based on paths
+            var folder = workspace.tree.navigate("osgi.compendium", "cm");
+            return Osgi.findFirstObjectName(folder);
+        }
+        return null;
+    }
+    Osgi.getSelectionConfigAdminMBean = getSelectionConfigAdminMBean;
+    function getMetaTypeMBean(workspace) {
+        if (workspace) {
+            var mbeanTypesToDomain = workspace.mbeanTypesToDomain;
+            var typeFolder = mbeanTypesToDomain["MetaTypeFacade"] || {};
+            var mbeanFolder = typeFolder["io.fabric8"] || {};
+            return mbeanFolder["objectName"];
+        }
+        return null;
+    }
+    Osgi.getMetaTypeMBean = getMetaTypeMBean;
+    function getProfileMetadataMBean(workspace) {
+        if (workspace) {
+            var mbeanTypesToDomain = workspace.mbeanTypesToDomain;
+            var typeFolder = mbeanTypesToDomain["ProfileMetadata"] || {};
+            var mbeanFolder = typeFolder["io.fabric8"] || {};
+            return mbeanFolder["objectName"];
+        }
+        return null;
+    }
+    Osgi.getProfileMetadataMBean = getProfileMetadataMBean;
+    function getHawtioOSGiToolsMBean(workspace) {
+        if (workspace) {
+            var mbeanTypesToDomain = workspace.mbeanTypesToDomain;
+            var toolsFacades = mbeanTypesToDomain["OSGiTools"] || {};
+            var hawtioFolder = toolsFacades["hawtio"] || {};
+            return hawtioFolder["objectName"];
+        }
+        return null;
+    }
+    Osgi.getHawtioOSGiToolsMBean = getHawtioOSGiToolsMBean;
+    function getHawtioConfigAdminMBean(workspace) {
+        if (workspace) {
+            var mbeanTypesToDomain = workspace.mbeanTypesToDomain;
+            var typeFolder = mbeanTypesToDomain["ConfigAdmin"] || {};
+            var mbeanFolder = typeFolder["hawtio"] || {};
+            return mbeanFolder["objectName"];
+        }
+        return null;
+    }
+    Osgi.getHawtioConfigAdminMBean = getHawtioConfigAdminMBean;
+    /**
+     * Creates a link to the given configuration pid and/or factoryPid
+     */
+    function createConfigPidLink($scope, workspace, pid, isFactory) {
+        if (isFactory === void 0) { isFactory = false; }
+        return Core.url("#" + createConfigPidPath($scope, pid, isFactory) + workspace.hash());
+    }
+    Osgi.createConfigPidLink = createConfigPidLink;
+    /**
+     * Creates a path to the given configuration pid and/or factoryPid
+     */
+    function createConfigPidPath($scope, pid, isFactory) {
+        if (isFactory === void 0) { isFactory = false; }
+        var link = pid;
+        var versionId = $scope.versionId;
+        var profileId = $scope.profileId;
+        if (versionId && versionId) {
+            var configPage = isFactory ? "/newConfiguration/" : "/configuration/";
+            return "/wiki/branch/" + versionId + configPage + link + "/" + $scope.pageId;
+        }
+        else {
+            return "/osgi/pid/" + link;
+        }
+    }
+    Osgi.createConfigPidPath = createConfigPidPath;
+    /**
+     * A helper method which initialises a scope's jolokia to refer to a profile's jolokia if used in a Fabric
+     * or use a local jolokia
+     */
+    function initProfileScope($scope, $routeParams, $location, localStorage, jolokia, workspace, initFn) {
+        if (initFn === void 0) { initFn = null; }
+        Wiki.initScope($scope, $routeParams, $location);
+        $scope.versionId = $routeParams.versionId || $scope.branch;
+        $scope.profileId = $routeParams.profileId || Fabric.pagePathToProfileId($scope.pageId);
+        if (!$scope.pageId) {
+            $scope.pageId = Fabric.fabricTopLevel + Fabric.profilePath($scope.profileId);
+        }
+        if (!initFn) {
+            initFn = function () { return null; };
+        }
+        var versionId = $scope.versionId;
+        var profileId = $scope.profileId;
+        $scope.profileNotRunning = false;
+        $scope.profileMetadataMBean = null;
+        if (versionId && profileId) {
+            $scope.inFabricProfile = true;
+            $scope.configurationsLink = "/wiki/branch/" + versionId + "/configurations/" + $scope.pageId;
+            $scope.profileMetadataMBean = getProfileMetadataMBean(workspace);
+            if ($scope.profileMetadataMBean) {
+                $scope.profileNotRunning = true;
+                $scope.jolokia = jolokia;
+                $scope.workspace = workspace;
+                initFn();
+            }
+            else {
+                Fabric.profileJolokia(jolokia, profileId, versionId, function (profileJolokia) {
+                    if (profileJolokia) {
+                        $scope.jolokia = profileJolokia;
+                        $scope.workspace = Core.createRemoteWorkspace(profileJolokia, $location, localStorage);
+                    }
+                    else {
+                        // lets deal with the case we have no profile running right now so we have to have a plan B
+                        // for fetching the profile configuration metadata
+                        $scope.jolokia = jolokia;
+                        $scope.workspace = workspace;
+                        $scope.profileNotRunning = true;
+                        $scope.profileMetadataMBean = getProfileMetadataMBean(workspace);
+                    }
+                    initFn();
+                });
+            }
+        }
+        else {
+            $scope.configurationsLink = "/osgi/configurations";
+            $scope.jolokia = jolokia;
+            $scope.workspace = workspace;
+            initFn();
+        }
+    }
+    Osgi.initProfileScope = initProfileScope;
+    function getConfigurationProperties(workspace, jolokia, pid, onDataFn) {
+        var mbean = getSelectionConfigAdminMBean(workspace);
+        var answer = null;
+        if (jolokia && mbean) {
+            answer = jolokia.execute(mbean, 'getProperties', pid, Core.onSuccess(onDataFn));
+        }
+        return answer;
+    }
+    Osgi.getConfigurationProperties = getConfigurationProperties;
+    /**
+     * For a pid of the form "foo.generatedId" for a pid "foo" or "foo.bar" remove the "foo." prefix
+     */
+    function removeFactoryPidPrefix(pid, factoryPid) {
+        if (pid && factoryPid) {
+            if (pid.startsWith(factoryPid)) {
+                return pid.substring(factoryPid.length + 1);
+            }
+            var idx = factoryPid.lastIndexOf(".");
+            if (idx > 0) {
+                var prefix = factoryPid.substring(0, idx + 1);
+                return Core.trimLeading(pid, prefix);
+            }
+        }
+        return pid;
+    }
+    Osgi.removeFactoryPidPrefix = removeFactoryPidPrefix;
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    var OsgiDataService = (function () {
+        function OsgiDataService(workspace, jolokia) {
+            this.jolokia = jolokia;
+            this.workspace = workspace;
+        }
+        OsgiDataService.prototype.getBundles = function () {
+            var bundles = {};
+            // TODO make this async,especially given this returns lots of data
+            var response = this.jolokia.request({
+                type: 'exec',
+                mbean: Osgi.getSelectionBundleMBean(this.workspace),
+                operation: 'listBundles()'
+            }, Core.onSuccess(null));
+            angular.forEach(response.value, function (value, key) {
+                var obj = {
+                    Identifier: value.Identifier,
+                    Name: "",
+                    SymbolicName: value.SymbolicName,
+                    Fragment: value.Fragment,
+                    State: value.State,
+                    Version: value.Version,
+                    LastModified: new Date(Number(value.LastModified)),
+                    Location: value.Location,
+                    StartLevel: undefined,
+                    RegisteredServices: value.RegisteredServices,
+                    ServicesInUse: value.ServicesInUse
+                };
+                if (value.Headers['Bundle-Name']) {
+                    obj.Name = value.Headers['Bundle-Name']['Value'];
+                }
+                bundles[value.Identifier] = obj;
+            });
+            return bundles;
+        };
+        OsgiDataService.prototype.getServices = function () {
+            var services = {};
+            var response = this.jolokia.request({
+                type: 'exec',
+                mbean: Osgi.getSelectionServiceMBean(this.workspace),
+                operation: 'listServices()'
+            }, Core.onSuccess(null));
+            var answer = response.value;
+            angular.forEach(answer, function (value, key) {
+                services[value.Identifier] = value;
+            });
+            return services;
+        };
+        OsgiDataService.prototype.getPackages = function () {
+            var packages = {};
+            var response = this.jolokia.request({
+                type: 'exec',
+                mbean: Osgi.getSelectionPackageMBean(this.workspace),
+                operation: 'listPackages()'
+            }, Core.onSuccess(null));
+            var answer = response.value.values;
+            answer.forEach(function (value) {
+                packages[value.Name + "-" + value.Version] = value;
+            });
+            return packages;
+        };
+        return OsgiDataService;
+    })();
+    Osgi.OsgiDataService = OsgiDataService;
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiData.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="../../karaf/ts/karafHelpers.ts"/>
+/**
+ * @module Osgi
+ * @main Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    Osgi.pluginName = 'osgi';
+    Osgi._module = angular.module(Osgi.pluginName, []);
+    Osgi._module.config(["$routeProvider", function ($routeProvider) {
+        $routeProvider.when('/osgi', { redirectTo: '/osgi/bundle-list' }).when('/osgi/bundle-list', { templateUrl: 'plugins/osgi/html/bundle-list.html' }).when('/osgi/bundles', { templateUrl: 'plugins/osgi/html/bundles.html' }).when('/osgi/bundle/:bundleId', { templateUrl: 'plugins/osgi/html/bundle.html' }).when('/osgi/services', { templateUrl: 'plugins/osgi/html/services.html' }).when('/osgi/packages', { templateUrl: 'plugins/osgi/html/packages.html' }).when('/osgi/package/:package/:version', { templateUrl: 'plugins/osgi/html/package.html' }).when('/osgi/configurations', { templateUrl: 'plugins/osgi/html/configurations.html' }).when('/osgi/pid/:pid/:factoryPid', { templateUrl: 'plugins/osgi/html/pid.html' }).when('/osgi/pid/:pid', { templateUrl: 'plugins/osgi/html/pid.html' }).when('/osgi/fwk', { templateUrl: 'plugins/osgi/html/framework.html' }).when('/osgi/dependencies', { templateUrl: 'plugins/osgi/html/svc-dependencies.html', reloadOnSearch: false });
+    }]);
+    Osgi._module.run(["HawtioNav", "workspace", "viewRegistry", "helpRegistry", function (nav, workspace, viewRegistry, helpRegistry) {
+        //viewRegistry['osgi'] = "plugins/osgi/html/layoutOsgi.html";
+        helpRegistry.addUserDoc('osgi', 'plugins/osgi/doc/help.md', function () {
+            return workspace.treeContainsDomainAndProperties("osgi.core");
+        });
+        var builder = nav.builder();
+        var configuration = builder.id('osgi-configuration').href(function () { return '/osgi/configurations' + workspace.hash(); }).title(function () { return 'Configuration'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/configuration') || workspace.isLinkPrefixActive('/osgi/pid'); }).build();
+        var bundles = builder.id('osgi-bundles').href(function () { return '/osgi/bundle-list' + workspace.hash(); }).title(function () { return 'Bundles'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/bundle'); }).build();
+        var features = builder.id('osgi-features').href(function () { return '/osgi/features' + workspace.hash(); }).title(function () { return 'Features'; }).show(function () { return !Core.isBlank(Karaf.getSelectionFeaturesMBean(workspace)); }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/feature'); }).build();
+        var packages = builder.id('osgi-packages').href(function () { return '/osgi/packages' + workspace.hash(); }).title(function () { return 'Packages'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/package'); }).build();
+        var services = builder.id('osgi-services').href(function () { return '/osgi/services' + workspace.hash(); }).title(function () { return 'Services'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/service'); }).build();
+        var scrComponents = builder.id('osgi-scr-components').href(function () { return '/osgi/scr-components' + workspace.hash(); }).title(function () { return 'Declarative Services'; }).show(function () { return !Core.isBlank(Karaf.getSelectionScrMBean(workspace)); }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/scr-component'); }).build();
+        var server = builder.id('osgi-server').href(function () { return '/osgi/server' + workspace.hash(); }).title(function () { return 'Server'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/server'); }).build();
+        var fwk = builder.id('osgi-fwk').href(function () { return '/osgi/fwk' + workspace.hash(); }).title(function () { return 'Framework'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/fwk'); }).build();
+        var dependencies = builder.id('osgi-dependencies').href(function () { return '/osgi/dependencies' + workspace.hash(); }).title(function () { return 'Dependencies'; }).isSelected(function () { return workspace.isLinkPrefixActive('/osgi/dependencies'); }).build();
+        var tab = builder.id('osgi').title(function () { return 'OSGi'; }).href(function () { return '/osgi'; }).isValid(function () { return workspace.treeContainsDomainAndProperties("osgi.core"); }).isSelected(function () { return workspace.isLinkActive('osgi'); }).tabs(configuration, bundles, features, packages, services, scrComponents, server, fwk, dependencies).build();
+        nav.add(tab);
+        /*
+        workspace.topLevelTabs.push({
+          id: "osgi",
+          content: "OSGi",
+          title: "Visualise and manage the bundles and services in this OSGi container",
+          isValid: (workspace: Workspace) => workspace.treeContainsDomainAndProperties("osgi.core"),
+          href: () => "#/osgi/bundle-list",
+          isActive: (workspace: Workspace) => workspace.isLinkActive("osgi")
+        });
+        */
+    }]);
+    Osgi._module.factory('osgiDataService', ["workspace", "jolokia", function (workspace, jolokia) {
+        return new Osgi.OsgiDataService(workspace, jolokia);
+    }]);
+    hawtioPluginLoader.addModule(Osgi.pluginName);
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    Osgi._module.controller("Osgi.BundleListController", ["$scope", "workspace", "jolokia", "localStorage", function ($scope, workspace, jolokia, localStorage) {
+        $scope.result = {};
+        $scope.bundles = [];
+        $scope.bundleUrl = "";
+        $scope.display = {
+            bundleField: "Name",
+            sortField: "Identifier",
+            bundleFilter: "",
+            startLevelFilter: 0,
+            showActiveMQBundles: false,
+            showCamelBundles: false,
+            showCxfBundles: false,
+            showPlatformBundles: false
+        };
+        if ('bundleList' in localStorage) {
+            $scope.display = angular.fromJson(localStorage['bundleList']);
+        }
+        $scope.$watch('display', function (newValue, oldValue) {
+            if (newValue !== oldValue) {
+                localStorage['bundleList'] = angular.toJson(newValue);
+            }
+        }, true);
+        $scope.installDisabled = function () {
+            return $scope.bundleUrl === "";
+        };
+        $scope.install = function () {
+            jolokia.request({
+                type: 'exec',
+                mbean: Osgi.getSelectionFrameworkMBean(workspace),
+                operation: "installBundle(java.lang.String)",
+                arguments: [$scope.bundleUrl]
+            }, {
+                success: function (response) {
+                    var bundleID = response.value;
+                    jolokia.request({
+                        type: 'exec',
+                        mbean: Osgi.getSelectionBundleMBean(workspace),
+                        operation: "isFragment(long)",
+                        arguments: [bundleID]
+                    }, {
+                        success: function (response) {
+                            var isFragment = response.value;
+                            if (isFragment) {
+                                Core.notification("success", "Fragment installed successfully.");
+                                $scope.bundleUrl = "";
+                                Core.$apply($scope);
+                            }
+                            else {
+                                jolokia.request({
+                                    type: 'exec',
+                                    mbean: Osgi.getSelectionFrameworkMBean(workspace),
+                                    operation: "startBundle(long)",
+                                    arguments: [bundleID]
+                                }, {
+                                    success: function (response) {
+                                        Core.notification("success", "Bundle installed and started successfully.");
+                                        $scope.bundleUrl = "";
+                                        Core.$apply($scope);
+                                    },
+                                    error: function (response) {
+                                        Core.notification("error", response.error);
+                                    }
+                                });
+                            }
+                        },
+                        error: function (response) {
+                            Core.notification("error", response.error);
+                        }
+                    });
+                },
+                error: function (response) {
+                    Core.notification("error", response.error);
+                }
+            });
+        };
+        $scope.$watch('display.sortField', function (newValue, oldValue) {
+            if (newValue !== oldValue) {
+                $scope.bundles = $scope.bundles.sortBy(newValue);
+            }
+        });
+        $scope.getStateStyle = function (state) {
+            return Osgi.getStateStyle("badge", state);
+        };
+        $scope.getLabel = function (bundleObject) {
+            var labelText;
+            if ($scope.display.bundleField === "Name") {
+                labelText = bundleObject.Name;
+                if (labelText === "") {
+                    labelText = bundleObject.SymbolicName;
+                }
+            }
+            else {
+                labelText = bundleObject.SymbolicName;
+            }
+            return labelText;
+        };
+        $scope.filterBundle = function (bundle) {
+            if ($scope.display.startLevelFilter > 0 && bundle.StartLevel < $scope.display.startLevelFilter) {
+                return false;
+            }
+            var labelText = $scope.getLabel(bundle);
+            if ($scope.display.bundleFilter && !labelText.toLowerCase().has($scope.display.bundleFilter.toLowerCase())) {
+                return false;
+            }
+            if (Core.isBlank($scope.display.bundleFilter)) {
+                var answer = true;
+                if (!$scope.display.showPlatformBundles) {
+                    answer = !Karaf.isPlatformBundle(bundle['SymbolicName']);
+                }
+                if (answer && !$scope.display.showActiveMQBundles) {
+                    answer = !Karaf.isActiveMQBundle(bundle['SymbolicName']);
+                }
+                if (answer && !$scope.display.showCxfBundles) {
+                    answer = !Karaf.isCxfBundle(bundle['SymbolicName']);
+                }
+                if (answer && !$scope.display.showCamelBundles) {
+                    answer = !Karaf.isCamelBundle(bundle['SymbolicName']);
+                }
+                return answer;
+            }
+            return true;
+        };
+        function processResponse(response) {
+            var value = response['value'];
+            var responseJson = angular.toJson(value);
+            if ($scope.responseJson !== responseJson) {
+                $scope.responseJson = responseJson;
+                $scope.bundles = [];
+                angular.forEach(value, function (value, key) {
+                    var obj = {
+                        Identifier: value.Identifier,
+                        Name: "",
+                        SymbolicName: value.SymbolicName,
+                        Fragment: value.Fragment,
+                        State: value.State,
+                        Version: value.Version,
+                        LastModified: new Date(Number(value.LastModified)),
+                        Location: value.Location,
+                        StartLevel: undefined
+                    };
+                    if (value.Headers['Bundle-Name']) {
+                        obj.Name = value.Headers['Bundle-Name']['Value'];
+                    }
+                    $scope.bundles.push(obj);
+                });
+                $scope.bundles = $scope.bundles.sortBy($scope.display.sortField);
+                Core.$apply($scope);
+                // Obtain start level information for all the bundles, let's do this async though
+                setTimeout(function () {
+                    var requests = [];
+                    for (var i = 0; i < $scope.bundles.length; i++) {
+                        var b = $scope.bundles[i];
+                        requests.push({
+                            type: 'exec',
+                            mbean: Osgi.getSelectionBundleMBean(workspace),
+                            operation: 'getStartLevel(long)',
+                            arguments: [b.Identifier]
+                        });
+                    }
+                    var outstanding = requests.length;
+                    jolokia.request(requests, Core.onSuccess(function (response) {
+                        var id = response['request']['arguments'].first();
+                        if (angular.isDefined(id)) {
+                            var bundle = $scope.bundles[id];
+                            if (bundle) {
+                                Osgi.log.debug("Setting bundle: ", bundle['Identifier'], " start level to: ", response['value']);
+                                bundle['StartLevel'] = response['value'];
+                            }
+                        }
+                        outstanding = outstanding - 1;
+                        Osgi.log.debug("oustanding responses: ", outstanding);
+                        if (outstanding === 0) {
+                            Osgi.log.debug("Updating page...");
+                            Core.$apply($scope);
+                        }
+                    }));
+                }, 500);
+            }
+        }
+        Core.register(jolokia, $scope, {
+            type: 'exec',
+            mbean: Osgi.getSelectionBundleMBean(workspace),
+            operation: 'listBundles()'
+        }, Core.onSuccess(processResponse));
+    }]);
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    // These functions are exported independently to facilitate unit testing
+    function readBSNHeaderData(header) {
+        var idx = header.indexOf(";");
+        if (idx <= 0) {
+            return "";
+        }
+        return header.substring(idx + 1).trim();
+    }
+    Osgi.readBSNHeaderData = readBSNHeaderData;
+    function formatAttributesAndDirectivesForPopover(data, skipVersion) {
+        var str = "";
+        if (!data) {
+            return str;
+        }
+        var sortedKeys = Object.keys(data).sort();
+        for (var i = 0; i < sortedKeys.length; i++) {
+            var da = sortedKeys[i];
+            var type = da.charAt(0);
+            var separator = "";
+            var txtClass;
+            if (type === "A") {
+                separator = "=";
+                txtClass = "text-info";
+            }
+            if (type === "D") {
+                separator = ":=";
+                txtClass = "muted";
+            }
+            if (separator !== "") {
+                if (skipVersion) {
+                    if (da === "Aversion") {
+                        continue;
+                    }
+                }
+                var value = data[da];
+                if (value.length > 15) {
+                    value = value.replace(/[,]/g, ",<br/>&nbsp;&nbsp;");
+                }
+                str += "<tr><td><strong class='" + txtClass + "'>" + da.substring(1) + "</strong>" + separator + value + "</td></tr>";
+            }
+        }
+        return str;
+    }
+    Osgi.formatAttributesAndDirectivesForPopover = formatAttributesAndDirectivesForPopover;
+    function formatServiceName(objClass) {
+        if (angular.isArray(objClass)) {
+            return formatServiceNameArray(objClass);
+        }
+        var name = objClass.toString();
+        var idx = name.lastIndexOf('.');
+        return name.substring(idx + 1);
+    }
+    Osgi.formatServiceName = formatServiceName;
+    function formatServiceNameArray(objClass) {
+        var rv = [];
+        for (var i = 0; i < objClass.length; i++) {
+            rv.add(formatServiceName(objClass[i]));
+        }
+        rv = rv.filter(function (elem, pos, self) {
+            return self.indexOf(elem) === pos;
+        });
+        rv.sort();
+        return rv.toString();
+    }
+    Osgi._module.controller("Osgi.BundleController", ["$scope", "$location", "workspace", "$routeParams", "jolokia", function ($scope, $location, workspace, $routeParams, jolokia) {
+        $scope.bundleId = $routeParams.bundleId;
+        updateTableContents();
+        $scope.showValue = function (key) {
+            switch (key) {
+                case "Bundle-Name":
+                case "Bundle-SymbolicName":
+                case "Bundle-Version":
+                case "Export-Package":
+                case "Import-Package":
+                    return false;
+                default:
+                    return true;
+            }
+        };
+        $scope.executeLoadClass = function (clazz) {
+            var mbean = Osgi.getHawtioOSGiToolsMBean(workspace);
+            if (mbean) {
+                jolokia.request({ type: 'exec', mbean: mbean, operation: 'getLoadClassOrigin', arguments: [$scope.bundleId, clazz] }, {
+                    success: function (response) {
+                        var divEl = document.getElementById("loadClassResult");
+                        var resultBundle = response.value;
+                        var style;
+                        var resultTxt;
+                        if (resultBundle === -1) {
+                            style = "";
+                            resultTxt = "Class can not be loaded from this bundle.";
+                        }
+                        else {
+                            style = "alert-success";
+                            resultTxt = "Class is served from Bundle " + Osgi.bundleLinks(workspace, resultBundle);
+                        }
+                        divEl.innerHTML += "<div class='alert " + style + "'>" + "<button type='button' class='close' data-dismiss='alert'>&times;</button>" + "Loading class <strong>" + clazz + "</strong> in Bundle " + $scope.bundleId + ". " + resultTxt + "</div>";
+                    },
+                    error: function (response) {
+                        inspectReportError(response);
+                    }
+                });
+            }
+            else {
+                inspectReportNoMBeanFound();
+            }
+        };
+        $scope.executeFindResource = function (resource) {
+            var mbean = Osgi.getHawtioOSGiToolsMBean(workspace);
+            if (mbean) {
+                jolokia.request({ type: 'exec', mbean: mbean, operation: 'getResourceURL', arguments: [$scope.bundleId, resource] }, {
+                    success: function (response) {
+                        var divEl = document.getElementById("loadClassResult");
+                        var resultURL = response.value;
+                        var style;
+                        var resultTxt;
+                        if (resultURL === null) {
+                            style = "";
+                            resultTxt = "Resource can not be found from this bundle.";
+                        }
+                        else {
+                            style = "alert-success";
+                            resultTxt = "Resource is available from: " + resultURL;
+                        }
+                        divEl.innerHTML += "<div class='alert " + style + "'>" + "<button type='button' class='close' data-dismiss='alert'>&times;</button>" + "Finding resource <strong>" + resource + "</strong> in Bundle " + $scope.bundleId + ". " + resultTxt + "</div>";
+                    },
+                    error: function (response) {
+                        inspectReportError(response);
+                    }
+                });
+            }
+            else {
+                inspectReportNoMBeanFound();
+            }
+        };
+        $scope.mavenLink = function (row) {
+            if (angular.isObject(row)) {
+                return Maven.mavenLink(row.Location);
+            }
+            // TODO try using the LogQuery mbean to find the mvn coords for a bundle id?
+            return "";
+        };
+        $scope.startBundle = function (bundleId) {
+            jolokia.request([
+                { type: 'exec', mbean: Osgi.getSelectionFrameworkMBean(workspace), operation: 'startBundle', arguments: [bundleId] }
+            ], Core.onSuccess(updateTableContents));
+        };
+        $scope.stopBundle = function (bundleId) {
+            jolokia.request([
+                { type: 'exec', mbean: Osgi.getSelectionFrameworkMBean(workspace), operation: 'stopBundle', arguments: [bundleId] }
+            ], Core.onSuccess(updateTableContents));
+        };
+        $scope.updatehBundle = function (bundleId) {
+            jolokia.request([
+                { type: 'exec', mbean: Osgi.getSelectionFrameworkMBean(workspace), operation: 'updateBundle', arguments: [bundleId] }
+            ], Core.onSuccess(updateTableContents));
+        };
+        $scope.refreshBundle = function (bundleId) {
+            jolokia.request([
+                { type: 'exec', mbean: Osgi.getSelectionFrameworkMBean(workspace), operation: 'refreshBundle', arguments: [bundleId] }
+            ], Core.onSuccess(updateTableContents));
+        };
+        $scope.uninstallBundle = function (bundleId) {
+            jolokia.request([{
+                type: 'exec',
+                mbean: Osgi.getSelectionFrameworkMBean(workspace),
+                operation: 'uninstallBundle',
+                arguments: [bundleId]
+            }], Core.onSuccess(function () {
+                $location.path("/osgi/bundle-list");
+                Core.$apply($scope);
+            }));
+        };
+        function inspectReportNoMBeanFound() {
+            var divEl = document.getElementById("loadClassResult");
+            divEl.innerHTML += "<div class='alert alert-error'>" + "<button type='button' class='close' data-dismiss='alert'>&times;</button>" + "The hawtio.OSGiTools MBean is not available. Please contact technical support." + "</div>";
+        }
+        function inspectReportError(response) {
+            var divEl = document.getElementById("loadClassResult");
+            divEl.innerHTML += "<div class='alert alert-error'>" + "<button type='button' class='close' data-dismiss='alert'>&times;</button>" + "Problem invoking hawtio.OSGiTools MBean. " + response + "</div>";
+        }
+        function populateTable(response) {
+            var values = response.value;
+            $scope.bundles = values;
+            // now find the row based on the selection ui
+            Osgi.defaultBundleValues(workspace, $scope, values);
+            $scope.row = Osgi.findBundle($scope.bundleId, values);
+            Core.$apply($scope);
+            // This trick is to ensure that the popover is properly visible if it is
+            // smaller than the accordion
+            $('.accordion-body.collapse').hover(function () {
+                $(this).css('overflow', 'visible');
+            }, function () {
+                $(this).css('overflow', 'hidden');
+            });
+            // setup tooltips
+            $("#bsn").tooltip({ title: readBSNHeaderData($scope.row.Headers["Bundle-SymbolicName"].Value), placement: "right" });
+            createImportPackageSection();
+            createExportPackageSection();
+            populateServicesSection();
+        }
+        function createImportPackageSection() {
+            // setup popovers
+            var importPackageHeaders = Osgi.parseManifestHeader($scope.row.Headers, "Import-Package");
+            for (var pkg in $scope.row.ImportData) {
+                var data = importPackageHeaders[pkg];
+                var po = "<small><table>" + "<tr><td><strong>Imported Version=</strong>" + $scope.row.ImportData[pkg].ReportedVersion + "</td></tr>";
+                if (data !== undefined) {
+                    // This happens in case the package was imported due to a DynamicImport-Package
+                    po += formatAttributesAndDirectivesForPopover(data, false);
+                    if (importPackageHeaders[pkg]["Dresolution"] !== "optional") {
+                        $(document.getElementById("import." + pkg)).addClass("badge-info");
+                    }
+                }
+                else {
+                    // This is a dynamic import
+                    $(document.getElementById("import." + pkg)).addClass("badge-important");
+                    var reason = $scope.row.Headers["DynamicImport-Package"];
+                    if (reason !== undefined) {
+                        reason = reason.Value;
+                        po += "<tr><td>Dynamic Import. Imported due to:</td></tr>";
+                        po += "<tr><td><strong>DynamicImport-Package=</strong>" + reason + "</td></tr>";
+                    }
+                }
+                po += "</table></small>";
+                $(document.getElementById("import." + pkg)).popover({ title: "attributes and directives", content: po, trigger: "hover", html: true });
+                // Unset the value so that we can see whether there are any unbound optional imports left...
+                importPackageHeaders[pkg] = undefined;
+            }
+            var unsatisfied = "";
+            for (var pkg in importPackageHeaders) {
+                if (importPackageHeaders[pkg] === undefined) {
+                    continue;
+                }
+                if ($scope.row.ExportData[pkg] !== undefined) {
+                    continue;
+                }
+                unsatisfied += "<tr><td><div class='less-big badge badge-warning' id='unsatisfied." + pkg + "'>" + pkg + "</div></td></tr>";
+            }
+            if (unsatisfied !== "") {
+                unsatisfied = "<p/><p class='text-warning'>The following optional imports were not satisfied:<table>" + unsatisfied + "</table></p>";
+                document.getElementById("unsatisfiedOptionalImports").innerHTML = unsatisfied;
+            }
+            for (var pkg in importPackageHeaders) {
+                if (importPackageHeaders[pkg] === undefined) {
+                    continue;
+                }
+                var po = "<small><table>";
+                po += formatAttributesAndDirectivesForPopover(importPackageHeaders[pkg], false);
+                po += "</table></small>";
+                $(document.getElementById("unsatisfied." + pkg)).popover({ title: "attributes and directives", content: po, trigger: "hover", html: true });
+            }
+        }
+        function createExportPackageSection() {
+            // setup popovers
+            var exportPackageHeaders = Osgi.parseManifestHeader($scope.row.Headers, "Export-Package");
+            for (var pkg in $scope.row.ExportData) {
+                var po = "<small><table>" + "<tr><td><strong>Exported Version=</strong>" + $scope.row.ExportData[pkg].ReportedVersion + "</td></tr>";
+                po += formatAttributesAndDirectivesForPopover(exportPackageHeaders[pkg], true);
+                po += "</table></small>";
+                $(document.getElementById("export." + pkg)).popover({ title: "attributes and directives", content: po, trigger: "hover", html: true });
+            }
+        }
+        function populateServicesSection() {
+            if (($scope.row.RegisteredServices === undefined || $scope.row.RegisteredServices.length === 0) && ($scope.row.ServicesInUse === undefined || $scope.row.ServicesInUse === 0)) {
+                // no services for this bundle
+                return;
+            }
+            var mbean = Osgi.getSelectionServiceMBean(workspace);
+            if (mbean) {
+                jolokia.request({ type: 'exec', mbean: mbean, operation: 'listServices()' }, Core.onSuccess(updateServices));
+            }
+        }
+        function updateServices(result) {
+            var data = result.value;
+            for (var id in data) {
+                var reg = document.getElementById("registers.service." + id);
+                var uses = document.getElementById("uses.service." + id);
+                if ((reg === undefined || reg === null) && (uses === undefined || uses === null)) {
+                    continue;
+                }
+                jolokia.request({
+                    type: 'exec',
+                    mbean: Osgi.getSelectionServiceMBean(workspace),
+                    operation: 'getProperties',
+                    arguments: [id]
+                }, Core.onSuccess(function (svcId, regEl, usesEl) {
+                    return function (resp) {
+                        var props = resp.value;
+                        var sortedKeys = Object.keys(props).sort();
+                        var po = "<small><table>";
+                        for (var i = 0; i < sortedKeys.length; i++) {
+                            var value = props[sortedKeys[i]];
+                            if (value !== undefined) {
+                                var fval = value.Value;
+                                if (fval.length > 15) {
+                                    fval = fval.replace(/[,]/g, ",<br/>&nbsp;&nbsp;");
+                                }
+                                po += "<tr><td valign='top'>" + sortedKeys[i] + "</td><td>" + fval + "</td></tr>";
+                            }
+                        }
+                        var regBID = data[svcId].BundleIdentifier;
+                        po += "<tr><td>Registered&nbsp;by</td><td>Bundle " + regBID + " <div class='less-big label'>" + $scope.bundles[regBID].SymbolicName + "</div></td></tr>";
+                        po += "</table></small>";
+                        if (regEl !== undefined && regEl !== null) {
+                            regEl.innerText = " " + formatServiceName(data[svcId].objectClass);
+                            $(regEl).popover({ title: "service properties", content: po, trigger: "hover", html: true });
+                        }
+                        if (usesEl !== undefined && usesEl !== null) {
+                            usesEl.innerText = " " + formatServiceName(data[svcId].objectClass);
+                            $(usesEl).popover({ title: "service properties", content: po, trigger: "hover", html: true });
+                        }
+                    };
+                }(id, reg, uses)));
+            }
+        }
+        function updateTableContents() {
+            //console.log("Loading the bundles");
+            var mbean = Osgi.getSelectionBundleMBean(workspace);
+            if (mbean) {
+                jolokia.request({ type: 'exec', mbean: mbean, operation: 'listBundles()' }, Core.onSuccess(populateTable));
+            }
+        }
+    }]);
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    Osgi._module.controller("Osgi.BundlesController", ["$scope", "workspace", "jolokia", function ($scope, workspace, jolokia) {
+        $scope.result = {};
+        $scope.bundles = [];
+        $scope.selected = [];
+        $scope.loading = true;
+        $scope.bundleUrl = "";
+        $scope.installDisabled = function () {
+            return $scope.bundleUrl === "";
+        };
+        var columnDefs = [
+            {
+                field: 'Identifier',
+                displayName: 'Identifier',
+                width: "48",
+                headerCellTemplate: '<div ng-click="col.sort()" class="ngHeaderSortColumn {{col.headerClass}}" ng-style="{\'cursor\': col.cursor}" ng-class="{ \'ngSorted\': !noSortVisible }"><div class="ngHeaderText colt{{$index}} pagination-centered" title="Identifier"><i class="fa fa-tag"></i></div><div class="ngSortButtonDown" ng-show="col.showSortButtonDown()"></div><div class="ngSortButtonUp" ng-show="col.showSortButtonUp()"></div></div>',
+            },
+            {
+                field: 'State',
+                displayName: 'Bundle State',
+                width: "24",
+                headerCellTemplate: '<div ng-click="col.sort()" class="ngHeaderSortColumn {{col.headerClass}}" ng-style="{\'cursor\': col.cursor}" ng-class="{ \'ngSorted\': !noSortVisible }"><div class="ngHeaderText colt{{$index}} pagination-centered" title="State"><i class="fa fa-tasks"></i></div><div class="ngSortButtonDown" ng-show="col.showSortButtonDown()"></div><div class="ngSortButtonUp" ng-show="col.showSortButtonUp()"></div></div>',
+                cellTemplate: '<div class="ngCellText" title="{{row.getProperty(col.field)}}"><i class="{{row.getProperty(col.field)}}"></i></div>'
+            },
+            {
+                field: 'Name',
+                displayName: 'Name',
+                width: "***",
+                cellTemplate: '<div class="ngCellText"><a href="#/osgi/bundle/{{row.entity.Identifier}}?p=container">{{row.getProperty(col.field)}}</a></div>'
+            },
+            {
+                field: 'SymbolicName',
+                displayName: 'Symbolic Name',
+                width: "***",
+                cellTemplate: '<div class="ngCellText"><a href="#/osgi/bundle/{{row.entity.Identifier}}?p=container">{{row.getProperty(col.field)}}</a></div>'
+            },
+            {
+                field: 'Version',
+                displayName: 'Version',
+                width: "**"
+            },
+            {
+                field: 'Location',
+                displayName: 'Update Location',
+                width: "***"
+            }
+        ];
+        $scope.gridOptions = {
+            data: 'bundles',
+            showFilter: false,
+            selectedItems: $scope.selected,
+            selectWithCheckboxOnly: true,
+            columnDefs: columnDefs,
+            filterOptions: {
+                filterText: ''
+            }
+        };
+        $scope.onResponse = function () {
+            jolokia.request({
+                type: 'exec',
+                mbean: Osgi.getSelectionBundleMBean(workspace),
+                operation: 'listBundles()'
+            }, {
+                success: render,
+                error: render
+            });
+        };
+        $scope.controlBundles = function (op) {
+            var startBundle = function (response) {
+            };
+            var ids = $scope.selected.map(function (b) {
+                return b.Identifier;
+            });
+            if (!angular.isArray(ids)) {
+                ids = [ids];
+            }
+            jolokia.request({
+                type: 'exec',
+                mbean: Osgi.getSelectionFrameworkMBean(workspace),
+                operation: op,
+                arguments: [ids]
+            }, {
+                success: $scope.onResponse,
+                error: $scope.onResponse
+            });
+        };
+        $scope.stop = function () {
+            $scope.controlBundles('stopBundles([J)');
+        };
+        $scope.start = function () {
+            $scope.controlBundles('startBundles([J)');
+        };
+        $scope.update = function () {
+            $scope.controlBundles('updateBundles([J)');
+        };
+        $scope.refresh = function () {
+            $scope.controlBundles('refreshBundles([J)');
+        };
+        $scope.uninstall = function () {
+            $scope.controlBundles('uninstallBundles([J)');
+        };
+        $scope.install = function () {
+            jolokia.request({
+                type: 'exec',
+                mbean: Osgi.getSelectionFrameworkMBean(workspace),
+                operation: "installBundle(java.lang.String)",
+                arguments: [$scope.bundleUrl]
+            }, {
+                success: function (response) {
+                    console.log("Got: ", response);
+                    $scope.bundleUrl = "";
+                    jolokia.request({
+                        type: 'exec',
+                        mbean: Osgi.getSelectionFrameworkMBean(workspace),
+                        operation: "startBundle(long)",
+                        arguments: [response.value]
+                    }, {
+                        success: $scope.onResponse,
+                        error: $scope.onResponse
+                    });
+                },
+                error: function (response) {
+                    $scope.bundleUrl = "";
+                    $scope.onResponse();
+                }
+            });
+        };
+        function render(response) {
+            if (!angular.equals($scope.result, response.value)) {
+                $scope.selected.length = 0;
+                $scope.result = response.value;
+                $scope.bundles = [];
+                angular.forEach($scope.result, function (value, key) {
+                    var obj = {
+                        Identifier: value.Identifier,
+                        Name: "",
+                        SymbolicName: value.SymbolicName,
+                        State: value.State,
+                        Version: value.Version,
+                        LastModified: value.LastModified,
+                        Location: value.Location
+                    };
+                    if (value.Headers['Bundle-Name']) {
+                        obj.Name = value.Headers['Bundle-Name']['Value'];
+                    }
+                    $scope.bundles.push(obj);
+                });
+                $scope.loading = false;
+                Core.$apply($scope);
+            }
+        }
+        Core.register(jolokia, $scope, {
+            type: 'exec',
+            mbean: Osgi.getSelectionBundleMBean(workspace),
+            operation: 'listBundles()'
+        }, Core.onSuccess(render));
+    }]);
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    Osgi._module.controller("Osgi.ConfigurationsController", ["$scope", "$routeParams", "$location", "workspace", "jolokia", function ($scope, $routeParams, $location, workspace, jolokia) {
+        $scope.selectedItems = [];
+        $scope.grid = {
+            data: 'configurations',
+            showFilter: false,
+            showColumnMenu: false,
+            multiSelect: false,
+            filterOptions: {
+                filterText: "",
+                useExternalFilter: false
+            },
+            selectedItems: $scope.selectedItems,
+            showSelectionCheckbox: false,
+            displaySelectionCheckbox: false,
+            columnDefs: [
+                {
+                    field: 'Pid',
+                    displayName: 'Configuration',
+                    cellTemplate: '<div class="ngCellText"><a ng-href="{{row.entity.pidLink}}" title="{{row.entity.description}}">{{row.entity.name}}</a></div>'
+                }
+            ]
+        };
+        /** the kinds of config */
+        var configKinds = {
+            factory: {
+                class: "badge badge-info",
+                title: "Configuration factory used to create separate instances of the configuration"
+            },
+            pid: {
+                class: "badge badge-success",
+                title: "Configuration which has a set of properties associated with it"
+            },
+            pidNoValue: {
+                class: "badge badge-warning",
+                title: "Configuration which does not yet have any bound values"
+            }
+        };
+        $scope.addPidDialog = new UI.Dialog();
+        Osgi.initProfileScope($scope, $routeParams, $location, localStorage, jolokia, workspace, function () {
+            $scope.$watch('workspace.selection', function () {
+                updateTableContents();
+            });
+            updateTableContents();
+        });
+        $scope.addPid = function (newPid) {
+            $scope.addPidDialog.close();
+            var mbean = Osgi.getHawtioConfigAdminMBean($scope.workspace);
+            if (mbean && newPid) {
+                var json = JSON.stringify({});
+                $scope.jolokia.execute(mbean, "configAdminUpdate", newPid, json, Core.onSuccess(function (response) {
+                    Core.notification("success", "Successfully created pid: " + newPid);
+                    updateTableContents();
+                }));
+            }
+        };
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            // lets do this asynchronously to avoid Error: $digest already in progress
+            setTimeout(updateTableContents, 50);
+        });
+        function onConfigPids(response) {
+            var pids = {};
+            angular.forEach(response, function (row) {
+                var pid = row[0];
+                var bundle = row[1];
+                var config = createPidConfig(pid, bundle);
+                if (!ignorePid(pid)) {
+                    config["hasValue"] = true;
+                    config["kind"] = configKinds.pid;
+                    pids[pid] = config;
+                }
+            });
+            $scope.pids = pids;
+            // lets load the factory pids
+            var mbean = Osgi.getSelectionConfigAdminMBean($scope.workspace);
+            if (mbean) {
+                $scope.jolokia.execute(mbean, 'getConfigurations', '(service.factoryPid=*)', Core.onSuccess(onConfigFactoryPids, errorHandler("Failed to load factory PID configurations: ")));
+            }
+            loadMetaType();
+        }
+        /**
+         * For each factory PID lets find the underlying PID to use to edit it, then lets make a link between them
+         */
+        function onConfigFactoryPids(response) {
+            var mbean = Osgi.getSelectionConfigAdminMBean($scope.workspace);
+            var pids = $scope.pids;
+            if (pids && mbean) {
+                angular.forEach(response, function (row) {
+                    var pid = row[0];
+                    var bundle = row[1];
+                    if (pid && !ignorePid(pid)) {
+                        var config = pids[pid];
+                        if (config) {
+                            config["isFactoryInstance"] = true;
+                            $scope.jolokia.execute(mbean, 'getFactoryPid', pid, Core.onSuccess(function (factoryPid) {
+                                config["factoryPid"] = factoryPid;
+                                config["name"] = Osgi.removeFactoryPidPrefix(pid, factoryPid);
+                                if (factoryPid) {
+                                    var factoryConfig = getOrCreatePidConfig(factoryPid, bundle, pids);
+                                    if (factoryConfig) {
+                                        configureFactoryPidConfig(pid, factoryConfig, config);
+                                        if ($scope.inFabricProfile) {
+                                            Osgi.getConfigurationProperties($scope.workspace, $scope.jolokia, pid, function (configValues) {
+                                                var zkPid = Core.pathGet(configValues, ["fabric.zookeeper.pid", "Value"]);
+                                                if (zkPid) {
+                                                    config["name"] = Osgi.removeFactoryPidPrefix(zkPid, factoryPid);
+                                                    config["zooKeeperPid"] = zkPid;
+                                                    Core.$apply($scope);
+                                                }
+                                            });
+                                        }
+                                        Core.$apply($scope);
+                                    }
+                                }
+                            }));
+                        }
+                    }
+                });
+            }
+            updateMetaType();
+        }
+        function onMetaType(response) {
+            $scope.metaType = response;
+            updateMetaType();
+        }
+        function updateConfigurations() {
+            var pids = $scope.pids;
+            var configurations = [];
+            angular.forEach(pids, function (config, pid) {
+                if (!config["isFactoryInstance"]) {
+                    configurations.push(config);
+                }
+            });
+            $scope.configurations = configurations.sortBy("name");
+            Core.$apply($scope);
+        }
+        function updateMetaType(lazilyCreateConfigs) {
+            if (lazilyCreateConfigs === void 0) { lazilyCreateConfigs = true; }
+            var metaType = $scope.metaType;
+            if (metaType) {
+                var pidMetadata = Osgi.configuration.pidMetadata;
+                var pids = $scope.pids || {};
+                angular.forEach(metaType.pids, function (value, pid) {
+                    var bundle = null;
+                    var config = lazilyCreateConfigs ? getOrCreatePidConfig(pid, bundle) : pids[pid];
+                    if (config) {
+                        var factoryPidBundleIds = value.factoryPidBundleIds;
+                        if (factoryPidBundleIds && factoryPidBundleIds.length) {
+                            setFactoryPid(config);
+                        }
+                        config["name"] = Core.pathGet(pidMetadata, [pid, "name"]) || trimUnnecessaryPrefixes(value.name) || pid;
+                        var description = Core.pathGet(pidMetadata, [pid, "description"]) || value.description;
+                        /*
+                                    if (description) {
+                                      description = description + "\n" + pidBundleDescription(pid, config.bundle);
+                                    }
+                        */
+                        config["description"] = description;
+                    }
+                });
+            }
+            updateConfigurations();
+        }
+        function loadMetaType() {
+            if ($scope.pids) {
+                if ($scope.profileNotRunning && $scope.profileMetadataMBean && $scope.versionId && $scope.profileId) {
+                    jolokia.execute($scope.profileMetadataMBean, "metaTypeSummary", $scope.versionId, $scope.profileId, Core.onSuccess(onMetaType));
+                }
+                else {
+                    var metaTypeMBean = Osgi.getMetaTypeMBean($scope.workspace);
+                    if (metaTypeMBean) {
+                        $scope.jolokia.execute(metaTypeMBean, "metaTypeSummary", Core.onSuccess(onMetaType));
+                    }
+                }
+            }
+        }
+        function updateTableContents() {
+            $scope.configurations = [];
+            if ($scope.profileNotRunning && $scope.profileMetadataMBean && $scope.versionId && $scope.profileId) {
+                jolokia.execute($scope.profileMetadataMBean, "metaTypeSummary", $scope.versionId, $scope.profileId, Core.onSuccess(onProfileMetaType, { silent: true }));
+            }
+            else {
+                if ($scope.jolokia) {
+                    var mbean = Osgi.getSelectionConfigAdminMBean($scope.workspace);
+                    if (mbean) {
+                        $scope.jolokia.execute(mbean, 'getConfigurations', '(service.pid=*)', Core.onSuccess(onConfigPids, errorHandler("Failed to load PID configurations: ")));
+                    }
+                }
+            }
+        }
+        function onProfileMetaType(response) {
+            var metaType = response;
+            if (metaType) {
+                var pids = {};
+                angular.forEach(metaType.pids, function (value, pid) {
+                    if (value && !ignorePid(pid)) {
+                        // TODO we don't have a bundle ID
+                        var bundle = "mvn:" + pid;
+                        var config = {
+                            pid: pid,
+                            name: value.name,
+                            class: 'pid',
+                            description: value.description,
+                            bundle: bundle,
+                            kind: configKinds.pid,
+                            pidLink: createPidLink(pid)
+                        };
+                        pids[pid] = config;
+                    }
+                });
+                angular.forEach(pids, function (config, pid) {
+                    var idx = pid.indexOf('-');
+                    if (idx > 0) {
+                        var factoryPid = pid.substring(0, idx);
+                        var name = pid.substring(idx + 1, pid.length);
+                        var factoryConfig = pids[factoryPid];
+                        if (!factoryConfig) {
+                            var bundle = config.bundle;
+                            factoryConfig = getOrCreatePidConfig(factoryPid, bundle, pids);
+                        }
+                        if (factoryConfig) {
+                            configureFactoryPidConfig(pid, factoryConfig, config, factoryPid);
+                            config.name = name;
+                            pids[factoryPid] = factoryConfig;
+                            // lets remove the pid instance as its now a child of the factory
+                            delete pids[pid];
+                        }
+                    }
+                });
+                $scope.pids = pids;
+            }
+            // now lets process the response and replicate the getConfigurations / getProperties API
+            // calls on the OSGi API
+            // to get the tree of factory pids or pids
+            $scope.metaType = metaType;
+            updateMetaType(false);
+        }
+        function trimUnnecessaryPrefixes(name) {
+            angular.forEach(["Fabric8 ", "Apache "], function (prefix) {
+                if (name && name.startsWith(prefix) && name.length > prefix.length) {
+                    name = name.substring(prefix.length);
+                }
+            });
+            return name;
+        }
+        function pidBundleDescription(pid, bundle) {
+            var pidMetadata = Osgi.configuration.pidMetadata;
+            return Core.pathGet(pidMetadata, [pid, "description"]) || "pid: " + pid + "\nbundle: " + bundle;
+        }
+        function createPidConfig(pid, bundle) {
+            var pidMetadata = Osgi.configuration.pidMetadata;
+            var config = {
+                pid: pid,
+                name: Core.pathGet(pidMetadata, [pid, "name"]) || pid,
+                class: 'pid',
+                description: Core.pathGet(pidMetadata, [pid, "description"]) || pidBundleDescription(pid, bundle),
+                bundle: bundle,
+                kind: configKinds.pidNoValue,
+                pidLink: createPidLink(pid)
+            };
+            return config;
+        }
+        function ignorePid(pid) {
+            var answer = false;
+            angular.forEach(Osgi.configuration.ignorePids, function (pattern) {
+                if (pid.startsWith(pattern)) {
+                    answer = true;
+                }
+            });
+            return answer;
+        }
+        function getOrCreatePidConfig(pid, bundle, pids) {
+            if (pids === void 0) { pids = null; }
+            if (ignorePid(pid)) {
+                Osgi.log.info("ignoring pid " + pid);
+                return null;
+            }
+            else {
+                if (!pids) {
+                    pids = $scope.pids;
+                }
+                var factoryConfig = pids[pid];
+                if (!factoryConfig) {
+                    factoryConfig = createPidConfig(pid, bundle);
+                    pids[pid] = factoryConfig;
+                    updateConfigurations();
+                }
+                return factoryConfig;
+            }
+        }
+        function configureFactoryPidConfig(pid, factoryConfig, config, factoryPid) {
+            if (factoryPid === void 0) { factoryPid = null; }
+            setFactoryPid(factoryConfig, factoryPid, pid);
+            //config["pidLink"] = createPidLink(pid, factoryPid);
+            var children = factoryConfig.children;
+            if (factoryPid) {
+                factoryConfig.pidLink = createPidLink(factoryPid, true);
+            }
+            if (!children) {
+                children = {};
+                factoryConfig["children"] = children;
+            }
+            children[pid] = config;
+        }
+        function setFactoryPid(factoryConfig, factoryPid, pid) {
+            if (factoryPid === void 0) { factoryPid = null; }
+            if (pid === void 0) { pid = null; }
+            factoryConfig["isFactory"] = true;
+            factoryConfig["class"] = "factoryPid";
+            factoryConfig["kind"] = configKinds.factory;
+            if (!factoryPid) {
+                factoryPid = factoryConfig["factoryPid"] || "";
+            }
+            if (!pid) {
+                pid = factoryConfig["pid"] || "";
+            }
+            if (!factoryPid) {
+                factoryPid = pid;
+                pid = null;
+            }
+            factoryConfig["pidLink"] = createPidLink(factoryPid);
+        }
+        function createPidLink(pid, isFactory) {
+            if (isFactory === void 0) { isFactory = false; }
+            return Osgi.createConfigPidLink($scope, workspace, pid, isFactory);
+        }
+        function errorHandler(message) {
+            return {
+                error: function (response) {
+                    Core.notification("error", message + response['error'] || response);
+                    Core.defaultJolokiaErrorHandler(response);
+                }
+            };
+        }
+    }]);
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    Osgi._module.controller("Osgi.FrameworkController", ["$scope", "$dialog", "workspace", function ($scope, $dialog, workspace) {
+        $scope.editDialog = new UI.Dialog();
+        updateContents();
+        $scope.edit = function (attr, displayName) {
+            $scope.editAttr = attr;
+            $scope.editDisplayName = displayName;
+            $scope.editDialog.open();
+        };
+        $scope.edited = function (name, displayName, res) {
+            $scope.editDialog.close();
+            if (angular.isNumber(res)) {
+                var mbean = Osgi.getSelectionFrameworkMBean(workspace);
+                if (mbean) {
+                    var jolokia = workspace.jolokia;
+                    jolokia.request({
+                        type: 'write',
+                        mbean: mbean,
+                        attribute: name,
+                        value: res
+                    }, {
+                        error: function (response) {
+                            editWritten("error", response.error);
+                        },
+                        success: function (response) {
+                            editWritten("success", displayName + " changed to " + res);
+                        }
+                    });
+                }
+            }
+        };
+        function editWritten(status, message) {
+            Core.notification(status, message);
+            updateContents();
+        }
+        function populatePage(response) {
+            $scope.startLevel = response.value.FrameworkStartLevel;
+            $scope.initialBundleStartLevel = response.value.InitialBundleStartLevel;
+            Core.$apply($scope);
+        }
+        function updateContents() {
+            var mbean = Osgi.getSelectionFrameworkMBean(workspace);
+            if (mbean) {
+                var jolokia = workspace.jolokia;
+                jolokia.request({ type: 'read', mbean: mbean }, Core.onSuccess(populatePage));
+            }
+        }
+    }]);
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    Osgi.configuration = {
+        // extra metadata per config admin PID
+        pidMetadata: {
+            "io.fabric8.container.java": {
+                name: "Java Container"
+            },
+            "io.fabric8.container.process": {
+                name: "Process Container"
+            },
+            "io.fabric8.container.process.overlay.resources": {
+                name: "Container Overlay Resources",
+                description: "The resources overlaid over the distribution of the process",
+                schemaExtensions: {
+                    disableHumanizeLabel: true
+                }
+            },
+            "io.fabric8.dosgi": {
+                name: "Fabric8 DOSGi",
+                description: "The configuration for the Distributed OSGi implementation in Fabric8"
+            },
+            "io.fabric8.environment": {
+                name: "Environment Variables",
+                description: "The operating system Environment Variables which are exported into any child processes",
+                schemaExtensions: {
+                    disableHumanizeLabel: true
+                }
+            },
+            "io.fabric8.fab.osgi.url": {
+                name: "FAB URL",
+                description: "Configures the 'fab:' URL handler for deploying JARs as bundles"
+            },
+            "io.fabric8.mq.fabric.server": {
+                name: "ActiveMQ Broker",
+                description: "The configuration of the Apache ActiveMQ server configured via the fabric"
+            },
+            "io.fabric8.openshift": {
+                name: "OpenShift"
+            },
+            "io.fabric8.ports": {
+                name: "Ports",
+                description: "The network ports exported by the container",
+                schemaExtensions: {
+                    disableHumanizeLabel: true
+                }
+            },
+            "io.fabric8.system": {
+                name: "System Properties",
+                description: "The Java System Properties which are exported into any child Java processes",
+                schemaExtensions: {
+                    disableHumanizeLabel: true
+                }
+            },
+            "io.fabric8.version": {
+                name: "Versions",
+                schemaExtensions: {
+                    disableHumanizeLabel: true
+                }
+            },
+            "org.ops4j.pax.logging": {
+                name: "Logging",
+                description: "The configuration of the logging subsystem"
+            },
+            "org.ops4j.pax.url.mvn": {
+                name: "Maven URL",
+                description: "Configures the Maven 'mvn:' URL handler for referencing maven artifacts"
+            },
+            "org.ops4j.pax.url.war": {
+                name: "WAR URL",
+                description: "Configures the 'war:' URL handler for referencing WAR deployments"
+            },
+            "org.ops4j.pax.url.wrap": {
+                name: "Wrap URL",
+                description: "Configures the 'wrap:' URL handler for wrapping JARs as bundles"
+            }
+        },
+        // pids to ignore from the config UI
+        ignorePids: [
+            "jmx.acl",
+            "io.fabric8.agent",
+            "io.fabric8.git",
+            "io.fabric8.mq.fabric.template",
+            "io.fabric8.openshift.agent",
+            "io.fabric8.service.ZkDataStoreImpl",
+            "org.apache.felix.fileinstall",
+            "org.apache.karaf.command.acl.",
+            "org.apache.karaf.service.acl."
+        ],
+        // UI tabs
+        tabs: {
+            "fabric8": {
+                label: "Fabric8",
+                description: "Configuration options for the Fabric8 services",
+                pids: ["io.fabric8"]
+            },
+            "karaf": {
+                label: "Karaf",
+                description: "Configuration options for the Apache Karaf container and subsystem",
+                pids: ["org.apache.karaf"]
+            }
+        }
+    };
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    var OsgiGraphBuilder = (function () {
+        function OsgiGraphBuilder(osgiDataService, bundleFilter, packageFilter, showServices, showPackages, hideUnused) {
+            this.filteredBundles = {};
+            this.bundles = null;
+            this.services = null;
+            this.packages = null;
+            this.PREFIX_BUNDLE = "Bundle-";
+            this.PREFIX_SVC = "Service-";
+            this.PREFIX_PKG = "Package-";
+            this.osgiDataService = osgiDataService;
+            this.bundleFilter = bundleFilter;
+            this.packageFilter = packageFilter;
+            this.showServices = showServices;
+            this.showPackages = showPackages;
+            this.hideUnused = hideUnused;
+            this.graphBuilder = new ForceGraph.GraphBuilder();
+        }
+        OsgiGraphBuilder.prototype.getBundles = function () {
+            if (this.bundles == null) {
+                this.bundles = this.osgiDataService.getBundles();
+            }
+            return this.bundles;
+        };
+        OsgiGraphBuilder.prototype.getServices = function () {
+            if (this.services == null) {
+                this.services = this.osgiDataService.getServices();
+            }
+            return this.services;
+        };
+        OsgiGraphBuilder.prototype.getPackages = function () {
+            if (this.packages == null) {
+                this.packages = this.osgiDataService.getPackages();
+            }
+            return this.packages;
+        };
+        OsgiGraphBuilder.prototype.bundleNodeId = function (bundle) {
+            return this.PREFIX_BUNDLE + bundle.Identifier;
+        };
+        OsgiGraphBuilder.prototype.serviceNodeId = function (service) {
+            return this.PREFIX_SVC + service.Identifier;
+        };
+        OsgiGraphBuilder.prototype.pkgNodeId = function (pkg) {
+            return this.PREFIX_PKG + pkg.Name + "-" + pkg.Version;
+        };
+        // Create a service node from a given service
+        OsgiGraphBuilder.prototype.buildSvcNode = function (service) {
+            return {
+                id: this.serviceNodeId(service),
+                name: "" + service.Identifier,
+                type: "service",
+                used: false,
+                //                image: {
+                //                    url: "/hawtio/img/icons/osgi/service.png",
+                //                    width: 32,
+                //                    height:32
+                //                },
+                popup: {
+                    title: "Service [" + service.Identifier + "]",
+                    content: (function () {
+                        var result = "";
+                        if (service != null) {
+                            service.objectClass.forEach(function (clazz) {
+                                if (result.length > 0) {
+                                    result = result + "<br/>";
+                                }
+                                result = result + clazz;
+                            });
+                        }
+                        return result;
+                    })
+                }
+            };
+        };
+        // Create a bundle node for a given bundle
+        OsgiGraphBuilder.prototype.buildBundleNode = function (bundle) {
+            return {
+                id: this.bundleNodeId(bundle),
+                name: bundle.SymbolicName,
+                type: "bundle",
+                used: false,
+                navUrl: "#/osgi/bundle/" + bundle.Identifier,
+                //                image: {
+                //                    url: "/hawtio/img/icons/osgi/bundle.png",
+                //                    width: 32,
+                //                    height:32
+                //                },
+                popup: {
+                    title: "Bundle [" + bundle.Identifier + "]",
+                    content: "<p>" + bundle.SymbolicName + "<br/>Version " + bundle.Version + "</p>"
+                }
+            };
+        };
+        OsgiGraphBuilder.prototype.buildPackageNode = function (pkg) {
+            return {
+                id: this.pkgNodeId(pkg),
+                name: pkg.Name,
+                type: "package",
+                used: false,
+                popup: {
+                    title: "Package [" + pkg.Name + "]",
+                    content: "<p>" + pkg.Version + "</p>"
+                }
+            };
+        };
+        OsgiGraphBuilder.prototype.exportingBundle = function (pkg) {
+            var _this = this;
+            var result = null;
+            pkg.ExportingBundles.forEach(function (bundleId) {
+                if (_this.filteredBundles[_this.PREFIX_BUNDLE + bundleId] != null) {
+                    result = bundleId;
+                }
+            });
+            return result;
+        };
+        OsgiGraphBuilder.prototype.addFilteredBundles = function () {
+            var _this = this;
+            d3.values(this.getBundles()).forEach(function (bundle) {
+                if (_this.bundleFilter == null || _this.bundleFilter == "" || bundle.SymbolicName.startsWith(_this.bundleFilter)) {
+                    var bundleNode = _this.buildBundleNode(bundle);
+                    _this.filteredBundles[bundleNode.id] = bundle;
+                    bundleNode.used = true;
+                    _this.graphBuilder.addNode(bundleNode);
+                    if (_this.showServices) {
+                        var services = _this.getServices();
+                        bundle.RegisteredServices.forEach(function (sid) {
+                            var svc = services[sid];
+                            if (svc) {
+                                var svcNode = _this.buildSvcNode(services[sid]);
+                                _this.graphBuilder.addNode(svcNode);
+                                _this.graphBuilder.addLink(bundleNode.id, svcNode.id, "registered");
+                            }
+                        });
+                    }
+                }
+            });
+        };
+        OsgiGraphBuilder.prototype.addFilteredServices = function () {
+            var _this = this;
+            if (this.showServices) {
+                d3.values(this.getBundles()).forEach(function (bundle) {
+                    bundle.ServicesInUse.forEach(function (sid) {
+                        var svcNodeId = _this.PREFIX_SVC + sid;
+                        if (_this.graphBuilder.getNode(svcNodeId) != null) {
+                            _this.graphBuilder.getNode(svcNodeId).used = true;
+                            var bundleNode = _this.graphBuilder.getNode(_this.bundleNodeId(bundle)) || _this.buildBundleNode(bundle);
+                            bundleNode.used = true;
+                            _this.graphBuilder.addNode(bundleNode);
+                            _this.graphBuilder.addLink(svcNodeId, bundleNode.id, "inuse");
+                        }
+                    });
+                });
+            }
+        };
+        OsgiGraphBuilder.prototype.addFilteredPackages = function () {
+            var _this = this;
+            if (this.showPackages) {
+                d3.values(this.getPackages()).forEach(function (pkg) {
+                    if (_this.packageFilter == null || _this.packageFilter == "" || pkg.Name.startsWith(_this.packageFilter)) {
+                        var exportingId = _this.exportingBundle(pkg);
+                        if (exportingId != null) {
+                            var bundleNode = _this.graphBuilder.getNode(_this.PREFIX_BUNDLE + exportingId);
+                            bundleNode.used = true;
+                            var pkgNode = _this.buildPackageNode(pkg);
+                            _this.graphBuilder.addNode(pkgNode);
+                            _this.graphBuilder.addLink(bundleNode.id, pkgNode.id, "registered");
+                            pkg.ImportingBundles.forEach(function (bundleId) {
+                                var bundleNode = _this.graphBuilder.getNode(_this.PREFIX_BUNDLE + bundleId) || _this.buildBundleNode(_this.getBundles()[bundleId]);
+                                bundleNode.used = true;
+                                pkgNode.used = true;
+                                _this.graphBuilder.addNode(bundleNode);
+                                _this.graphBuilder.addLink(bundleNode.id, pkgNode.id, "inuse");
+                            });
+                        }
+                    }
+                });
+            }
+        };
+        OsgiGraphBuilder.prototype.buildGraph = function () {
+            var _this = this;
+            this.addFilteredBundles();
+            this.addFilteredServices();
+            this.addFilteredPackages();
+            if (this.hideUnused) {
+                // this will filter out all nodes that are not marked as used in our data model
+                this.graphBuilder.filterNodes(function (node) {
+                    return node.used;
+                });
+                // this will remove all nodes that do not have connections after filtering the unused nodes
+                this.graphBuilder.filterNodes(function (node) {
+                    return _this.graphBuilder.hasLinks(node.id);
+                });
+            }
+            return this.graphBuilder.buildGraph();
+        };
+        return OsgiGraphBuilder;
+    })();
+    Osgi.OsgiGraphBuilder = OsgiGraphBuilder;
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+var Osgi;
+(function (Osgi) {
+    Osgi.TopLevelController = Osgi._module.controller("Osgi.TopLevelController", ["$scope", "workspace", function ($scope, workspace) {
+        $scope.frameworkMBean = Osgi.getSelectionFrameworkMBean(workspace);
+        $scope.bundleMBean = Osgi.getSelectionBundleMBean(workspace);
+        $scope.serviceMBean = Osgi.getSelectionServiceMBean(workspace);
+        $scope.packageMBean = Osgi.getSelectionPackageMBean(workspace);
+        $scope.configAdminMBean = Osgi.getSelectionConfigAdminMBean(workspace);
+        $scope.metaTypeMBean = Osgi.getMetaTypeMBean(workspace);
+        $scope.osgiToolsMBean = Osgi.getHawtioOSGiToolsMBean(workspace);
+        $scope.hawtioConfigAdminMBean = Osgi.getHawtioConfigAdminMBean(workspace);
+        $scope.scrMBean = Karaf.getSelectionScrMBean(workspace);
+        $scope.featuresMBean = Karaf.getSelectionFeaturesMBean(workspace);
+    }]);
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    Osgi._module.controller("Osgi.PackageController", ["$scope", "$filter", "workspace", "$routeParams", function ($scope, $filter, workspace, $routeParams) {
+        $scope.package = $routeParams.package;
+        $scope.version = $routeParams.version;
+        updateTableContents();
+        function populateTable(response) {
+            var packages = Osgi.defaultPackageValues(workspace, $scope, response.value);
+            $scope.row = packages.filter({ "Name": $scope.package, "Version": $scope.version })[0];
+            Core.$apply($scope);
+        }
+        ;
+        function updateTableContents() {
+            var mbean = Osgi.getSelectionPackageMBean(workspace);
+            if (mbean) {
+                var jolokia = workspace.jolokia;
+                jolokia.request({ type: 'exec', mbean: mbean, operation: 'listPackages' }, Core.onSuccess(populateTable));
+            }
+        }
+    }]);
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    Osgi.PackagesController = Osgi._module.controller("Osgi.PackagesController", ["$scope", "$filter", "workspace", "$templateCache", "$compile", function ($scope, $filter, workspace, $templateCache, $compile) {
+        var dateFilter = $filter('date');
+        $scope.packages = [];
+        $scope.selectedItems = [];
+        $scope.mygrid = {
+            data: 'packages',
+            showFilter: false,
+            showColumnMenu: false,
+            filterOptions: {
+                filterText: "",
+                useExternalFilter: false
+            },
+            selectedItems: $scope.selectedItems,
+            rowHeight: 32,
+            selectWithCheckboxOnly: true,
+            columnDefs: [
+                {
+                    field: 'Name',
+                    displayName: 'Name',
+                    width: "***"
+                },
+                {
+                    field: 'VersionLink',
+                    displayName: 'Version',
+                    width: "***"
+                },
+                {
+                    field: 'RemovalPending',
+                    displayName: 'Removal Pending',
+                    width: "***"
+                }
+            ]
+        };
+        /*
+            $scope.widget = new DataTable.TableWidget($scope, $templateCache, $compile, [
+              <DataTable.TableColumnConfig> {
+                "mDataProp": null,
+                "sClass": "control center",
+                "sDefaultContent": '<i class="fa fa-plus"></i>'
+              },
+              <DataTable.TableColumnConfig> { "mDataProp": "Name" },
+              <DataTable.TableColumnConfig> { "mDataProp": "VersionLink" },
+              <DataTable.TableColumnConfig> { "mDataProp": "RemovalPending" }
+        
+            ], {
+              rowDetailTemplateId: 'packageBundlesTemplate',
+              disableAddColumns: true
+            });
+        
+        */
+        $scope.$watch('workspace.selection', function () {
+            updateTableContents();
+        });
+        function populateTable(response) {
+            var packages = Osgi.defaultPackageValues(workspace, $scope, response.value);
+            augmentPackagesInfo(packages);
+        }
+        function augmentPackagesInfo(packages) {
+            var bundleMap = {};
+            var createBundleMap = function (response) {
+                angular.forEach(response.value, function (value, key) {
+                    var obj = {
+                        Identifier: value.Identifier,
+                        Name: "",
+                        SymbolicName: value.SymbolicName,
+                        State: value.State,
+                        Version: value.Version,
+                        LastModified: value.LastModified,
+                        Location: value.Location
+                    };
+                    if (value.Headers['Bundle-Name']) {
+                        obj.Name = value.Headers['Bundle-Name']['Value'];
+                    }
+                    bundleMap[obj.Identifier] = obj;
+                });
+                angular.forEach(packages, function (p, key) {
+                    angular.forEach(p["ExportingBundles"], function (b, key) {
+                        p["ExportingBundles"][key] = bundleMap[b];
+                    });
+                    angular.forEach(p["ImportingBundles"], function (b, key) {
+                        p["ImportingBundles"][key] = bundleMap[b];
+                    });
+                });
+                $scope.packages = packages;
+                Core.$apply($scope);
+            };
+            workspace.jolokia.request({
+                type: 'exec',
+                mbean: Osgi.getSelectionBundleMBean(workspace),
+                operation: 'listBundles()'
+            }, {
+                success: createBundleMap,
+                error: createBundleMap
+            });
+        }
+        function updateTableContents() {
+            var mbean = Osgi.getSelectionPackageMBean(workspace);
+            if (mbean) {
+                var jolokia = workspace.jolokia;
+                // bundles first:
+                jolokia.request({
+                    type: 'exec',
+                    mbean: mbean,
+                    operation: 'listPackages'
+                }, Core.onSuccess(populateTable));
+            }
+        }
+    }]);
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    Osgi._module.controller("Osgi.PidController", ["$scope", "$timeout", "$routeParams", "$location", "workspace", "jolokia", function ($scope, $timeout, $routeParams, $location, workspace, jolokia) {
+        $scope.deletePropDialog = new UI.Dialog();
+        $scope.deletePidDialog = new UI.Dialog();
+        $scope.addPropertyDialog = new UI.Dialog();
+        $scope.factoryPid = $routeParams.factoryPid;
+        $scope.pid = $routeParams.pid;
+        $scope.createForm = {
+            pidInstanceName: null
+        };
+        $scope.newPid = $scope.factoryPid && !$scope.pid;
+        if ($scope.newPid) {
+            $scope.editMode = true;
+        }
+        if ($scope.pid && !$scope.factoryPid) {
+            var idx = $scope.pid.indexOf("-");
+            if (idx > 0) {
+                $scope.factoryPid = $scope.pid.substring(0, idx);
+                $scope.factoryInstanceName = $scope.pid.substring(idx + 1, $scope.pid.length);
+            }
+        }
+        $scope.selectValues = {};
+        $scope.modelLoaded = false;
+        $scope.canSave = false;
+        $scope.setEditMode = function (flag) {
+            $scope.editMode = flag;
+            $scope.formMode = flag ? "edit" : "view";
+            if (!flag || !$scope.entity) {
+                $scope.entity = {};
+                updateTableContents();
+            }
+        };
+        var startInEditMode = $scope.factoryPid && !$routeParams.pid;
+        $scope.setEditMode(startInEditMode);
+        $scope.$on("hawtio.form.modelChange", function () {
+            if ($scope.modelLoaded) {
+                // TODO lets check if we've really changed the values!
+                enableCanSave();
+                Core.$apply($scope);
+            }
+        });
+        Osgi.initProfileScope($scope, $routeParams, $location, localStorage, jolokia, workspace, function () {
+            updateTableContents();
+        });
+        function updatePid(mbean, pid, data) {
+            var completeFn = function (response) {
+                Core.notification("success", "Successfully updated pid: " + pid);
+                if (pid && $scope.factoryPid && $scope.newPid) {
+                    // we've just created a new pid so lets move to the full pid URL
+                    var newPath = Osgi.createConfigPidPath($scope, pid);
+                    $location.path(newPath);
+                }
+                else {
+                    $scope.setEditMode(false);
+                    $scope.canSave = false;
+                    $scope.saved = true;
+                }
+            };
+            var callback = Core.onSuccess(completeFn, errorHandler("Failed to update: " + pid));
+            if ($scope.inFabricProfile) {
+                Fabric.setProfileProperties($scope.versionId, $scope.profileId, pid, data, callback);
+            }
+            else {
+                var json = JSON.stringify(data);
+                $scope.jolokia.execute(mbean, "configAdminUpdate", pid, json, callback);
+            }
+        }
+        $scope.pidSave = function () {
+            var data = {};
+            angular.forEach($scope.entity, function (value, key) {
+                var text = undefined;
+                if (angular.isString(value)) {
+                    text = value;
+                }
+                else if (angular.isDefined(value)) {
+                    text = value.toString();
+                }
+                if (angular.isDefined(text)) {
+                    data[decodeKey(key, $scope.pid)] = text;
+                }
+            });
+            //log.info("about to update value " + angular.toJson(data));
+            var mbean = Osgi.getHawtioConfigAdminMBean(workspace);
+            if (mbean || $scope.inFabricProfile) {
+                var pidMBean = Osgi.getSelectionConfigAdminMBean($scope.workspace);
+                var pid = $scope.pid;
+                var zkPid = $scope.zkPid;
+                var factoryPid = $scope.factoryPid;
+                if (!$scope.inFabricProfile && factoryPid && pidMBean && !zkPid) {
+                    // lets generate a new pid
+                    $scope.jolokia.execute(pidMBean, "createFactoryConfiguration", factoryPid, Core.onSuccess(function (response) {
+                        pid = response;
+                        if (pid) {
+                            updatePid(mbean, pid, data);
+                        }
+                    }, errorHandler("Failed to create new PID: ")));
+                }
+                else {
+                    if ($scope.newPid) {
+                        var pidInstanceName = $scope.createForm.pidInstanceName;
+                        if (!pidInstanceName || !factoryPid) {
+                            return;
+                        }
+                        pid = factoryPid + "-" + pidInstanceName;
+                    }
+                    else if (zkPid) {
+                        pid = zkPid;
+                    }
+                    updatePid(mbean, pid, data);
+                }
+            }
+        };
+        function errorHandler(message) {
+            return {
+                error: function (response) {
+                    Core.notification("error", message + "\n" + response['error'] || response);
+                    Core.defaultJolokiaErrorHandler(response);
+                }
+            };
+        }
+        function enableCanSave() {
+            if ($scope.editMode) {
+                $scope.canSave = true;
+            }
+        }
+        $scope.addPropertyConfirmed = function (key, value) {
+            $scope.addPropertyDialog.close();
+            $scope.configValues[key] = {
+                Key: key,
+                Value: value,
+                Type: "String"
+            };
+            enableCanSave();
+            updateSchema();
+        };
+        $scope.deletePidProp = function (e) {
+            $scope.deleteKey = e.Key;
+            $scope.deletePropDialog.open();
+        };
+        $scope.deletePidPropConfirmed = function () {
+            $scope.deletePropDialog.close();
+            var cell = document.getElementById("pid." + $scope.deleteKey);
+            cell.parentElement.remove();
+            enableCanSave();
+        };
+        $scope.deletePidConfirmed = function () {
+            $scope.deletePidDialog.close();
+            function errorFn(response) {
+                Core.notification("error", response.error);
+            }
+            function successFn(response) {
+                Core.notification("success", "Successfully deleted pid: " + $scope.pid);
+                $location.path($scope.configurationsLink);
+            }
+            if ($scope.inFabricProfile) {
+                if ($scope.pid) {
+                    var configFile = $scope.pid + ".properties";
+                    Fabric.deleteConfigurationFile($scope.versionId, $scope.profileId, configFile, successFn, errorFn);
+                }
+            }
+            else {
+                var mbean = Osgi.getSelectionConfigAdminMBean($scope.workspace);
+                if (mbean) {
+                    $scope.jolokia.request({
+                        type: "exec",
+                        mbean: mbean,
+                        operation: 'delete',
+                        arguments: [$scope.pid]
+                    }, {
+                        error: errorFn,
+                        success: successFn
+                    });
+                }
+            }
+        };
+        function populateTable(response) {
+            $scope.modelLoaded = true;
+            var configValues = response || {};
+            $scope.configValues = configValues;
+            $scope.zkPid = Core.pathGet(configValues, ["fabric.zookeeper.pid", "Value"]);
+            if ($scope.zkPid && $scope.saved) {
+                // lets load the current properties direct from git
+                // in case we have just saved them into git and config admin hasn't yet
+                // quite caught up yet (to avoid freaking the user out that things look like
+                // changes got reverted ;)
+                function onProfileProperties(gitProperties) {
+                    angular.forEach(gitProperties, function (value, key) {
+                        var configProperty = configValues[key];
+                        if (configProperty) {
+                            configProperty.Value = value;
+                        }
+                    });
+                    updateSchemaAndLoadMetaType();
+                    Core.$apply($scope);
+                }
+                Fabric.getProfileProperties($scope.versionId, $scope.profileId, $scope.zkPid, onProfileProperties);
+            }
+            else {
+                updateSchemaAndLoadMetaType();
+            }
+        }
+        function updateSchemaAndLoadMetaType() {
+            updateSchema();
+            var configValues = $scope.configValues;
+            if (configValues) {
+                if ($scope.profileNotRunning && $scope.profileMetadataMBean && $scope.versionId && $scope.profileId) {
+                    var pid = $scope.factoryPid || $scope.pid;
+                    jolokia.execute($scope.profileMetadataMBean, "getPidMetaTypeObject", $scope.versionId, $scope.profileId, pid, Core.onSuccess(onMetaType));
+                }
+                else {
+                    var locale = null;
+                    var pid = null;
+                    var factoryId = configValues["service.factoryPid"];
+                    if (factoryId && !pid) {
+                        pid = factoryId["Value"];
+                    }
+                    var metaTypeMBean = Osgi.getMetaTypeMBean($scope.workspace);
+                    if (metaTypeMBean) {
+                        $scope.jolokia.execute(metaTypeMBean, "getPidMetaTypeObject", pid, locale, Core.onSuccess(onMetaType));
+                    }
+                }
+            }
+            Core.$apply($scope);
+        }
+        function onMetaType(response) {
+            $scope.metaType = response;
+            updateSchema();
+            Core.$apply($scope);
+        }
+        /**
+         * Updates the JSON schema model
+         */
+        function updateSchema() {
+            var properties = {};
+            var required = [];
+            $scope.defaultValues = {};
+            var schema = {
+                type: "object",
+                required: required,
+                properties: properties
+            };
+            var inputClass = "span12";
+            var labelClass = "control-label";
+            //var inputClassArray = "span11";
+            var inputClassArray = "";
+            var labelClassArray = labelClass;
+            var metaType = $scope.metaType;
+            if (metaType) {
+                var pidMetadata = Osgi.configuration.pidMetadata;
+                var pid = metaType.id;
+                schema["id"] = pid;
+                schema["name"] = Core.pathGet(pidMetadata, [pid, "name"]) || metaType.name;
+                schema["description"] = Core.pathGet(pidMetadata, [pid, "description"]) || metaType.description;
+                var disableHumanizeLabel = Core.pathGet(pidMetadata, [pid, "schemaExtensions", "disableHumanizeLabel"]);
+                angular.forEach(metaType.attributes, function (attribute) {
+                    var id = attribute.id;
+                    if (isValidProperty(id)) {
+                        var key = encodeKey(id, pid);
+                        var typeName = asJsonSchemaType(attribute.typeName, attribute.id);
+                        var attributeProperties = {
+                            title: attribute.name,
+                            tooltip: attribute.description,
+                            'input-attributes': {
+                                class: inputClass
+                            },
+                            'label-attributes': {
+                                class: labelClass
+                            },
+                            type: typeName
+                        };
+                        if (disableHumanizeLabel) {
+                            attributeProperties.title = id;
+                        }
+                        if (attribute.typeName === "char") {
+                            attributeProperties["maxLength"] = 1;
+                            attributeProperties["minLength"] = 1;
+                        }
+                        var cardinality = attribute.cardinality;
+                        if (cardinality) {
+                            // lets clear the span on arrays to fix layout issues
+                            attributeProperties['input-attributes']['class'] = null;
+                            attributeProperties.type = "array";
+                            attributeProperties["items"] = {
+                                'input-attributes': {
+                                    class: inputClassArray
+                                },
+                                'label-attributes': {
+                                    class: labelClassArray
+                                },
+                                "type": typeName
+                            };
+                        }
+                        if (attribute.required) {
+                            required.push(id);
+                        }
+                        var defaultValue = attribute.defaultValue;
+                        if (defaultValue) {
+                            if (angular.isArray(defaultValue) && defaultValue.length === 1) {
+                                defaultValue = defaultValue[0];
+                            }
+                            //attributeProperties["default"] = defaultValue;
+                            // TODO convert to boolean / number?
+                            $scope.defaultValues[key] = defaultValue;
+                        }
+                        var optionLabels = attribute.optionLabels;
+                        var optionValues = attribute.optionValues;
+                        if (optionLabels && optionLabels.length && optionValues && optionValues.length) {
+                            var enumObject = {};
+                            for (var i = 0; i < optionLabels.length; i++) {
+                                var label = optionLabels[i];
+                                var value = optionValues[i];
+                                enumObject[value] = label;
+                            }
+                            $scope.selectValues[key] = enumObject;
+                            Core.pathSet(attributeProperties, ['input-element'], "select");
+                            Core.pathSet(attributeProperties, ['input-attributes', "ng-options"], "key as value for (key, value) in selectValues." + key);
+                        }
+                        properties[key] = attributeProperties;
+                    }
+                });
+                // now lets override anything from the custom metadata
+                var schemaExtensions = Core.pathGet(Osgi.configuration.pidMetadata, [pid, "schemaExtensions"]);
+                if (schemaExtensions) {
+                    // now lets copy over the schema extensions
+                    overlayProperties(schema, schemaExtensions);
+                }
+            }
+            // now add all the missing properties...
+            var entity = {};
+            angular.forEach($scope.configValues, function (value, rawKey) {
+                if (isValidProperty(rawKey)) {
+                    var key = encodeKey(rawKey, pid);
+                    var attrValue = value;
+                    var attrType = "string";
+                    if (angular.isObject(value)) {
+                        attrValue = value.Value;
+                        attrType = asJsonSchemaType(value.Type, rawKey);
+                    }
+                    var property = properties[key];
+                    if (!property) {
+                        property = {
+                            'input-attributes': {
+                                class: inputClass
+                            },
+                            'label-attributes': {
+                                class: labelClass
+                            },
+                            type: attrType
+                        };
+                        properties[key] = property;
+                    }
+                    else {
+                        var propertyType = property["type"];
+                        if ("array" === propertyType) {
+                            if (!angular.isArray(attrValue)) {
+                                attrValue = attrValue ? attrValue.split(",") : [];
+                            }
+                        }
+                    }
+                    if (disableHumanizeLabel) {
+                        property.title = rawKey;
+                    }
+                    //comply with Forms.safeIdentifier in 'forms/js/formHelpers.ts'
+                    key = key.replace(/-/g, "_");
+                    entity[key] = attrValue;
+                }
+            });
+            // add default values for missing values
+            angular.forEach($scope.defaultValues, function (value, key) {
+                var current = entity[key];
+                if (!angular.isDefined(current)) {
+                    //log.info("updating entity " + key + " with default: " + value + " as was: " + current);
+                    entity[key] = value;
+                }
+            });
+            //log.info("default values: " + angular.toJson($scope.defaultValues));
+            $scope.entity = entity;
+            $scope.schema = schema;
+            $scope.fullSchema = schema;
+        }
+        /**
+         * Recursively overlays the properties in the overlay into the object; so any atttributes are added into the object
+         * and any nested objects in the overlay are inserted into the object at the correct path.
+         */
+        function overlayProperties(object, overlay) {
+            if (angular.isObject(object)) {
+                if (angular.isObject(overlay)) {
+                    angular.forEach(overlay, function (value, key) {
+                        if (angular.isObject(value)) {
+                            var child = object[key];
+                            if (!child) {
+                                child = {};
+                                object[key] = child;
+                            }
+                            overlayProperties(child, value);
+                        }
+                        else {
+                            object[key] = value;
+                        }
+                    });
+                }
+            }
+        }
+        var ignorePropertyIds = ["service.pid", "service.factoryPid", "fabric.zookeeper.pid"];
+        function isValidProperty(id) {
+            return id && ignorePropertyIds.indexOf(id) < 0;
+        }
+        function encodeKey(key, pid) {
+            return key.replace(/\./g, "__");
+        }
+        function decodeKey(key, pid) {
+            return key.replace(/__/g, ".");
+        }
+        function asJsonSchemaType(typeName, id) {
+            if (typeName) {
+                var lower = typeName.toLowerCase();
+                if (lower.startsWith("int") || lower === "long" || lower === "short" || lower === "byte" || lower.endsWith("int")) {
+                    return "integer";
+                }
+                if (lower === "double" || lower === "float" || lower === "bigdecimal") {
+                    return "number";
+                }
+                if (lower === "string") {
+                    // TODO hack to try force password type on dodgy metadata such as pax web
+                    if (id && id.endsWith("password")) {
+                        return "password";
+                    }
+                    return "string";
+                }
+                return typeName;
+            }
+            else {
+                return "string";
+            }
+        }
+        function onProfilePropertiesLoaded(response) {
+            $scope.modelLoaded = true;
+            var configValues = {};
+            $scope.configValues = configValues;
+            angular.forEach(response, function (value, oKey) {
+                // lets remove any dodgy characters
+                var key = oKey.replace(/:/g, '_').replace(/\//g, '_');
+                configValues[key] = {
+                    Key: key,
+                    Value: value
+                };
+            });
+            $scope.zkPid = Core.pathGet(configValues, ["fabric.zookeeper.pid", "Value"]);
+            updateSchemaAndLoadMetaType();
+            Core.$apply($scope);
+        }
+        function updateTableContents() {
+            $scope.modelLoaded = false;
+            if ($scope.inFabricProfile || $scope.profileNotRunning) {
+                Fabric.getOverlayProfileProperties($scope.versionId, $scope.profileId, $scope.pid, onProfilePropertiesLoaded);
+            }
+            else {
+                Osgi.getConfigurationProperties($scope.workspace, $scope.jolokia, $scope.pid, populateTable);
+            }
+        }
+    }]);
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    Osgi.ServiceController = Osgi._module.controller("Osgi.ServiceController", ["$scope", "$filter", "workspace", "$templateCache", "$compile", function ($scope, $filter, workspace, $templateCache, $compile) {
+        var dateFilter = $filter('date');
+        $scope.services = [];
+        $scope.selectedItems = [];
+        $scope.mygrid = {
+            data: 'services',
+            showFilter: false,
+            showColumnMenu: false,
+            filterOptions: {
+                filterText: "",
+                useExternalFilter: false
+            },
+            selectedItems: $scope.selectedItems,
+            rowHeight: 32,
+            selectWithCheckboxOnly: true,
+            columnDefs: [
+                {
+                    field: 'Identifier',
+                    displayName: 'ID',
+                    width: "***"
+                },
+                {
+                    field: 'BundleIdentifier',
+                    displayName: 'Bundle',
+                    width: "***"
+                },
+                {
+                    field: 'objectClass',
+                    displayName: 'Object Class(es)',
+                    width: "***"
+                }
+            ]
+        };
+        /*
+            $scope.widget = new DataTable.TableWidget($scope, $templateCache, $compile, [
+              <DataTable.TableColumnConfig> {
+                "mDataProp": null,
+                "sClass": "control center",
+                "sDefaultContent": '<i class="fa fa-plus"></i>'
+              },
+              <DataTable.TableColumnConfig> { "mDataProp": "Identifier" },
+              <DataTable.TableColumnConfig> { "mDataProp": "BundleIdentifier" },
+              <DataTable.TableColumnConfig> { "mDataProp": "objectClass" }
+            ], {
+              rowDetailTemplateId: 'osgiServiceTemplate',
+              disableAddColumns: true
+            });
+        */
+        $scope.$watch('workspace.selection', function () {
+            var mbean = Osgi.getSelectionServiceMBean(workspace);
+            if (mbean) {
+                var jolokia = workspace.jolokia;
+                jolokia.request({
+                    type: 'exec',
+                    mbean: mbean,
+                    operation: 'listServices()'
+                }, Core.onSuccess(populateTable));
+            }
+        });
+        var populateTable = function (response) {
+            var services = Osgi.defaultServiceValues(workspace, $scope, response.value);
+            augmentServicesInfo(services);
+        };
+        function augmentServicesInfo(services) {
+            var bundleMap = {};
+            var createBundleMap = function (response) {
+                angular.forEach(response.value, function (value, key) {
+                    var obj = {
+                        Identifier: value.Identifier,
+                        Name: "",
+                        SymbolicName: value.SymbolicName,
+                        State: value.State,
+                        Version: value.Version,
+                        LastModified: value.LastModified,
+                        Location: value.Location
+                    };
+                    if (value.Headers['Bundle-Name']) {
+                        obj.Name = value.Headers['Bundle-Name']['Value'];
+                    }
+                    bundleMap[obj.Identifier] = obj;
+                });
+                angular.forEach(services, function (s, key) {
+                    angular.forEach(s["UsingBundles"], function (b, key) {
+                        s["UsingBundles"][key] = bundleMap[b];
+                    });
+                });
+                $scope.services = services;
+                Core.$apply($scope);
+            };
+            workspace.jolokia.request({
+                type: 'exec',
+                mbean: Osgi.getSelectionBundleMBean(workspace),
+                operation: 'listBundles()'
+            }, {
+                success: createBundleMap,
+                error: createBundleMap
+            });
+        }
+    }]);
+})(Osgi || (Osgi = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="osgiHelpers.ts"/>
+/// <reference path="osgiPlugin.ts"/>
+/**
+ * @module Osgi
+ */
+var Osgi;
+(function (Osgi) {
+    Osgi._module.controller("Osgi.ServiceDependencyController", ["$scope", "$location", "$routeParams", "workspace", "osgiDataService", function ($scope, $location, $routeParams, workspace, osgiDataService) {
+        $scope.init = function () {
+            if ($routeParams["bundleFilter"]) {
+                $scope.bundleFilter = $routeParams["bundleFilter"];
+            }
+            else {
+                $scope.bundleFilter = "";
+            }
+            if ($routeParams["pkgFilter"]) {
+                $scope.packageFilter = $routeParams["pkgFilter"];
+            }
+            else {
+                $scope.packageFilter = "";
+            }
+            if ($routeParams["view"] == "packages") {
+                $scope.selectView = "packages";
+            }
+            else {
+                $scope.selectView = "services";
+            }
+            if ($routeParams['hideUnused']) {
+                $scope.hideUnused = $routeParams['hideUnused'] == "true";
+            }
+            else {
+                $scope.hideUnused = true;
+            }
+        };
+        $scope.updateLink = function () {
+            var search = $location.search();
+            if ($scope.bundleFilter && $scope.bundleFilter != "") {
+                search["bundleFilter"] = $scope.bundleFilter;
+            }
+            else {
+                delete search["bundleFilter"];
+            }
+            if ($scope.packageFilter && $scope.packageFilter != "") {
+                search["pkgFilter"] = $scope.packageFilter;
+            }
+            else {
+                delete search["pkgFilter"];
+            }
+            search["view"] = $scope.selectView;
+            if ($scope.hideUnused) {
+                search["hideUnused"] = "true";
+            }
+            else {
+                search["hideUnused"] = "false";
+            }
+            $location.search(search);
+        };
+        $scope.addToDashboardLink = function () {
+            var routeParams = angular.toJson($routeParams);
+            var href = "#/osgi/dependencies";
+            var title = "OSGi dependencies";
+            var size = angular.toJson({
+                size_x: 2,
+                size_y: 2
+            });
+            var addLink = "#/dashboard/add?tab=dashboard" + "&href=" + encodeURIComponent(href) + "&routeParams=" + encodeURIComponent(routeParams) + "&size=" + encodeURIComponent(size) + "&title=" + encodeURIComponent(title);
+            return addLink;
+        };
+        $scope.$on('$routeUpdate', function () {
+            var search = $location.search;
+            if (search["bundleFilter"]) {
+                $scope.bundleFilter = $routeParams["bundleFilter"];
+            }
+            else {
+                $scope.bundleFilter = "";
+            }
+            if (search["pkgFilter"]) {
+                $scope.packageFilter = $routeParams["pkgFilter"];
+            }
+            else {
+                $scope.packageFilter = "";
+            }
+            if (search["view"] == "packages") {
+                $scope.selectView = "packages";
+            }
+            else {
+                $scope.selectView = "services";
+            }
+            if (search['hideUnused']) {
+                $scope.hideUnused = $routeParams['hideUnused'] == "true";
+            }
+            else {
+                $scope.hideUnused = true;
+            }
+            $scope.updateLink();
+            $scope.updateGraph();
+        });
+        $scope.updateGraph = function () {
+            $scope.updateLink();
+            $scope.updatePkgFilter();
+            var graphBuilder = new Osgi.OsgiGraphBuilder(osgiDataService, $scope.bundleFilter, $scope.packageFilter, $scope.selectView == "services", $scope.selectView == "packages", $scope.hideUnused);
+            $scope.graph = graphBuilder.buildGraph();
+            Core.$apply($scope);
+        };
+        $scope.updatePkgFilter = function () {
+            if ($scope.packageFilter == null || $scope.packageFilter == "") {
+                $scope.selectView = "services";
+                $scope.disablePkg = true;
+            }
+            else {
+                $scope.disablePkg = false;
+            }
+        };
+        $scope.init();
+        $scope.updateGraph();
+    }]);
+})(Osgi || (Osgi = {}));
 
 angular.module("hawtio-wiki-templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("plugins/activemq/html/brokerDiagram.html","<style type=\"text/css\">\n\n.col-md-4.node-panel {\n  margin-top: 10px;\n  margin-left: 10px;\n  width: 33%;\n}\n.node-attributes dl {\n  margin-top: 5px;\n  margin-bottom: 10px;\n}\n.node-attributes dt {\n  width: 150px;\n}\n.node-attributes dd {\n  margin-left: 160px;\n}\n.node-attributes dd a {\n  /** lets make the destination links wrap */\n  -ms-word-break: break-all;\n  word-break: break-all;\n  -webkit-hyphens: auto;\n  -moz-hyphens: auto;\n  hyphens: auto;\n}\n\nul.viewMenu li {\n  padding-left: 10px;\n  padding-top: 2px;\n  padding-bottom: 2px;\n}\n\ndiv#pop-up {\n  display: none;\n  position: absolute;\n  color: white;\n  font-size: 14px;\n  background: rgba(0, 0, 0, 0.6);\n  padding: 5px 10px 5px 10px;\n  -moz-border-radius: 8px 8px;\n  border-radius: 8px 8px;\n}\n\ndiv#pop-up-title {\n  font-size: 15px;\n  margin-bottom: 4px;\n  font-weight: bolder;\n}\n\ndiv#pop-up-content {\n  font-size: 12px;\n}\n\nrect.graphbox {\n  fill: #FFF;\n}\n\nrect.graphbox.frame {\n  stroke: #222;\n  stroke-width: 2px\n}\n\n/* only things directly related to the network graph should be here */\n\npath.link {\n  fill: none;\n  stroke: #666;\n  stroke-width: 1.5px;  b\n}\n\nmarker.broker {\n  stroke: red;\n  fill: red;\n  stroke-width: 1.5px;\n}\n\ncircle.broker {\n  fill: #0c0;\n}\n\ncircle.brokerSlave {\n  fill: #c00;\n}\n\ncircle.notActive {\n  fill: #c00;\n}\n\npath.link.group {\n  stroke: #ccc;\n}\n\nmarker#group {\n  stroke: #ccc;\n  fill: #ccc;\n}\n\ncircle.group {\n  fill: #eee;\n  stroke: #ccc;\n}\n\ncircle.destination {\n  fill: #bbb;\n  stroke: #ccc;\n}\n\ncircle.pinned {\n  stroke-width: 4.5px;\n}\n\npath.link.profile {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\nmarker#container {\n}\n\ncircle.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\npath.link.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\ncircle {\n  fill: #ccc;\n  stroke: #333;\n  stroke-width: 1.5px;\n  cursor: pointer;\n}\n\ncircle.closeMode {\n  cursor: crosshair;\n}\n\npath.link.destination {\n  stroke: #ccc;\n}\n\ncircle.topic {\n  fill: #c0c;\n}\n\ncircle.queue {\n  fill: #00c;\n}\n\ncircle.consumer {\n  fill: #cfc;\n}\n\ncircle.producer {\n  fill: #ccf;\n}\n\npath.link.producer {\n  stroke: #ccc;\n}\n\npath.link.consumer {\n  stroke: #ccc;\n}\n\npath.link.network {\n  stroke: #ccc;\n}\n\ncircle.selected {\n  stroke-width: 3px;\n}\n\n.selected {\n  stroke-width: 3px;\n}\n\ntext {\n  font: 10px sans-serif;\n  pointer-events: none;\n}\n\ntext.shadow {\n  stroke: #fff;\n  stroke-width: 3px;\n  stroke-opacity: .8;\n}\n</style>\n\n\n<div class=\"row mq-page\" ng-controller=\"ActiveMQ.BrokerDiagramController\">\n\n  <div ng-hide=\"inDashboard\" class=\"col-md-12 page-padded\">\n    <div class=\"section-header\">\n\n      <div class=\"section-filter\">\n        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"searchFilter\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"searchFilter = \'\'\"></i>\n      </div>\n\n      <div class=\"section-controls\">\n        <a href=\"#\"\n           class=\"dropdown-toggle\"\n           data-toggle=\"dropdown\">\n          View &nbsp;<i class=\"fa fa-caret-down\"></i>\n        </a>\n\n        <ul class=\"dropdown-menu viewMenu\">\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.consumer\"> Consumers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.producer\"> Producers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.queue\"> Queues\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.topic\"> Topics\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.group\"> Broker groups\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.profile\"> Profiles\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.broker\"> Brokers\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.slave\"> Slave brokers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.network\"> Networks\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.container\"> Containers\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li title=\"Should we show the details panel on the left\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.panel\"> Details panel\n            </label>\n          </li>\n          <li title=\"Show the summary popup as you hover over nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.popup\"> Hover text\n            </label>\n          </li>\n          <li title=\"Show the labels next to nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.label\"> Label\n            </label>\n          </li>\n        </ul>\n\n        <a ng-show=\"isFmc\" ng-href=\"#/fabric/mq/brokers{{hash}}\" title=\"View the broker and container diagram\">\n          <i class=\"fa fa-edit\"></i> Configuration\n        </a>\n      </div>\n    </div>\n  </div>\n\n\n  <div id=\"pop-up\">\n    <div id=\"pop-up-title\"></div>\n    <div id=\"pop-up-content\"></div>\n  </div>\n\n  <div class=\"row\">\n    <div class=\"{{viewSettings.panel ? \'col-md-8\' : \'col-md-12\'}} canvas broker-canvas\">\n      <div hawtio-force-graph graph=\"graph\" selected-model=\"selectedNode\" link-distance=\"150\" charge=\"-600\" nodesize=\"10\" marker-kind=\"marker-end\"\n           style=\"min-height: 800px\">\n      </div>\n    </div>\n    <div ng-show=\"viewSettings.panel\" class=\"col-md-4 node-panel\">\n      <div ng-show=\"selectedNode\" class=\"node-attributes\">\n        <dl ng-repeat=\"property in selectedNodeProperties\" class=\"dl-horizontal\">\n          <dt title=\"{{property.key}}\">{{property.key}}:</dt>\n          <dd ng-bind-html-unsafe=\"property.value\"></dd>\n        </dl>\n      </div>\n    </div>\n  </div>\n\n  <!--\n  <div ng-include=\"\'plugins/fabric/html/connectToContainerDialog.html\'\"></div>\n  -->\n\n</div>\n\n\n");
 $templateCache.put("plugins/activemq/html/browseQueue.html","<div ng-controller=\"ActiveMQ.BrowseQueueController\">\n  <div class=\"row\">\n    <div class=\"col-md-6\">\n      <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n             placeholder=\"Filter messages\">\n    </div>\n    <div class=\"col-md-6\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline\">\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-show=\"dlq\" ng-click=\"retryMessages()\"\n                  title=\"Moves the dead letter queue message back to its original destination so it can be retried\" data-placement=\"bottom\">\n            <i class=\"fa fa-reply\"></i> Retry\n          </button>\n          <button class=\"btn\" ng-disabled=\"gridOptions.selectedItems.length !== 1\" ng-click=\"resendMessage()\"\n                    title=\"Edit the message to resend it\" data-placement=\"bottom\">\n           <i class=\"fa fa-share-alt\"></i> Resend\n          </button>\n\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                  title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n            <i class=\"fa fa-share-alt\"></i> Move\n          </button>\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                  ng-click=\"deleteDialog = true\"\n                  title=\"Delete the selected messages\">\n            <i class=\"fa fa-remove\"></i> Delete\n          </button>\n          <button class=\"btn\" ng-click=\"refresh()\"\n                  title=\"Refreshes the list of messages\">\n            <i class=\"fa fa-refresh\"></i>\n          </button>\n        </form>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row\">\n    <table class=\"table table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n  </div>\n\n  <div hawtio-slideout=\"showMessageDetails\" title=\"{{row.JMSMessageID}}\">\n    <div class=\"dialog-body\">\n\n      <div class=\"row\">\n        <div class=\"pull-right\">\n          <form class=\"form-horizontal no-bottom-margin\">\n\n            <div class=\"btn-group\"\n                 hawtio-pager=\"messages\"\n                 on-index-change=\"selectRowIndex\"\n                 row-index=\"rowIndex\"></div>\n\n            <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                    title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n              <i class=\"fa fa-share-alt\"></i> Move\n            </button>\n\n            <button class=\"btn btn-danger\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                    ng-click=\"deleteDialog = true\"\n                    title=\"Delete the selected messages\">\n              <i class=\"fa fa-remove\"></i> Delete\n            </button>\n\n            <button class=\"btn\" ng-click=\"showMessageDetails = !showMessageDetails\" title=\"Close this dialog\">\n              <i class=\"fa fa-remove\"></i> Close\n            </button>\n\n          </form>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div class=\"expandable closed\">\n          <div title=\"Headers\" class=\"title\">\n            <i class=\"expandable-indicator\"></i> Headers & Properties\n          </div>\n          <div class=\"expandable-body well\">\n            <table class=\"table table-condensed table-striped\">\n              <thead>\n              <tr>\n                <th>Header</th>\n                <th>Value</th>\n              </tr>\n              </thead>\n              <tbody ng-bind-html=\"row.headerHtml\">\n              </tbody>\n              <!--\n                            <tr ng-repeat=\"(key, value) in row.headers\">\n                              <td class=\"property-name\">{{key}}</td>\n                              <td class=\"property-value\">{{value}}</td>\n                            </tr>\n              -->\n            </table>\n          </div>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div>Displaying body as <span ng-bind=\"row.textMode\"></span></div>\n        <div hawtio-editor=\"row.bodyText\" read-only=\"true\" mode=\'mode\'></div>\n      </div>\n\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"deleteDialog\"\n       ok-button-text=\"Delete\"\n       on-ok=\"deleteMessages()\">\n    <div class=\"dialog-body\">\n      <p>You are about to delete\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'a message!\', \'other\': \'{} messages!\'}\">\n        </ng-pluralize>\n      </p>\n      <p>This operation cannot be undone so please be careful.</p>\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"moveDialog\"\n       ok-button-text=\"Move\"\n       on-ok=\"moveMessages()\">\n    <div class=\"dialog-body\">\n      <p>Move\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'{} messages\'}\"></ng-pluralize>\n        to: <input type=\"text\" ng-model=\"queueName\" placeholder=\"Queue name\"\n                   typeahead=\"title.unescapeHTML() for title in queueNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'></p>\n      <p>\n        You cannot undo this operation.<br>\n        Though after the move you can always move the\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'messages\'}\"></ng-pluralize>\n        back again.\n      </p>\n    </div>\n  </div>\n\n</div>\n\n");

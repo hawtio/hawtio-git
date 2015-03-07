@@ -623,9 +623,14 @@ module Wiki {
    * Returns a relative URL to perform a GET or POST for the given branch/path
    */
   export function gitRelativeURL(branch: string, path: string) {
+    var prefix = "";
+    var injector = HawtioCore.injector;
+    if (injector) {
+        prefix = injector.get("WikiGitUrlPrefix") || "";
+    }
     branch = branch || "master";
     path = path || "/";
-    return UrlHelpers.join("git/" + branch, path);
+    return UrlHelpers.join(prefix, "git/" + branch, path);
   }
 
 

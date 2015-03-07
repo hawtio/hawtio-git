@@ -80,6 +80,10 @@ module Wiki {
     return self;
   });
 
+  _module.factory('WikiGitUrlPrefix', () => {
+      return "";
+  });
+
   _module.factory('fileExtensionTypeRegistry', () => {
     return {
       "image": ["svg", "png", "ico", "bmp", "jpg", "gif"],
