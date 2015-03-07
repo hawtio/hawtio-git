@@ -142,8 +142,8 @@ declare module Wiki {
      */
     function gitRestURL(branch: string, path: string): string;
     /**
-     * Returns a relative URL to perform a GET or POST for the given branch/path
-     */
+   * Returns a relative URL to perform a GET or POST for the given branch/path
+   */
     function gitRelativeURL(branch: string, path: string): string;
     /**
      * Takes a row containing the entity object; or can take the entity directly.
