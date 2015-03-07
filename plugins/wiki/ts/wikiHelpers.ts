@@ -619,15 +619,20 @@ module Wiki {
     return url;
   }
 
-  /**
+    function gitUrlPrefix() {
+        var prefix = "";
+        var injector = HawtioCore.injector;
+        if (injector) {
+            prefix = injector.get("WikiGitUrlPrefix") || "";
+        }
+        return prefix;
+    }
+
+    /**
    * Returns a relative URL to perform a GET or POST for the given branch/path
    */
   export function gitRelativeURL(branch: string, path: string) {
-    var prefix = "";
-    var injector = HawtioCore.injector;
-    if (injector) {
-        prefix = injector.get("WikiGitUrlPrefix") || "";
-    }
+    var prefix = gitUrlPrefix();
     branch = branch || "master";
     path = path || "/";
     return UrlHelpers.join(prefix, "git/" + branch, path);
@@ -680,7 +685,8 @@ module Wiki {
     }
     if (iconUrl) {
       css = null;
-      icon = UrlHelpers.join("git", iconUrl);
+      var prefix = gitUrlPrefix();
+      icon = UrlHelpers.join(prefix, "git", iconUrl);
       var connectionName = Core.getConnectionNameParameter();
       if (connectionName) {
         var connectionOptions = Core.getConnectOptions(connectionName);
