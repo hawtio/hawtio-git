@@ -24,7 +24,7 @@ module ActiveMQ {
 
   _module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", (nav:HawtioMainNav.Registry, $location:ng.ILocationService, workspace:Workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache:ng.ITemplateCacheService) => {
 
-    viewRegistry['{ "tab": "activemq" }'] = 'plugins/activemq/html/layoutActiveMQTree.html';
+    viewRegistry['{ "main-tab": "activemq" }'] = 'plugins/activemq/html/layoutActiveMQTree.html';
     helpRegistry.addUserDoc('activemq', 'plugins/activemq/doc/help.md', () => {
       return workspace.treeContainsDomainAndProperties("org.apache.activemq");
     });
@@ -88,7 +88,7 @@ module ActiveMQ {
       {field: 'LogDirectory', displayName: 'Log Directory', width: "**"}
     ];
 
-    var myUrl = '/jmx/attributes?tab=activemq';
+    var myUrl = '/jmx/attributes';
 
     var builder = nav.builder();
     var tab = builder.id('activemq')
@@ -108,7 +108,6 @@ module ActiveMQ {
                        }
                      })
                      .href( () => myUrl )
-                     .isSelected( () => workspace.isTopTabActive('activemq') )
                      .isValid( () => workspace.treeContainsDomainAndProperties(jmxDomain) )
                      .build();
     tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
@@ -118,7 +117,6 @@ module ActiveMQ {
       title: () => '<i class="fa fa-picture"></i> Diagram',
       //title: "View a diagram of the producers, destinations and consumers",
       show: () =>  workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(jmxDomain),
-      isSelected: () => workspace.isLinkActive('activemq/diagram'),
       href: () => "/activemq/diagram" + workspace.hash()
     });
     tab.tabs.push({
@@ -126,7 +124,6 @@ module ActiveMQ {
       title: () => '<i class="fa fa-envelope"></i> Browse',
       //title: "Browse the messages on the queue",
       show: () => isQueue(workspace) && workspace.hasInvokeRights(workspace.selection, "browse()"),
-      isSelected: () => workspace.isLinkActive('activemq/browseQueue'),
       href: () => "/activemq/browseQueue" + workspace.hash()
     });
     tab.tabs.push({
@@ -134,7 +131,6 @@ module ActiveMQ {
       title: () => '<i class="fa fa-pencil"></i> Send',
       //title: "Send a message to this destination",
       show: () => (isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(workspace.selection, "sendTextMessage(java.util.Map,java.lang.String,java.lang.String,java.lang.String)"),
-      isSelected: () => workspace.isLinkActive('activemq/sendMessage'),
       href: () => "/activemq/sendMessage" + workspace.hash()
     });
     tab.tabs.push({
@@ -142,7 +138,6 @@ module ActiveMQ {
       title: () => '<i class="fa fa-list"></i> Durable Subscribers',
       //title: "Manage durable subscribers",
       show: () => isBroker(workspace),
-      isSelected: () => workspace.isLinkActive('activemq/durableSubscribers'),
       href: () => "/activemq/durableSubscribers" + workspace.hash()
     });
     tab.tabs.push({
@@ -150,7 +145,6 @@ module ActiveMQ {
       title: () => '<i class="fa fa-list"></i> Jobs',
       //title: "Manage jobs",
       show: () => isJobScheduler(workspace),
-      isSelected: () => workspace.isLinkActive('activemq/jobs'),
       href: () => "/activemq/jobs" + workspace.hash()
     });
     tab.tabs.push({
@@ -158,7 +152,6 @@ module ActiveMQ {
       title: () => '<i class="fa fa-plus"></i> Create',
       //title: "Create a new destination",
       show: () => (isBroker(workspace) || isQueuesFolder(workspace) || isTopicsFolder(workspace) || isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"),
-      isSelected: () => workspace.isLinkActive('activemq/createDestination'),
       href: () => "/activemq/createDestination" + workspace.hash()
     });
     tab.tabs.push({
@@ -166,7 +159,6 @@ module ActiveMQ {
       title: () => '<i class="fa fa-plus"></i> Create',
       //title: "Create a new queue",
       show: () => isQueuesFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"),
-      isSelected: () => workspace.isLinkActive('activemq/createQueue'),
       href: () => "/activemq/createQueue" + workspace.hash()
     });
     tab.tabs.push({
@@ -174,7 +166,6 @@ module ActiveMQ {
       title: () => '<i class="fa fa-plus"></i> Create',
       //title: "Create a new topic",
       show: () => isTopicsFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"),
-      isSelected: () => workspace.isLinkActive('activemq/createTopic'),
       href: () => "/activemq/createTopic" + workspace.hash()
     });
     tab.tabs.push({
@@ -182,7 +173,6 @@ module ActiveMQ {
       title: () => '<i class="fa fa-remove"></i> Delete Topic',
       //title: "Delete this topic",
       show: () => isTopic(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeTopic"),
-      isSelected: () => workspace.isLinkActive('activemq/deleteTopic'),
       href: () => "/activemq/deleteTopic" + workspace.hash()
     });
     tab.tabs.push({
@@ -190,7 +180,6 @@ module ActiveMQ {
       title: () => '<i class="fa fa-remove"></i> Delete',
       //title: "Delete or purge this queue",
       show: () => isQueue(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeQueue"),
-      isSelected: () => workspace.isLinkActive('activemq/deleteQueue'),
       href: () => "/activemq/deleteQueue" + workspace.hash()
     });
     nav.add(tab);
