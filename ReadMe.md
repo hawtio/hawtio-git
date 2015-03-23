@@ -8,8 +8,8 @@ This plugin provides a wiki for hawtio
 
 First clone the source
 
-    git clone https://github.com/hawtio/hawtio-kubernetes.git
-    cd hawtio-kubernetes
+    git clone https://github.com/hawtio/hawtio-wiki
+    cd hawtio-wiki
 
 Next you'll need to [install NodeJS](http://nodejs.org/download/) and then install the default global npm dependencies:
 
