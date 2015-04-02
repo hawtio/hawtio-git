@@ -1514,7 +1514,7 @@ module Camel {
   export function isCamelVersionEQGT(major, minor, workspace, jolokia) {
     var camelVersion = getCamelVersion(workspace, jolokia);
     if (camelVersion) {
-      console.log("Camel version " + camelVersion)
+      // console.log("Camel version " + camelVersion)
       camelVersion += "camel-";
       var numbers = Core.parseVersionNumbers(camelVersion);
       if (Core.compareVersionNumberArrays(numbers, [major, minor]) >= 0) {

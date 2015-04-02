@@ -110,7 +110,7 @@ module ActiveMQ {
                      .href( () => myUrl )
                      .isValid( () => workspace.treeContainsDomainAndProperties(jmxDomain) )
                      .build();
-    tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
+    tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache, 'activemq');
     // add sub level tabs
     tab.tabs.push({
       id: 'activemq-diagram',

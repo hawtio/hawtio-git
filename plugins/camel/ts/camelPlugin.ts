@@ -197,7 +197,7 @@ module Camel {
       {field: 'MaximumRedeliveryDelay', displayName: 'Max Redeliveries Delay'}
     ];
 
-    var myUrl = '/jmx/attributes';
+    var myUrl = '/jmx/attributes?main-tab=camel&sub-tab=camel-attributes';
 
     var builder = nav.builder();
     var tab = builder.id('camel')
@@ -221,7 +221,7 @@ module Camel {
                 .build();
 
     // add sub level tabs
-    tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache);
+    tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache, 'camel');
 
     // special for route diagram as we want this to be the 1st
     tab.tabs.push({
@@ -334,6 +334,97 @@ module Camel {
     });
 
     nav.add(tab);
+
+    workspace.addNamedTreePostProcessor('camel', (tree) => {
+      var children = [];
+      var domainName = Camel.jmxDomain;
+      if (tree) {
+        var rootFolder = new Folder("Camel Contexts");
+        rootFolder.addClass = "org-apache-camel-context-folder";
+        rootFolder.children = children;
+        rootFolder.typeName = "context";
+        rootFolder.key = "camelContexts";
+        rootFolder.domain = domainName;
+
+        /*
+        var contextFilterText = $scope.contextFilterText;
+        $scope.lastContextFilterText = contextFilterText;
+        log.debug("Reloading the tree for filter: " + contextFilterText);
+        */
+        var folder = tree.get(domainName);
+        if (folder) {
+          angular.forEach(folder.children, (value, key) => {
+            var entries = value.map;
+            if (entries) {
+              var contextsFolder = entries["context"];
+              var routesNode = entries["routes"];
+              var endpointsNode = entries["endpoints"];
+              if (contextsFolder) {
+                var contextNode = contextsFolder.children[0];
+                if (contextNode) {
+                  var title = contextNode.title;
+                  var match = true;
+                  if (match) {
+                    var folder = new Folder(title);
+                    folder.addClass = "org-apache-camel-context";
+                    folder.domain = domainName;
+                    folder.objectName = contextNode.objectName;
+                    folder.entries = contextNode.entries;
+                    folder.typeName = contextNode.typeName;
+                    folder.key = contextNode.key;
+                    folder.version = contextNode.version
+                    if (routesNode) {
+                      var routesFolder = new Folder("Routes");
+                      routesFolder.addClass = "org-apache-camel-routes-folder";
+                      routesFolder.parent = contextsFolder;
+                      routesFolder.children = routesNode.children;
+                      angular.forEach(routesFolder.children, (n) => n.addClass = "org-apache-camel-routes");
+                      folder.children.push(routesFolder);
+                      routesFolder.typeName = "routes";
+                      routesFolder.key = routesNode.key;
+                      routesFolder.domain = routesNode.domain;
+                    }
+                    if (endpointsNode) {
+                      var endpointsFolder = new Folder("Endpoints");
+                      endpointsFolder.addClass = "org-apache-camel-endpoints-folder";
+                      endpointsFolder.parent = contextsFolder;
+                      endpointsFolder.children = endpointsNode.children;
+                      angular.forEach(endpointsFolder.children, (n) => {
+                        n.addClass = "org-apache-camel-endpoints";
+                        if (!getContextId(n)) {
+                          n.entries["context"] = contextNode.entries["context"];
+                        }
+                      });
+                      folder.children.push(endpointsFolder);
+                      endpointsFolder.entries = contextNode.entries;
+                      endpointsFolder.typeName = "endpoints";
+                      endpointsFolder.key = endpointsNode.key;
+                      endpointsFolder.domain = endpointsNode.domain;
+                    }
+                    var jmxNode = new Folder("MBeans");
+
+                    // lets add all the entries which are not one context/routes/endpoints
+                    angular.forEach(entries, (jmxChild, name) => {
+                      if (name !== "context" && name !== "routes" && name !== "endpoints") {
+                        jmxNode.children.push(jmxChild);
+                      }
+                    });
+
+                    if (jmxNode.children.length > 0) {
+                      jmxNode.sortChildren(false);
+                      folder.children.push(jmxNode);
+                    }
+                    folder.parent = rootFolder;
+                    children.push(folder);
+                  }
+                }
+              }
+            }
+          });
+          folder.children.splice(0, 0, rootFolder);
+        }
+      }
+    });
 
   }]);
 
