@@ -100,7 +100,7 @@ module Camel {
       return Camel.iconClass(state);
     };
 
-    function loadRestRegistry() {
+    function loadData() {
       console.log("Loading inflight data...");
 
       // pre-select filter if we have selected a route
@@ -119,7 +119,7 @@ module Camel {
     }
 
     // load data
-    loadRestRegistry();
+    loadData();
   }]);
 
 }
