@@ -20,7 +20,7 @@ module Camel {
     $scope.camelMaximumLabelWidth = Camel.maximumLabelWidth(localStorage);
     $scope.camelShowInflightCounter = Camel.showInflightCounter(localStorage);
 
-    var updateRoutes = Core.throttled(doUpdateRoutes, 1000);
+    var updateRoutes = _.debounce(doUpdateRoutes, 300, { trailing: true});
 
     // lets delay a little updating the routes to avoid timing issues where we've not yet
     // fully loaded the workspace and/or the XML model
@@ -28,21 +28,25 @@ module Camel {
 
     $scope.$on("$routeChangeSuccess", function (event, current, previous) {
       // lets do this asynchronously to avoid Error: $digest already in progress
-      $timeout(updateRoutes, delayUpdatingRoutes);
+      updateRoutes();
+      //$timeout(updateRoutes, delayUpdatingRoutes, false);
     });
 
     $scope.$watch('workspace.selection', function () {
       if ($scope.isJmxTab && workspace.moveIfViewInvalid()) return;
-      $timeout(updateRoutes, delayUpdatingRoutes);
+      updateRoutes();
+      //$timeout(updateRoutes, delayUpdatingRoutes, false);
     });
 
     $scope.$on('jmxTreeUpdated', function () {
-      $timeout(updateRoutes, delayUpdatingRoutes);
+      updateRoutes();
+      //$timeout(updateRoutes, delayUpdatingRoutes, false);
     });
 
     $scope.$watch('nodeXmlNode', function () {
       if ($scope.isJmxTab && workspace.moveIfViewInvalid()) return;
-      $timeout(updateRoutes, delayUpdatingRoutes);
+      updateRoutes();
+      //$timeout(updateRoutes, delayUpdatingRoutes, false);
     });
 
     function doUpdateRoutes() {
@@ -135,7 +139,7 @@ module Camel {
     }
 
     function showGraph(nodes, links) {
-      var canvasDiv = $($element);
+      var canvasDiv = $element;
       var width = getWidth();
       var height = getHeight();
       var svg = canvasDiv.children("svg")[0];
@@ -203,12 +207,12 @@ module Camel {
     }
 
     function getWidth() {
-      var canvasDiv = $($element);
+      var canvasDiv = $element;
       return canvasDiv.width();
     }
 
     function getHeight() {
-      var canvasDiv = $($element);
+      var canvasDiv = $element;
       return getCanvasHeight(canvasDiv);
     }
 

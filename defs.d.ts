@@ -43,14 +43,6 @@
 /// <reference path="d.ts/dozer/ts/schemaConfigure.d.ts"/>
 /// <reference path="d.ts/fabric/ts/fabricHelpers.d.ts"/>
 /// <reference path="d.ts/git/ts/git.d.ts"/>
-/// <reference path="d.ts/karaf/ts/karafHelpers.d.ts"/>
-/// <reference path="d.ts/karaf/ts/karafPlugin.d.ts"/>
-/// <reference path="d.ts/karaf/ts/feature.d.ts"/>
-/// <reference path="d.ts/karaf/ts/features.d.ts"/>
-/// <reference path="d.ts/karaf/ts/navbar.d.ts"/>
-/// <reference path="d.ts/karaf/ts/scr-component.d.ts"/>
-/// <reference path="d.ts/karaf/ts/scr-components.d.ts"/>
-/// <reference path="d.ts/karaf/ts/server.d.ts"/>
 /// <reference path="d.ts/maven/ts/mavenHelpers.d.ts"/>
 /// <reference path="d.ts/maven/ts/mavenPlugin.d.ts"/>
 /// <reference path="d.ts/maven/ts/artifact.d.ts"/>
@@ -62,6 +54,7 @@
 /// <reference path="d.ts/maven/ts/view.d.ts"/>
 /// <reference path="d.ts/osgi/ts/osgiHelpers.d.ts"/>
 /// <reference path="d.ts/osgi/ts/osgiData.d.ts"/>
+/// <reference path="d.ts/karaf/ts/karafHelpers.d.ts"/>
 /// <reference path="d.ts/osgi/ts/osgiPlugin.d.ts"/>
 /// <reference path="d.ts/osgi/ts/bundle-list.d.ts"/>
 /// <reference path="d.ts/osgi/ts/bundle.d.ts"/>
@@ -76,6 +69,13 @@
 /// <reference path="d.ts/osgi/ts/pid.d.ts"/>
 /// <reference path="d.ts/osgi/ts/services.d.ts"/>
 /// <reference path="d.ts/osgi/ts/svc-dependencies.d.ts"/>
+/// <reference path="d.ts/karaf/ts/karafPlugin.d.ts"/>
+/// <reference path="d.ts/karaf/ts/feature.d.ts"/>
+/// <reference path="d.ts/karaf/ts/features.d.ts"/>
+/// <reference path="d.ts/karaf/ts/navbar.d.ts"/>
+/// <reference path="d.ts/karaf/ts/scr-component.d.ts"/>
+/// <reference path="d.ts/karaf/ts/scr-components.d.ts"/>
+/// <reference path="d.ts/karaf/ts/server.d.ts"/>
 /// <reference path="d.ts/wiki/ts/wikiPlugin.d.ts"/>
 /// <reference path="d.ts/wiki/ts/camel.d.ts"/>
 /// <reference path="d.ts/wiki/ts/camelCanvas.d.ts"/>

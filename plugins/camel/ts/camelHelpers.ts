@@ -299,7 +299,7 @@ module Camel {
    * @method
    */
   export function getSelectedRouteNode(workspace:Workspace) {
-    var selection = workspace.selection;
+    var selection = workspace.selection || workspace.getSelectedMBean();
     return (selection && jmxDomain === selection.domain) ? selection["routeXmlNode"] : null;
   }
 
