@@ -27,6 +27,7 @@ module Camel {
             .when('/camel/typeConverter', {templateUrl: 'plugins/camel/html/typeConverter.html', reloadOnSearch: false})
             .when('/camel/restRegistry', {templateUrl: 'plugins/camel/html/restRegistry.html', reloadOnSearch: false})
             .when('/camel/routeMetrics', {templateUrl: 'plugins/camel/html/routeMetrics.html', reloadOnSearch: false})
+            .when('/camel/inflight', {templateUrl: 'plugins/camel/html/inflight.html', reloadOnSearch: false})
             .when('/camel/sendMessage', {templateUrl: 'plugins/camel/html/sendMessage.html', reloadOnSearch: false})
             .when('/camel/source', {templateUrl: 'plugins/camel/html/source.html'})
             .when('/camel/traceRoute', {templateUrl: 'plugins/camel/html/traceRoute.html'})
@@ -233,6 +234,16 @@ module Camel {
       href: () => "/camel/routes" + workspace.hash(),
       // make sure we have route diagram shown first
       index: -2
+    });
+    tab.tabs.push({
+      id: 'camel-inflight-exchanges',
+      title: () => '<i class="fa fa-bar-chart"></i> Inflight Exchanges',
+      //title: "View the entire JVMs Camel inflight exchanges",
+      show: () => !workspace.isEndpointsFolder()
+        && !workspace.isRoute()
+        && Camel.isCamelVersionEQGT(2, 15, workspace, jolokia)
+        && workspace.hasInvokeRightsForName(getSelectionCamelInflightRepository(workspace), "browse"),
+      href: () => "/camel/inflight" + workspace.hash()
     });
     tab.tabs.push({
       id: 'camel-route-metrics',
