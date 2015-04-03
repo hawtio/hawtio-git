@@ -20,6 +20,7 @@
 /// <reference path="d.ts/camel/ts/endpoint.d.ts"/>
 /// <reference path="d.ts/camel/ts/endpointChooser.d.ts"/>
 /// <reference path="d.ts/camel/ts/fabricDiagram.d.ts"/>
+/// <reference path="d.ts/camel/ts/inflight.d.ts"/>
 /// <reference path="d.ts/camel/ts/jmsHeaderSchema.d.ts"/>
 /// <reference path="d.ts/camel/ts/preferences.d.ts"/>
 /// <reference path="d.ts/camel/ts/profile.d.ts"/>

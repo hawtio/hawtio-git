@@ -166,6 +166,7 @@ declare module Camel {
     function getSelectionCamelDebugMBean(workspace: any): string;
     function getSelectionCamelTypeConverter(workspace: any): string;
     function getSelectionCamelRestRegistry(workspace: any): string;
+    function getSelectionCamelInflightRepository(workspace: any): string;
     function getSelectionCamelRouteMetrics(workspace: any): string;
     function getContextId(workspace: Workspace): any;
     /**
@@ -265,6 +266,11 @@ declare module Camel {
      * @method
      */
     function traceOrDebugIncludeStreams(localStorage: any): boolean;
+    /**
+     * Returns true if we should show inflight counter in Camel route diagram
+     * @method
+     */
+    function showInflightCounter(localStorage: any): boolean;
     /**
      * Returns the max value for seconds in the route metrics UI
      * @method

@@ -3849,6 +3849,27 @@ var Camel;
         return null;
     }
     Camel.getSelectionCamelRestRegistry = getSelectionCamelRestRegistry;
+    function getSelectionCamelInflightRepository(workspace) {
+        if (workspace) {
+            var contextId = getContextId(workspace);
+            var selection = workspace.selection;
+            var tree = workspace.tree;
+            if (tree && selection) {
+                var domain = selection.domain;
+                if (domain && contextId) {
+                    var result = tree.navigate(domain, contextId, "services");
+                    if (result && result.children) {
+                        var mbean = result.children.find(function (m) { return m.title.startsWith("DefaultInflightRepository"); });
+                        if (mbean) {
+                            return mbean.objectName;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    Camel.getSelectionCamelInflightRepository = getSelectionCamelInflightRepository;
     function getSelectionCamelRouteMetrics(workspace) {
         if (workspace) {
             var contextId = getContextId(workspace);
@@ -4473,6 +4494,16 @@ var Camel;
     }
     Camel.traceOrDebugIncludeStreams = traceOrDebugIncludeStreams;
     /**
+     * Returns true if we should show inflight counter in Camel route diagram
+     * @method
+     */
+    function showInflightCounter(localStorage) {
+        var value = localStorage["camelShowInflightCounter"];
+        // is default enabled
+        return Core.parseBooleanValue(value, true);
+    }
+    Camel.showInflightCounter = showInflightCounter;
+    /**
      * Returns the max value for seconds in the route metrics UI
      * @method
      */
@@ -4565,7 +4596,7 @@ var Camel;
     var contextToolBar = "plugins/camel/html/attributeToolBarContext.html";
     Camel._module = angular.module(Camel.pluginName, []);
     Camel._module.config(["$routeProvider", function ($routeProvider) {
-        $routeProvider.when('/camel/browseEndpoint', { templateUrl: 'plugins/camel/html/browseEndpoint.html' }).when('/camel/endpoint/browse/:contextId/*endpointPath', { templateUrl: 'plugins/camel/html/browseEndpoint.html' }).when('/camel/createEndpoint', { templateUrl: 'plugins/camel/html/createEndpoint.html' }).when('/camel/route/diagram/:contextId/:routeId', { templateUrl: 'plugins/camel/html/routes.html' }).when('/camel/routes', { templateUrl: 'plugins/camel/html/routes.html' }).when('/camel/fabricDiagram', { templateUrl: 'plugins/camel/html/fabricDiagram.html', reloadOnSearch: false }).when('/camel/typeConverter', { templateUrl: 'plugins/camel/html/typeConverter.html', reloadOnSearch: false }).when('/camel/restRegistry', { templateUrl: 'plugins/camel/html/restRegistry.html', reloadOnSearch: false }).when('/camel/routeMetrics', { templateUrl: 'plugins/camel/html/routeMetrics.html', reloadOnSearch: false }).when('/camel/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html', reloadOnSearch: false }).when('/camel/source', { templateUrl: 'plugins/camel/html/source.html' }).when('/camel/traceRoute', { templateUrl: 'plugins/camel/html/traceRoute.html' }).when('/camel/debugRoute', { templateUrl: 'plugins/camel/html/debug.html' }).when('/camel/profileRoute', { templateUrl: 'plugins/camel/html/profileRoute.html' }).when('/camel/properties', { templateUrl: 'plugins/camel/html/properties.html' });
+        $routeProvider.when('/camel/browseEndpoint', { templateUrl: 'plugins/camel/html/browseEndpoint.html' }).when('/camel/endpoint/browse/:contextId/*endpointPath', { templateUrl: 'plugins/camel/html/browseEndpoint.html' }).when('/camel/createEndpoint', { templateUrl: 'plugins/camel/html/createEndpoint.html' }).when('/camel/route/diagram/:contextId/:routeId', { templateUrl: 'plugins/camel/html/routes.html' }).when('/camel/routes', { templateUrl: 'plugins/camel/html/routes.html' }).when('/camel/fabricDiagram', { templateUrl: 'plugins/camel/html/fabricDiagram.html', reloadOnSearch: false }).when('/camel/typeConverter', { templateUrl: 'plugins/camel/html/typeConverter.html', reloadOnSearch: false }).when('/camel/restRegistry', { templateUrl: 'plugins/camel/html/restRegistry.html', reloadOnSearch: false }).when('/camel/routeMetrics', { templateUrl: 'plugins/camel/html/routeMetrics.html', reloadOnSearch: false }).when('/camel/inflight', { templateUrl: 'plugins/camel/html/inflight.html', reloadOnSearch: false }).when('/camel/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html', reloadOnSearch: false }).when('/camel/source', { templateUrl: 'plugins/camel/html/source.html' }).when('/camel/traceRoute', { templateUrl: 'plugins/camel/html/traceRoute.html' }).when('/camel/debugRoute', { templateUrl: 'plugins/camel/html/debug.html' }).when('/camel/profileRoute', { templateUrl: 'plugins/camel/html/profileRoute.html' }).when('/camel/properties', { templateUrl: 'plugins/camel/html/properties.html' });
     }]);
     Camel._module.factory('tracerStatus', function () {
         return {
@@ -4745,6 +4776,13 @@ var Camel;
             href: function () { return "/camel/routes" + workspace.hash(); },
             // make sure we have route diagram shown first
             index: -2
+        });
+        tab.tabs.push({
+            id: 'camel-inflight-exchanges',
+            title: function () { return '<i class="fa fa-bar-chart"></i> Inflight Exchanges'; },
+            //title: "View the entire JVMs Camel inflight exchanges",
+            show: function () { return !workspace.isEndpointsFolder() && !workspace.isRoute() && Camel.isCamelVersionEQGT(2, 15, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelInflightRepository(workspace), "browse"); },
+            href: function () { return "/camel/inflight" + workspace.hash(); }
         });
         tab.tabs.push({
             id: 'camel-route-metrics',
@@ -6950,6 +6988,113 @@ var Camel;
     }]);
 })(Camel || (Camel = {}));
 
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
+    Camel._module.controller("Camel.InflightController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.data = [];
+        $scope.initDone = false;
+        $scope.mbeanAttributes = {};
+        var columnDefs = [
+            {
+                field: 'exchangeId',
+                displayName: 'Exchange Id',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'routeId',
+                displayName: 'Route Id',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'nodeId',
+                displayName: 'Node Id',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'duration',
+                displayName: 'Duration (ms)',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            },
+            {
+                field: 'elapsed',
+                displayName: 'Elapsed (ms)',
+                cellFilter: null,
+                width: "*",
+                resizable: true
+            }
+        ];
+        $scope.gridOptions = {
+            data: 'data',
+            displayFooter: true,
+            displaySelectionCheckbox: false,
+            canSelectRows: false,
+            enableSorting: true,
+            columnDefs: columnDefs,
+            selectedItems: [],
+            filterOptions: {
+                filterText: ''
+            }
+        };
+        function onInflight(response) {
+            var obj = response.value;
+            if (obj) {
+                // the JMX tabular data has 1 index so we need to dive 1 levels down to grab the data
+                var arr = [];
+                for (var key in obj) {
+                    var entry = obj[key];
+                    arr.push({
+                        exchangeId: entry.exchangeId,
+                        routeId: entry.routeId,
+                        nodeId: entry.nodeId,
+                        duration: entry.duration,
+                        elapsed: entry.elapsed
+                    });
+                }
+                arr = arr.sortBy("exchangeId");
+                $scope.data = arr;
+                // okay we have the data then set the selected mbean which allows UI to display data
+                $scope.selectedMBean = response.request.mbean;
+            }
+            else {
+                // clear data
+                $scope.data = [];
+            }
+            $scope.initDone = "true";
+            // ensure web page is updated
+            Core.$apply($scope);
+        }
+        $scope.renderIcon = function (state) {
+            return Camel.iconClass(state);
+        };
+        function loadData() {
+            console.log("Loading inflight data...");
+            // pre-select filter if we have selected a route
+            var routeId = Camel.getSelectedRouteId(workspace);
+            if (routeId != null) {
+                $scope.gridOptions.filterOptions.filterText = routeId;
+            }
+            var mbean = Camel.getSelectionCamelInflightRepository(workspace);
+            if (mbean) {
+                // grab inflight in real time
+                var query = { type: "exec", mbean: mbean, operation: 'browse()' };
+                Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(onInflight, query));
+            }
+        }
+        // load data
+        loadData();
+    }]);
+})(Camel || (Camel = {}));
+
 var Camel;
 (function (Camel) {
     Camel.jmsHeaderSchema = {
@@ -7018,6 +7163,10 @@ var Camel;
                 'value': false,
                 'converter': Core.parseBooleanValue
             },
+            'camelShowInflightCounter': {
+                'value': true,
+                'converter': Core.parseBooleanValue
+            },
             'camelMaximumLabelWidth': {
                 'value': Camel.defaultMaximumLabelWidth,
                 'converter': parseInt
@@ -7043,15 +7192,12 @@ var Camel;
 var Camel;
 (function (Camel) {
     Camel._module.controller("Camel.ProfileRouteController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.initDone = false;
         $scope.data = [];
-        $scope.calcManually = true;
-        $scope.icons = {};
-        $scope.selectedRouteId = "";
         var columnDefs = [
             {
                 field: 'id',
                 displayName: 'Id',
-                cellTemplate: '<div class="ngCellText" ng-bind-html-unsafe="rowIcon(row.entity.id)"></div>',
                 cellFilter: null,
                 width: "**",
                 resizable: true
@@ -7133,7 +7279,7 @@ var Camel;
                 filterText: ''
             }
         };
-        var populateProfileMessages = function (response) {
+        function onProfile(response) {
             var updatedData = [];
             // its xml structure so we need to parse it
             var xml = response.value;
@@ -7172,16 +7318,7 @@ var Camel;
                     messageData.min = message.getAttribute("minProcessingTime");
                     messageData.max = message.getAttribute("maxProcessingTime");
                     messageData.total = message.getAttribute("totalProcessingTime");
-                    // self is pre calculated from Camel 2.11 onwards
-                    var self = message.getAttribute("selfProcessingTime");
-                    if (self) {
-                        messageData.self = self;
-                    }
-                    else {
-                        // we need to calculate this manually
-                        $scope.calcManually = true;
-                        messageData.self = "0";
-                    }
+                    messageData.self = message.getAttribute("selfProcessingTime");
                     updatedData.push(messageData);
                 });
                 var processorMessages = $(doc).find("processorStat");
@@ -7227,112 +7364,31 @@ var Camel;
                     updatedData.push(messageData);
                 });
             }
-            // for Camel 2.10 or older we need to run through the data and calculate the self/total times manually
-            if ($scope.calcManually) {
-                // sort the data accordingly to order in the icons map
-                updatedData.sort(function (e1, e2) {
-                    var entry1 = $scope.icons[e1.id];
-                    var entry2 = $scope.icons[e2.id];
-                    if (entry1 && entry2) {
-                        return entry1.index - entry2.index;
-                    }
-                    else {
-                        return 0;
-                    }
-                });
-                var accTotal = 0;
-                updatedData.reverse().forEach(function (data, idx) {
-                    // update accTotal with self time
-                    if (idx < updatedData.length - 1) {
-                        // each processor should have the total updated with the accumulated total
-                        accTotal += +data.self;
-                        data.total = accTotal;
-                    }
-                    else {
-                        // the last row is the route, which should have self calculated as follows
-                        data.self = +(data.total - accTotal);
-                        // just to be safe we dont want negative values self value for the route
-                        if (data.self < 0) {
-                            data.self = 0;
-                        }
-                    }
-                });
-                // reverse back again
-                updatedData.reverse();
-            }
-            // TODO: need a way to update data without flickering
             // if we do as below with the forEach then the data does not update
             // replace data with updated data
             $scope.data = updatedData;
+            $scope.initDone = true;
+            // ensure web page is updated
             Core.$apply($scope);
-        };
-        // function to trigger reloading page
-        $scope.onResponse = function (response) {
-            //console.log("got response: " + response);
-            loadData();
-        };
-        $scope.$watch('workspace.tree', function () {
-            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
-            // so lets reload, asynchronously just in case
-            setTimeout(loadData, 50);
-        });
-        function initIdToIcon() {
-            console.log("initializing id and icons");
-            $scope.icons = {};
-            var routeXml = Core.pathGet(workspace.selection, ["routeXmlNode"]);
-            if (routeXml) {
-                // add route id first
-                var entry = {
-                    img: "",
-                    index: 0
-                };
-                entry.index = -1;
-                entry.img = "<img src='img/icons/camel/camel_route.png'>";
-                $scope.icons[$scope.selectedRouteId] = entry;
-                // then each processor id and icons
-                $(routeXml).find('*').each(function (idx, element) {
-                    var id = element.getAttribute("id");
-                    if (id) {
-                        var entry = {
-                            img: "",
-                            index: 0
-                        };
-                        entry.index = idx;
-                        var icon = Camel.getRouteNodeIcon(element);
-                        if (icon) {
-                            entry.img = "<img src='" + icon + "'>";
-                        }
-                        else {
-                            entry.img = "";
-                        }
-                        $scope.icons[id] = entry;
-                    }
-                });
-            }
         }
+        ;
         function loadData() {
             console.log("Loading Camel route profile data...");
-            $scope.selectedRouteId = Camel.getSelectedRouteId(workspace);
-            var routeMBean = Camel.getSelectionRouteMBean(workspace, $scope.selectedRouteId);
-            console.log("Selected route is " + $scope.selectedRouteId);
-            if (Camel.isCamelVersionEQGT(2, 11, workspace, jolokia)) {
-                // this is Camel 2.11 or better so we dont need to calculate data manually
-                console.log("Camel 2.11 or better detected");
-                $scope.calcManually = false;
-            }
-            else {
-                console.log("Camel 2.10 or older detected");
-                $scope.calcManually = true;
-            }
-            initIdToIcon();
-            console.log("Initialized icons, with " + $scope.icons.length + " icons");
+            var selectedRouteId = Camel.getSelectedRouteId(workspace);
+            var routeMBean = Camel.getSelectionRouteMBean(workspace, selectedRouteId);
             // schedule update the profile data, based on the configured interval
-            // TOOD: the icons is not initialized the first time, for some reason, the routeXmlNode is empty/undefined
-            // TODO: have cellFilter with bar grey-scale for highlighting the scales between the numbers
-            // TODO: have the icons indent, there is some CSS ninja crack to do this
-            var query = { type: 'exec', mbean: routeMBean, operation: 'dumpRouteStatsAsXml(boolean,boolean)', arguments: [false, true] };
-            Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(populateProfileMessages, query));
+            if (routeMBean) {
+                var query = {
+                    type: 'exec',
+                    mbean: routeMBean,
+                    operation: 'dumpRouteStatsAsXml(boolean,boolean)',
+                    arguments: [false, true]
+                };
+                Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(onProfile, query));
+            }
         }
+        // load data
+        loadData();
     }]);
 })(Camel || (Camel = {}));
 
@@ -7641,6 +7697,7 @@ var Camel;
         }
         $scope.camelIgnoreIdForLabel = Camel.ignoreIdForLabel(localStorage);
         $scope.camelMaximumLabelWidth = Camel.maximumLabelWidth(localStorage);
+        $scope.camelShowInflightCounter = Camel.showInflightCounter(localStorage);
         var updateRoutes = Core.throttled(doUpdateRoutes, 1000);
         // lets delay a little updating the routes to avoid timing issues where we've not yet
         // fully loaded the workspace and/or the XML model
@@ -7836,6 +7893,7 @@ var Camel;
                 // we could have used a function instead of the boolean isRoute parameter (but sometimes that is easier)
                 var id = stat.getAttribute("id");
                 var completed = stat.getAttribute("exchangesCompleted");
+                var inflight = stat.hasAttribute("exchangesInflight") ? stat.getAttribute("exchangesInflight") : 0;
                 var tooltip = "";
                 if (id && completed) {
                     var container = isRoute ? $scope.routeNodes : $scope.nodes;
@@ -7857,8 +7915,11 @@ var Camel;
                         var mean = stat.getAttribute("meanProcessingTime");
                         var min = stat.getAttribute("minProcessingTime");
                         var max = stat.getAttribute("maxProcessingTime");
-                        tooltip = "last: " + last + " (ms)\nmean: " + mean + " (ms)\nmin: " + min + " (ms)\nmax: " + max + " (ms)";
+                        tooltip = "totoal: " + total + "\ninflight:" + inflight + "\nlast: " + last + " (ms)\nmean: " + mean + " (ms)\nmin: " + min + " (ms)\nmax: " + max + " (ms)";
                         node["counter"] = total;
+                        if ($scope.camelShowInflightCounter) {
+                            node["inflight"] = inflight;
+                        }
                         var labelSummary = node["labelSummary"];
                         if (labelSummary) {
                             tooltip = labelSummary + "\n\n" + tooltip;
@@ -17690,15 +17751,16 @@ $templateCache.put("plugins/camel/html/createEndpointURL.html","<form class=\"fo
 $templateCache.put("plugins/camel/html/createEndpointWizard.html","<div ng-controller=\"Camel.EndpointController\">\n  <form class=\"form-horizontal\">\n    <div class=\"control-group\">\n      <label class=\"control-label\" for=\"componentName\">Component</label>\n\n      <div class=\"controls\">\n        <select id=\"componentName\" ng-model=\"selectedComponentName\"\n                ng-options=\"componentName for componentName in componentNames\"></select>\n      </div>\n    </div>\n    <div ng-show=\"selectedComponentName\">\n      <div class=\"control-group\">\n        <label class=\"control-label\" for=\"endpointPath\">Endpoint</label>\n\n        <div class=\"controls\">\n          <input id=\"endpointPath\" class=\"col-md-10\" type=\"text\" ng-model=\"endpointPath\" placeholder=\"name\"\n                 typeahead=\"title for title in endpointCompletions($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'\n                 min-length=\"1\">\n        </div>\n      </div>\n\n      <div simple-form name=\"formEditor\" entity=\'endpointParameters\' data=\'endpointSchema\' schema=\"schema\"></div>\n\n      <div class=\"control-group\">\n        <div class=\"controls\">\n          <button type=\"submit\" class=\"btn btn-info\" ng-click=\"createEndpointFromData()\"\n                  ng-disabled=\"!endpointPath || !selectedComponentName\">\n            Create endpoint\n          </button>\n        </div>\n      </div>\n    </div>\n  </form>\n</div>\n");
 $templateCache.put("plugins/camel/html/debug.html","<div ng-controller=\"Camel.DebugRouteController\" ng-switch=\"debugging\">\n  <div ng-switch-when=\"true\">\n    <div class=\"row\">\n      <div class=\"col-md-10\">\n        <div ng-include src=\"graphView\">\n        </div>\n      </div>\n      <div class=\"col-md-2\">\n        <div class=\"btn-toolbar pull-right\">\n          <div class=\"btn-group\">\n            <div ng-switch=\"hasBreakpoint\">\n              <button ng-switch-when=\"true\" class=\"btn\" ng-disabled=\"!selectedDiagramNodeId\"\n                      ng-click=\"removeBreakpoint()\" title=\"Remove the breakpoint on the selected node\"><i\n                      class=\"fa fa-remove\"></i>\n              </button>\n              <button ng-switch-default=\"false\" class=\"btn\" ng-disabled=\"!selectedDiagramNodeId\"\n                      ng-click=\"addBreakpoint()\" title=\"Add a breakpoint on the selected node\"><i class=\"fa fa-plus\"></i>\n              </button>\n            </div>\n          </div>\n          <div class=\"btn-group\">\n            <button class=\"btn\" type=\"submit\" ng-click=\"stopDebugging()\" title=\"Stops the debugger\">Close\n            </button>\n          </div>\n        </div>\n        <div class=\"btn-toolbar pull-right\">\n          <div class=\"btn-group\">\n            <button class=\"btn\" ng-click=\"step()\" ng-disabled=\"!stopped\" title=\"Step into the next node\"><img\n                    ng-src=\"plugins/camel/doc/img/debug/step.gif\"></button>\n            <button class=\"btn\" ng-click=\"resume()\" ng-disabled=\"!stopped\" title=\"Resume running\"><img\n                    ng-src=\"plugins/camel/doc/img/debug/resume.gif\"></button>\n            <button class=\"btn\" ng-click=\"suspend()\" ng-disabled=\"stopped\"\n                    title=\"Suspend all threads in this route\"><img ng-src=\"plugins/camel/doc/img/debug/suspend.gif\"></button>\n          </div>\n        </div>\n        <div class=\"col-md-12 well\">\n          <form>\n            <div class=\"table-header\">Breakpoints:</div>\n            <ul>\n              <li class=\"table-row\" ng-repeat=\"b in breakpoints\">\n                {{b}}\n              </li>\n            </ul>\n            <div class=\"table-row\">Suspended:</div>\n            <ul>\n              <li class=\"table-row\" ng-repeat=\"b in suspendedBreakpoints\">\n                {{b}}\n              </li>\n            </ul>\n          </form>\n        </div>\n      </div>\n    </div>\n\n    <div ng-include src=\"tableView\">\n    </div>\n  </div>\n  <div class=\"col-md-12 well\" ng-switch-default=\"false\">\n    <form>\n      <p>Debugging allows you to step through camel routes to diagnose issues</p>\n\n      <button class=\"btn btn-info\" type=\"submit\" ng-click=\"startDebugging()\">Start debugging</button>\n    </form>\n  </div>\n</div>");
 $templateCache.put("plugins/camel/html/fabricDiagram.html","<style type=\"text/css\">\n\n  .col-md-5.node-panel {\n    margin-top: 5px;\n    margin-left: 5px;\n  }\n\n  .node-attributes dl {\n    margin-top: 5px;\n    margin-bottom: 10px;\n  }\n\n  .node-attributes dt {\n    width: 270px;\n  }\n\n  .node-attributes dd {\n    margin-left: 280px;\n  }\n\n  .node-attributes dd a {\n    /** lets make the destination links wrap */\n    -ms-word-break: break-all;\n    word-break: break-all;\n    -webkit-hyphens: auto;\n    -moz-hyphens: auto;\n    hyphens: auto;\n  }\n\n  ul.viewMenu li {\n    padding-left: 10px;\n    padding-top: 2px;\n    padding-bottom: 2px;\n  }\n\n  div#pop-up {\n    display: none;\n    position: absolute;\n    color: white;\n    font-size: 14px;\n    background: rgba(0, 0, 0, 0.6);\n    padding: 5px 10px 5px 10px;\n    -moz-border-radius: 8px 8px;\n    border-radius: 8px 8px;\n  }\n\n  div#pop-up-title {\n    font-size: 15px;\n    margin-bottom: 4px;\n    font-weight: bolder;\n  }\n\n  div#pop-up-content {\n    font-size: 12px;\n  }\n\n  rect.graphbox {\n    fill: #FFF;\n  }\n\n  rect.graphbox.frame {\n    stroke: #222;\n    stroke-width: 2px\n  }\n\n  /* only things directly related to the network graph should be here */\n\n  path.link {\n    fill: none;\n    stroke: #666;\n    stroke-width: 1.5px;\n  }\n\n  marker.context {\n    stroke: red;\n    fill: red;\n    stroke-width: 1.5px;\n  }\n\n  circle.context {\n    fill: #0c0;\n  }\n\n  circle.route {\n    fill: #c0c;\n    stroke-width: 1.3px;\n  }\n\n  circle.notActive {\n    fill: #c00;\n  }\n\n  path.link.group {\n    stroke: #ccc;\n  }\n\n  marker#group {\n    stroke: #ccc;\n    fill: #ccc;\n  }\n\n  circle.group {\n    fill: #eee;\n    stroke: #ccc;\n  }\n\n  circle.destination {\n    fill: #bbb;\n    stroke: #ccc;\n  }\n\n  circle.pinned {\n    stroke-width: 4.5px;\n  }\n\n  path.link.profile {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  marker#container {\n  }\n\n  circle.container {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  path.link.container {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  circle {\n    fill: #ccc;\n    stroke: #333;\n    stroke-width: 1.5px;\n    cursor: pointer;\n  }\n\n  circle.closeMode {\n    cursor: crosshair;\n  }\n\n  path.link.destination {\n    stroke: #ccc;\n  }\n\n  circle.topic {\n    fill: #c0c;\n  }\n\n  circle.endpoint, circle.endpoints {\n    fill: #00c;\n  }\n\n  circle.selected {\n    stroke-width: 3px;\n  }\n\n  .selected {\n    stroke-width: 3px;\n  }\n\n  text {\n    font: 10px sans-serif;\n    pointer-events: none;\n  }\n\n  text.shadow {\n    stroke: #fff;\n    stroke-width: 3px;\n    stroke-opacity: .8;\n  }\n</style>\n\n\n<div class=\"row mq-page\" ng-controller=\"Camel.FabricDiagramController\">\n\n  <div ng-hide=\"inDashboard\" class=\"col-md-12 page-padded\">\n    <div class=\"section-header\">\n\n      <div class=\"section-filter\">\n        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"searchFilter\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"searchFilter = \'\'\"></i>\n      </div>\n\n      <div class=\"section-controls\">\n        <a href=\"#\"\n           class=\"dropdown-toggle\"\n           data-toggle=\"dropdown\">\n          View &nbsp;<i class=\"fa fa-caret-down\"></i>\n        </a>\n\n        <ul class=\"dropdown-menu viewMenu\">\n          <!--\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.consumer\"> Consumers\n                      </label>\n                    </li>\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.producer\"> Producers\n                      </label>\n                    </li>\n          -->\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.endpoint\"> Endpoint\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.route\"> Route\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.context\"> Context\n            </label>\n          </li>\n          <!--\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.profile\"> Profiles\n                      </label>\n                    </li>\n          -->\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.container\"> Containers\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li title=\"Should we show the details panel on the left\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.panel\"> Details panel\n            </label>\n          </li>\n          <li title=\"Show the summary popup as you hover over nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.popup\"> Hover text\n            </label>\n          </li>\n          <li title=\"Show the labels next to nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.label\"> Label\n            </label>\n          </li>\n        </ul>\n\n        <!--\n                <a ng-href=\"#/fabric/mq/contexts{{hash}}\" title=\"View the context and container diagram\">\n                  <i class=\"fa fa-edit\"></i> Configuration\n                </a>\n        -->\n      </div>\n    </div>\n  </div>\n\n\n  <div id=\"pop-up\">\n    <div id=\"pop-up-title\"></div>\n    <div id=\"pop-up-content\"></div>\n  </div>\n\n  <div class=\"row\">\n    <div ng-show=\"containerCount\">\n      <div class=\"{{viewSettings.panel ? \'col-md-7\' : \'col-md-12\'}} canvas context-canvas\">\n        <div hawtio-force-graph graph=\"graph\" selected-model=\"selectedNode\" link-distance=\"150\" charge=\"-600\"\n             nodesize=\"10\" marker-kind=\"marker-end\"\n             style=\"min-height: 800px\">\n        </div>\n      </div>\n      <div ng-show=\"viewSettings.panel\" class=\"col-md-5 node-panel\">\n        <div ng-show=\"selectedNode\" class=\"node-attributes\">\n          <dl ng-repeat=\"property in selectedNodeProperties\" class=\"dl-horizontal\">\n            <dt title=\"{{property.key}}\">{{property.key}}:</dt>\n            <dd ng-bind-html-unsafe=\"property.value\"></dd>\n          </dl>\n        </div>\n      </div>\n    </div>\n    <div class=\"jumbotron\" ng-show=\"containerCount === 0 && isFmc\">\n      <p>There are currently no Camel routes running in this fabric</p>\n\n      <p>To try out the EIP browser try create one of the example <a\n              href=\"#/wiki/branch/{{versionId}}/view/fabric/profiles/example/quickstarts\">quickstarts</a></p>\n\n      <p>e.g. Try creating a container for:\n        <a class=\"btn btn-primary\"\n           href=\"#/fabric/containers/createContainer?profileIds=example-quickstarts-cbr&versionId={{versionId}}\">\n          Content Based Router Quickstart\n        </a>\n        <a class=\"btn btn-primary\"\n           href=\"#/fabric/containers/createContainer?profileIds=example-quickstarts-eip&versionId={{versionId}}\">\n          EIP Quickstart\n        </a>\n      </p>\n    </div>\n    <div class=\"jumbotron\" ng-show=\"containerCount === 0 && !isFmc\">\n      <p>There are currently no Camel routes running in this JVM</p>\n\n      <p>To try out the Camel diagram try create one more Camel routes</p>\n    </div>\n  </div>\n\n  <div ng-include=\"\'plugins/fabric/html/connectToContainerDialog.html\'\"></div>\n\n</div>\n\n\n");
+$templateCache.put("plugins/camel/html/inflight.html","<div class=\"row-fluid\" ng-controller=\"Camel.InflightController\">\n\n  <div ng-show=\"initDone\">\n\n    <div class=\"row-fluid\">\n      <div class=\"pull-right\">\n        <hawtio-filter ng-model=\"gridOptions.filterOptions.filterText\"\n                       placeholder=\"Filter...\"></hawtio-filter>\n      </div>\n    </div>\n\n    <div class=\"row-fluid\">\n      <table class=\"table table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n    </div>\n\n  </div>\n\n  <div ng-hide=\"initDone\">\n    <p class=\"text-center\"><i class=\"fa fa-spinner fa-spin\"></i></p>\n  </div>\n\n</div>\n\n");
 $templateCache.put("plugins/camel/html/layoutCamelTree.html","\n<script type=\"text/ng-template\" id=\"header\">\n  <div class=\"camel tree-header\" ng-controller=\"Camel.TreeHeaderController\">\n    <div class=\"left\">\n      <div class=\"section-filter\">\n        <input id=\"camelContextIdFilter\"\n               class=\"search-query\"\n               type=\"text\"\n               ng-model=\"contextFilterText\"\n               title=\"filter camel context IDs\"\n               placeholder=\"Filter...\">\n        <i class=\"fa fa-remove clickable\"\n           title=\"Clear filter\"\n           ng-click=\"contextFilterText = \'\'\"></i>\n      </div>\n    </div>\n    <div class=\"right\">\n      <i class=\"fa fa-chevron-down clickable\"\n         title=\"Expand all nodes\"\n         ng-click=\"expandAll()\"></i>\n      <i class=\"fa fa-chevron-up clickable\"\n         title=\"Unexpand all nodes\"\n         ng-click=\"contractAll()\"></i>\n    </div>\n  </div>\n</script>\n\n<hawtio-pane position=\"left\" width=\"300\" header=\"header\">\n  <div id=\"tree-container\" ng-controller=\"Jmx.MBeansController\">\n    <div class=\"camel-tree\" ng-controller=\"Camel.TreeController\">\n      <div id=\"cameltree\"></div>\n    </div>\n  </div>\n</hawtio-pane>\n<div class=\"row\">\n  <!--\n  <ng-include src=\"\'plugins/jmx/html/subLevelTabs.html\'\"></ng-include>\n  -->\n  <div id=\"properties\" ng-view></div>\n</div>\n");
 $templateCache.put("plugins/camel/html/nodePropertiesEdit.html","<div simple-form name=\"formEditor\" entity=\'nodeData\' data=\'model\' schema=\"schema\"></div>\n");
 $templateCache.put("plugins/camel/html/nodePropertiesView.html","<div simple-form name=\"formViewer\" mode=\'view\' entity=\'nodeData\' data=\'model\' schema=\"schema\"></div>\n");
-$templateCache.put("plugins/camel/html/preferences.html","<div ng-controller=\"Camel.PreferencesController\">\n  <form class=\"form-horizontal\">\n\n    <label class=\"control-label\">Include Streams</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelTraceOrDebugIncludeStreams\">\n        <span class=\"help-block\">Whether to include stream based message body when using the tracer and debugger</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Maximum body length</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelMaximumTraceOrDebugBodyLength\" min=\"0\">\n        <span class=\"help-block\">The maximum length of the body before its clipped when using the tracer and debugger</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Maximum label length</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelMaximumLabelWidth\" min=\"0\">\n        <span class=\"help-block\">The maximum length of a label in Camel diagrams before it is clipped</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Do not use ID for label</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelIgnoreIdForLabel\">\n        <span class=\"help-block\">If enabled then we will ignore the ID value when viewing a pattern in a Camel diagram; otherwise we will use the ID value as the label (the tooltip will show the actual detail)</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Route Metrics maximum seconds</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelRouteMetricMaxSeconds\" min=\"1\" max=\"100\">\n        <span class=\"help-block\">The maximum value in seconds used by the route metrics duration and histogram charts</span>\n      </div>\n    </div>\n\n  </form>\n</div>\n");
-$templateCache.put("plugins/camel/html/profileRoute.html","<div class=\"row\" ng-controller=\"Camel.ProfileRouteController\">\n\n    <div class=\"row\">\n        <div class=\"pull-right\">\n            <form class=\"form-inline no-bottom-margin\">\n                <fieldset>\n                    <div class=\"control-group inline-block\">\n                        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"gridOptions.filterOptions.filterText\">\n                    </div>\n                </fieldset>\n            </form>\n        </div>\n    </div>\n\n    <div class=\"row\" ng-show=\"data.length > 0\">\n        <div class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n    </div>\n    <div class=\"row\" ng-show=\"data.length == 0\">\n        Loading...\n    </div>\n\n</div>\n\n");
+$templateCache.put("plugins/camel/html/preferences.html","<div ng-controller=\"Camel.PreferencesController\">\n  <form class=\"form-horizontal\">\n\n    <label class=\"control-label\">Include Streams</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelTraceOrDebugIncludeStreams\">\n        <span class=\"help-block\">Whether to include stream based message body when using the tracer and debugger</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Maximum body length</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelMaximumTraceOrDebugBodyLength\" min=\"0\">\n        <span class=\"help-block\">The maximum length of the body before its clipped when using the tracer and debugger</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Maximum label length</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelMaximumLabelWidth\" min=\"0\">\n        <span class=\"help-block\">The maximum length of a label in Camel diagrams before it is clipped</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Do not use ID for label</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelIgnoreIdForLabel\">\n        <span class=\"help-block\">If enabled then we will ignore the ID value when viewing a pattern in a Camel diagram; otherwise we will use the ID value as the label (the tooltip will show the actual detail)</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Show Inflight Counter</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelShowInflightCounter\">\n        <span class=\"help-block\">Whether to show inflight counter in route diagram</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Route Metrics maximum seconds</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelRouteMetricMaxSeconds\" min=\"1\" max=\"100\">\n        <span class=\"help-block\">The maximum value in seconds used by the route metrics duration and histogram charts</span>\n      </div>\n    </div>\n\n  </form>\n</div>\n");
+$templateCache.put("plugins/camel/html/profileRoute.html","<div class=\"row\" ng-controller=\"Camel.ProfileRouteController\">\n\n    <div ng-show=\"initDone\">\n\n        <div class=\"row-fluid\">\n            <div class=\"pull-right\">\n                <hawtio-filter ng-model=\"gridOptions.filterOptions.filterText\"\n                               placeholder=\"Filter...\"></hawtio-filter>\n            </div>\n        </div>\n\n        <div class=\"row-fluid\">\n            <table class=\"table table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n        </div>\n\n    </div>\n\n    <div ng-hide=\"initDone\">\n        <p class=\"text-center\"><i class=\"fa fa-spinner fa-spin\"></i></p>\n    </div>\n\n</div>\n\n");
 $templateCache.put("plugins/camel/html/properties.html","<div ng-controller=\"Camel.PropertiesController\">\n  <div ng-include=\"viewTemplate\"></div>\n</div>\n");
-$templateCache.put("plugins/camel/html/restRegistry.html","<div class=\"row\" ng-controller=\"Camel.RestServiceController\">\n\n  <div ng-show=\"selectedMBean\">\n\n    <div class=\"row\" ng-show=\"data.length > 0\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline no-bottom-margin\">\n          <fieldset>\n            <div class=\"control-group inline-block\">\n              <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\"\n                     ng-model=\"gridOptions.filterOptions.filterText\">\n            </div>\n          </fieldset>\n        </form>\n      </div>\n    </div>\n\n    <div class=\"row\" ng-show=\"data.length > 0\">\n      <table class=\"table table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n    </div>\n    <div class=\"row well\" ng-show=\"data.length == 0\">\n      <form>\n        <p>There are no Rest Services registered in this CamelContext.</p>\n      </form>\n    </div>\n  </div>\n\n  <div ng-hide=\"selectedMBean\">\n    <i class=\"fa fa-spinner icon-spin centered\"></i>\n  </div>\n\n</div>\n\n");
+$templateCache.put("plugins/camel/html/restRegistry.html","<div class=\"row\" ng-controller=\"Camel.RestServiceController\">\n\n  <div ng-show=\"selectedMBean\">\n\n    <div class=\"row\" ng-show=\"data.length > 0\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline no-bottom-margin\">\n          <fieldset>\n            <div class=\"control-group inline-block\">\n              <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\"\n                     ng-model=\"gridOptions.filterOptions.filterText\">\n            </div>\n          </fieldset>\n        </form>\n      </div>\n    </div>\n\n    <div class=\"row\" ng-show=\"data.length > 0\">\n      <table class=\"table table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n    </div>\n    <div class=\"row well\" ng-show=\"data.length == 0\">\n      <form>\n        <p>There are no Rest Services registered in this CamelContext.</p>\n      </form>\n    </div>\n  </div>\n\n  <div ng-hide=\"selectedMBean\">\n    <p class=\"text-center\"><i class=\"fa fa-spinner fa-spin\"></i></p>\n  </div>\n\n</div>\n\n");
 $templateCache.put("plugins/camel/html/routeMetrics.html","<div class=\"row\" ng-controller=\"Camel.RouteMetricsController\">\n\n  <div class=\"row\">\n    <div class=\"pull-right\">\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n          <div class=\"control-group inline-block\">\n            <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"filterText\">\n          </div>\n        </fieldset>\n      </form>\n    </div>\n  </div>\n\n  <div class=\"row\" ng-show=\"!initDone\">\n    Loading...\n  </div>\n\n  <div class=\"col-md-8 centered well\" ng-show=\"initDone && metricDivs.length === 0\">\n    <form>\n      This Camel context has no route metrics data.\n    </form>\n  </div>\n\n  <!-- div to contain the graphs -->\n  <div class=\"metricsWatcher container mainContent\">\n    <div id=\"{{metric.id}}\" class=\"row\" ng-repeat=\"metric in metricDivs track by $index\" style=\"{{filterByRoute(metric)}}\"></div>\n  </div>\n\n</div>\n\n");
-$templateCache.put("plugins/camel/html/routes.html","<style>\n\n  #node-CLOSED rect {\n    stroke-width: 1px;\n    fill: #f88;\n  }\n\n  .node:hover,\n  .node > *:hover,\n  rect > *:hover {\n    cursor: pointer;\n    opacity: 0.6;\n  }\n\n  path.edge {\n    fill: none;\n    stroke: #666;\n    stroke-width: 3px;\n  }\n\n  .edge:hover {\n    cursor: pointer;\n    opacity: 0.4;\n  }\n\n  text.counter {\n    stroke: #080;\n  }\n</style>\n<div ng-class=\"{\'wiki-fixed\' : !isJmxTab}\" id=\"canvas\" ng-controller=\"Camel.RouteController\">\n  <!--\n  <div ng-hide=\"isJmxTab\">\n    <ng-include src=\"\'plugins/camel/html/breadcrumbBar.html\'\"></ng-include>\n  </div>\n  -->\n  <svg class=\"camel-diagram\" width=0 height=0>\n    <defs>\n      <marker id=\"arrowhead\"\n              viewBox=\"0 0 10 10\"\n              refX=\"8\"\n              refY=\"5\"\n              markerUnits=\"strokeWidth\"\n              markerWidth=\"4\"\n              markerHeight=\"3\"\n              orient=\"auto\"\n              style=\"fill: #333\">\n        <path d=\"M 0 0 L 10 5 L 0 10 z\"></path>\n      </marker>\n\n      <filter id=\"drop-shadow\" width=\"300%\" height=\"300%\">\n        <feGaussianBlur in=\"SourceAlpha\" result=\"blur-out\" stdDeviation=\"19\"/>\n        <feOffset in=\"blur-out\" result=\"the-shadow\" dx=\"2\" dy=\"2\"/>\n        <feComponentTransfer xmlns=\"http://www.w3.org/2000/svg\">\n          <feFuncA type=\"linear\" slope=\"0.2\"/>\n        </feComponentTransfer>\n        <feMerge xmlns=\"http://www.w3.org/2000/svg\">\n          <feMergeNode/>\n          <feMergeNode in=\"SourceGraphic\"/>\n        </feMerge>\n      </filter>\n      <linearGradient id=\"rect-gradient\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\">\n        <stop offset=\"0%\" style=\"stop-color:rgb(254,254,255);stop-opacity:1\"/>\n        <stop offset=\"100%\" style=\"stop-color:rgb(247,247,255);stop-opacity:1\"/>\n      </linearGradient>\n      <linearGradient id=\"rect-select-gradient\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\">\n        <stop offset=\"0%\" style=\"stop-color: #ffffa0; stop-opacity: 0.7\"/>\n        <stop offset=\"100%\" style=\"stop-color: #f0f0a0; stop-opacity: 0.7\"/>\n      </linearGradient>\n    </defs>\n  </svg>\n</div>\n\n");
+$templateCache.put("plugins/camel/html/routes.html","<style>\n\n  #node-CLOSED rect {\n    stroke-width: 1px;\n    fill: #f88;\n  }\n\n  .node:hover,\n  .node > *:hover,\n  rect > *:hover {\n    cursor: pointer;\n    opacity: 0.6;\n  }\n\n  path.edge {\n    fill: none;\n    stroke: #666;\n    stroke-width: 3px;\n  }\n\n  .edge:hover {\n    cursor: pointer;\n    opacity: 0.4;\n  }\n\n  text.counter {\n    stroke: #080;\n  }\n\n  text.inflight {\n    stroke: #08f;\n  }\n</style>\n<div ng-class=\"{\'wiki-fixed\' : !isJmxTab}\" id=\"canvas\" ng-controller=\"Camel.RouteController\">\n  <!--\n  <div ng-hide=\"isJmxTab\">\n    <ng-include src=\"\'plugins/camel/html/breadcrumbBar.html\'\"></ng-include>\n  </div>\n  -->\n  <svg class=\"camel-diagram\" width=0 height=0>\n    <defs>\n      <marker id=\"arrowhead\"\n              viewBox=\"0 0 10 10\"\n              refX=\"8\"\n              refY=\"5\"\n              markerUnits=\"strokeWidth\"\n              markerWidth=\"4\"\n              markerHeight=\"3\"\n              orient=\"auto\"\n              style=\"fill: #333\">\n        <path d=\"M 0 0 L 10 5 L 0 10 z\"></path>\n      </marker>\n\n      <filter id=\"drop-shadow\" width=\"300%\" height=\"300%\">\n        <feGaussianBlur in=\"SourceAlpha\" result=\"blur-out\" stdDeviation=\"19\"/>\n        <feOffset in=\"blur-out\" result=\"the-shadow\" dx=\"2\" dy=\"2\"/>\n        <feComponentTransfer xmlns=\"http://www.w3.org/2000/svg\">\n          <feFuncA type=\"linear\" slope=\"0.2\"/>\n        </feComponentTransfer>\n        <feMerge xmlns=\"http://www.w3.org/2000/svg\">\n          <feMergeNode/>\n          <feMergeNode in=\"SourceGraphic\"/>\n        </feMerge>\n      </filter>\n      <linearGradient id=\"rect-gradient\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\">\n        <stop offset=\"0%\" style=\"stop-color:rgb(254,254,255);stop-opacity:1\"/>\n        <stop offset=\"100%\" style=\"stop-color:rgb(247,247,255);stop-opacity:1\"/>\n      </linearGradient>\n      <linearGradient id=\"rect-select-gradient\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\">\n        <stop offset=\"0%\" style=\"stop-color: #ffffa0; stop-opacity: 0.7\"/>\n        <stop offset=\"100%\" style=\"stop-color: #f0f0a0; stop-opacity: 0.7\"/>\n      </linearGradient>\n    </defs>\n  </svg>\n</div>\n\n");
 $templateCache.put("plugins/camel/html/sendMessage.html","<div ng-controller=\"Camel.SendMessageController\">\n\n  <div class=\"tabbable\" ng-model=\"tab\">\n\n    <div value=\"compose\" class=\"tab-pane\" title=\"Compose\">\n      <!--\n         title=\"Compose a new message to send\"\n      -->\n\n      <div class=\"row\">\n        <span ng-show=\"noCredentials\" class=\"alert\">\n          No credentials set for endpoint!  Please set your username and password in the <a\n                href=\"\" ng-click=\"openPrefs()\">Preferences</a> page\n        </span>\n\n        <form class=\"form-inline pull-right\">\n          <button class=\"btn\" ng-click=\"addHeader()\" title=\"Add a new message header\"><i\n                  class=\"fa fa-plus\"></i> Header\n          </button>\n          <button type=\"submit\" class=\"btn btn-primary\" ng-click=\"sendMessage()\">Send message</button>\n        </form>\n      </div>\n\n      <form class=\"form-inline bottom-margin\" ng-submit=\"addHeader()\">\n        <ol class=\"zebra-list header-list\">\n          <div class=\"row\">\n            <li ng-repeat=\"header in headers\">\n              <div class=\"col-md-4\">\n                <input type=\"text\" style=\"width: 100%\" class=\"headerName\"\n                       ng-model=\"header.name\"\n                       typeahead=\"completion for completion in defaultHeaderNames() | filter:$viewValue\"\n                       typeahead-editable=\'true\'\n                       placeholder=\"Header name\">\n              </div>\n              <div class=\"col-md-6\">\n                <input type=\"text\" style=\"width: 100%\" ng-model=\"header.value\"\n                       placeholder=\"Value of the message header\">\n              </div>\n              <div class=\"col-md-2\">\n                <button type=\"submit\" class=\"btn\" title=\"Add a new message header\">\n                  <i class=\"fa fa-plus\"></i>\n                </button>\n                <button type=\"button\" ng-click=\"removeHeader(header)\" class=\"btn\" title=\"Removes this message header\">\n                  <i class=\"fa fa-remove\"></i>\n                </button>\n              </div>\n            </li>\n          </div>\n        </ol>\n      </form>\n\n      <div class=\"row\">\n        <form class=\"form-inline\">\n          <div class=\"controls\">\n            <label class=\"control-label\" for=\"sourceFormat\" title=\"The text format to use for the message payload\">Payload\n              format: </label>\n            <select ng-model=\"codeMirrorOptions.mode.name\" id=\"sourceFormat\">\n              <option value=\"javascript\">JSON</option>\n              <option value=\"text\" selected>Plain text</option>\n              <option value=\"properties\">Properties</option>\n              <option value=\"xml\">XML</option>\n            </select>\n\n            <button class=\"btn\" ng-click=\"autoFormat()\"\n                    title=\"Automatically pretty prints the message so its easier to read\">Auto format\n            </button>\n          </div>\n        </form>\n      </div>\n\n      <div class=\"row\">\n        <div hawtio-editor=\"message\" mode=\"codeMirrorOptions.mode.name\"></div>\n        <!--\n        <textarea ui-codemirror=\"codeMirrorOptions\" ng-model=\"message\"></textarea>\n        -->\n      </div>\n    </div>\n    </tab>\n\n    <div value=\"choose\" class=\"tab-pane\" title=\"Choose\" ng-hide=\"!showChoose\">\n<!--\n         title=\"Choose messages to send from the available files in the Profile configuration for this container\">\n-->\n      <div class=\"row bottom-margin\">\n        <span ng-show=\"noCredentials\" class=\"alert\">\n          No credentials set for endpoint!  Please set your username and password in the <a\n                href=\"#/preferences\">Preferences</a> page\n        </span>\n        <button type=\"submit\" ng-disabled=\"!fileSelection().length\" class=\"btn btn-primary pull-right\"\n                ng-click=\"sendSelectedFiles()\">\n          <ng-pluralize count=\"fileSelection().length\"\n                        when=\"{\'0\': \'No files selected\', \'1\': \'Send the file\',\'other\': \'Send {} files\'}\">\n          </ng-pluralize>\n        </button>\n      </div>\n\n      <p>Choose which files to send from the profile configuration:</p>\n\n      <div class=\"control-group inline-block\">\n          <input class=\"search-query\" type=\"text\" ng-model=\"searchText\" placeholder=\"Filter...\" autofocus>\n      </div>\n\n      <ul>\n        <li ng-repeat=\"fileName in profileFileNames | filter:searchText\">\n         <input type=\"checkbox\" ng-model=\"selectedFiles[fileName]\"> {{fileName}}\n        </li>\n      </ul>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/source.html","<div class=\"form-horizontal\" ng-controller=\"Camel.SourceController\">\n  <div class=\"row\">\n    <div class=\"col-md-12\">\n      <button class=\"pull-right btn btn-primary\"\n              hawtio-show object-name=\"{{getSelectionCamelContextMBean(workspace)}}\" method-name=\"addOrUpdateRoutesFromXml\"\n              ng-click=\"saveRouteXml()\"><i class=\"fa fa-save\"></i> Update</button>\n    </div>\n  </div>\n  <p></p>\n  <div class=\"row\">\n    <div class=\"col-md-12\">\n      <div hawtio-editor=\"source\" mode=\"mode\"></div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/camel/html/traceRoute.html","<div ng-controller=\"Camel.TraceRouteController\">\n  <div class=\"col-md-12 well\" ng-hide=\"tracing\">\n    <form>\n      <p>Tracing allows you to send messages to a route and then step through and see the messages flow through a route\n        to aid debugging and to help diagnose issues.</p>\n\n      <p>Once you start tracing, you can send messages to the input endpoints, then come back to this page and see the\n        flow of messages through your route.</p>\n\n      <p>As you click on the message table, you can see which node in the flow it came through; moving the selection up and down in the message table lets you see the flow of the message through the diagram.</p>\n\n      <button class=\"btn btn-info\" type=\"submit\" ng-click=\"startTracing()\">Start tracing</button>\n    </form>\n  </div>\n  <div ng-show=\"tracing\">\n\n    <form>\n      <button class=\"btn btn-info pull-right\" type=\"submit\" ng-click=\"stopTracing()\">Stop tracing</button>\n    </form>\n    <div ng-include src=\"graphView\">\n    </div>\n\n    <form>\n      <button class=\"btn btn-info pull-right\" type=\"submit\" ng-click=\"clear()\">Clear messages</button>\n    </form>\n    <div>&nbsp;</div>\n    <div ng-include src=\"tableView\">\n    </div>\n\n  </div>\n</div>");
@@ -17726,7 +17788,7 @@ $templateCache.put("plugins/osgi/html/bundle-details.html","<div>\n  <table>\n  
 $templateCache.put("plugins/osgi/html/bundle-list.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundleListController\">\n  <div class=\"row bundle-list-toolbar\">\n\n    <div class=\"pull-left\">\n      <div class=\"btn-group\">\n        <a ng-href=\"#/osgi/bundle-list?p=container\"\n                type=\"button\"\n                class=\"btn active\"\n                title=\"List view\">\n          <i class=\"fa fa-list\"></i>\n        </a>\n        <a ng-href=\"#/osgi/bundles?p=container\"\n                type=\"button\"\n                class=\"btn\"\n                title=\"Table view\">\n          <i class=\"fa fa-table\"></i>\n        </a>\n      </div>\n\n      <div class=\"input-group\" hawtio-show object-name=\"{{frameworkMBean}}\" method-name=\"installBundle\">\n        <input class=\"input-xxlarge\"\n               type=\"text\"\n               placeholder=\"Install Bundle...\"\n               ng-model=\"bundleUrl\">\n        <button ng-disabled=\"installDisabled()\"\n                class=\"btn\"\n                ng-click=\"install()\"\n                title=\"Install\">\n          <i class=\"fa fa-ok\"></i>\n        </button>\n      </div>\n\n    </div>\n\n\n    <div class=\"pull-right\">\n      <strong>Show bundles: </strong>\n      &nbsp;\n      <label for=\"showActiveMQBundles\">ActiveMQ</label>\n      <input id=\"showActiveMQBundles\" type=\"checkbox\" ng-model=\"display.showActiveMQBundles\">\n      &nbsp;\n      &nbsp;\n      <label for=\"showCamelBundles\">Camel</label>\n      <input id=\"showCamelBundles\" type=\"checkbox\" ng-model=\"display.showCamelBundles\">\n      &nbsp;\n      &nbsp;\n      <label for=\"showCxfBundles\">CXF</label>\n      <input id=\"showCxfBundles\" type=\"checkbox\" ng-model=\"display.showCxfBundles\">\n      &nbsp;\n      &nbsp;\n      <label for=\"showPlatformBundles\">Platform</label>\n      <input id=\"showPlatformBundles\" type=\"checkbox\" ng-model=\"display.showPlatformBundles\">\n      &nbsp;\n      &nbsp;\n      &nbsp;\n      <select class=\"input-lg\" ng-model=\"display.sortField\" id=\"sortField\">\n        <option value=\"Identifier\">Sort by ID</option>\n        <option value=\"Name\">Sort by Name</option>\n        <option value=\"SymbolicName\">Sort by Symbolic Name</option>\n      </select>\n      <select class=\"input-lg\" ng-model=\"display.bundleField\" id=\"bundleField\">\n        <option value=\"Name\">Display Name</option>\n        <option value=\"SymbolicName\">Display Symbolic Name</option>\n      </select>\n      <input class=\"input-sm search-query\" type=\"number\" min=\"0\"\n             ng-model=\"display.startLevelFilter\"\n             placeholder=\"Start Level...\"/>\n      <hawtio-filter ng-model=\"display.bundleFilter\" placeholder=\"Filter...\" save-as=\"osgi-bundle-list-text-filter\"></hawtio-filter>\n    </div>\n\n  </div>\n\n  <div class=\"row\" id=\"bundleTableHolder\">\n    <!-- Just create a bit of space between the form and the controls -->\n    <p></p>\n\n    <script type=\"text/ng-template\" id=\"popoverTemplate\">\n<small>\n  <table class=\"table\">\n    <tbody>\n    <tr ng-repeat=\"(k, v) in bundle track by $index\">\n      <td class=\"property-name\">{{k}}</td>\n      <td class=\"property-value\">{{v}}</td>\n    </tr>\n    </tbody>\n  </table>\n</small>\n    </script>\n\n    <div class=\"bundle-list centered\"\n         hawtio-auto-columns=\".bundle-item\">\n      <div ng-repeat=\"bundle in bundles\"\n           class=\"bundle-item\"\n           ng-show=\"filterBundle(bundle)\"\n           hawtio-template-popover title=\"Bundle details\">\n        <a id=\"{{bundle.Identifier}}\"\n           ng-href=\"#/osgi/bundle/{{bundle.Identifier}}?p=container\">\n          <span class=\"badge\" ng-class=\"getStateStyle(bundle.State)\">{{getLabel(bundle)}}</span>\n        </a>\n      </div>\n    </div>\n  </div>\n</div>\n");
 $templateCache.put("plugins/osgi/html/bundle.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundleController\">\n  <div ng-include src=\"\'plugins/osgi/html/bundle-details.html\'\"></div>\n</div>\n");
 $templateCache.put("plugins/osgi/html/bundles.html","<div class=\"controller-section\" ng-controller=\"Osgi.BundlesController\">\n  <div class=\"row\">\n    <div class=\"pull-left\">\n\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n\n          <div class=\"btn-group inline-block\">\n            <a ng-href=\"#/osgi/bundle-list?p=container\"\n                    type=\"button\"\n                    class=\"btn\"\n                    title=\"List view\">\n              <i class=\"fa fa-list\"></i>\n            </a>\n            <a ng-href=\"#/osgi/bundles?p=container\"\n                    type=\"button\"\n                    class=\"btn active\"\n                    title=\"Table view\">\n              <i class=\"fa fa-table\"></i>\n            </a>\n          </div>\n\n          <div class=\"controls control-group inline-block controls-row\">\n            <div class=\"btn-group\">\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"stop()\" title=\"Stop\"><i class=\"fa fa-off\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"start()\" title=\"Start\"><i class=\"fa fa-play-circle\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"refresh()\" title=\"Refresh\"><i class=\"fa fa-refresh\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"update()\" title=\"Update\"><i class=\"fa fa-cloud-download\"></i></button>\n              <button ng-disabled=\"selected.length == 0\" class=\"btn\" ng-click=\"uninstall()\" title=\"Uninstall\"><i class=\"fa fa-eject\"></i></button>\n            </div>\n            <div class=\"input-group\">\n              <input class=\"input-xlarge\" type=\"text\" placeholder=\"Install Bundle...\" ng-model=\"bundleUrl\">\n              <button ng-disabled=\"installDisabled()\" class=\"btn\" ng-click=\"install()\" title=\"Install\"><i class=\"fa fa-ok\"></i></button>\n            </div>\n          </div>\n        </fieldset>\n      </form>\n      \n    </div>\n\n    <div class=\"pull-right\">\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n          <div class=\"control-group inline-block\">\n            <input type=\"text\"\n                   class=\"input-lg search-query\"\n                   placeholder=\"Filter...\"\n                   ng-model=\"gridOptions.filterOptions.filterText\">\n          </div>\n        </fieldset>\n      </form>\n\n    </div>\n  </div>\n  \n  \n  <div class=\"row\">\n    <div ng-hide=\"loading\" class=\"gridStyle\" ng-grid=\"gridOptions\"></div>\n    <div ng-show=\"loading\">\n      Please wait, loading...\n    </div>\n  </div>\n</div>\n");
-$templateCache.put("plugins/osgi/html/configurations.html","<style type=\"text/css\">\n  .configuration-header {\n    margin: 20px 20px;\n  }\n\n  ul.configurations,\n  ul.configurations li {\n    list-style: none;\n  }\n\n  ul.configurations {\n    margin: 0px 20px;\n  }\n\n  ul.configurations .bundle-item {\n    display: list-item;\n    margin-bottom: 4px;\n  }\n\n  ul.configurations li.bundle-item a {\n    /*\n      TODO it\'d be nice to use the natural widgth here,\n      but then it might be nice to use multiple columns?\n    */\n    width: 450px;\n  }\n</style>\n\n<div class=\"controller-section\" ng-controller=\"Osgi.ConfigurationsController\">\n  <div class=\"row\">\n    <div class=\"configuration-header\">\n      <div class=\"configuration-filter\">\n        <input type=\"text\" class=\"col-md-8 search-query\" placeholder=\"Filter...\" ng-model=\"filterText\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"filterText = \'\'\"></i>\n        <button class=\"btn pull-right\" ng-click=\"addPidDialog.open()\" title=\"Add a new configuration\" hawtio-show object-name=\"{{hawtioConfigAdminMBean}}\" method-name=\"configAdminUpdate\"><i\n                class=\"fa fa-plus\"></i> Configuration\n        </button>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row centered\" ng-hide=\"configurations.length\">\n    <i class=\"fa fa-spinner icon-spin\"></i>\n  </div>\n\n  <ul class=\"configurations\">\n    <li ng-repeat=\'config in configurations | filter:filterText\' class=\'{{config.class}} bundle-item\'>\n      <a ng-href=\"{{config.pidLink}}\" title=\"{{config.description}}\">\n        <span class=\"{{config.kind.class}}\">{{config.name}}</span>\n      </a>\n      <ul ng-show=\"config.isFactory\">\n        <li ng-repeat=\"child in config.children\" class=\'{{child.class}} bundle-item\'>\n          <a ng-href=\"{{child.pidLink}}\" title=\"{{child.description}}\">\n            <span class=\"{{child.kind.class}}\">{{child.name}}</span>\n          </a>\n        </li>\n      </ul>\n    </li>\n  </ul>\n\n  <div modal=\"addPidDialog.show\" close=\"addPidDialog.close()\" options=\"addPidDialog.options\">\n    <form name=\"addPidDialogForm\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"addPid(newPid)\">\n      <div class=\"modal-header\"><h4>Add New Configuration</h4></div>\n      <div class=\"modal-body\">\n        <div class=\"control-group\">\n          <label class=\"control-label\" for=\"newPid\">New configuration ID</label>\n\n          <div class=\"controls\">\n            <input class=\"input-xlarge\" type=\"text\" id=\"newPid\" ng-model=\"newPid\"/>\n          </div>\n        </div>\n      </div>\n      <div class=\"modal-footer\">\n        <input class=\"btn btn-success\" ng-disabled=\"!(newPid !== \'\' && newPid !== undefined)\" type=\"submit\" value=\"Add\">\n        <input class=\"btn btn-primary\" ng-click=\"addPidDialog.close()\" type=\"button\" value=\"Cancel\">\n      </div>\n    </form>\n  </div>\n</div>\n\n");
+$templateCache.put("plugins/osgi/html/configurations.html","<style type=\"text/css\">\n  .configuration-header {\n    margin: 20px 20px;\n  }\n\n  ul.configurations,\n  ul.configurations li {\n    list-style: none;\n  }\n\n  ul.configurations {\n    margin: 0px 20px;\n  }\n\n  ul.configurations .bundle-item {\n    display: list-item;\n    margin-bottom: 4px;\n  }\n\n  ul.configurations li.bundle-item a {\n    /*\n      TODO it\'d be nice to use the natural widgth here,\n      but then it might be nice to use multiple columns?\n    */\n    width: 450px;\n  }\n</style>\n\n<div class=\"controller-section\" ng-controller=\"Osgi.ConfigurationsController\">\n  <div class=\"row\">\n    <div class=\"configuration-header\">\n      <div class=\"configuration-filter\">\n        <input type=\"text\" class=\"col-md-8 search-query\" placeholder=\"Filter...\" ng-model=\"filterText\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"filterText = \'\'\"></i>\n        <button class=\"btn pull-right\" ng-click=\"addPidDialog.open()\" title=\"Add a new configuration\" hawtio-show object-name=\"{{hawtioConfigAdminMBean}}\" method-name=\"configAdminUpdate\"><i\n                class=\"fa fa-plus\"></i> Configuration\n        </button>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row centered\" ng-hide=\"configurations.length\">\n    <p class=\"text-center\"><i class=\"fa fa-spinner fa-spin\"></i></p>\n  </div>\n\n  <ul class=\"configurations\">\n    <li ng-repeat=\'config in configurations | filter:filterText\' class=\'{{config.class}} bundle-item\'>\n      <a ng-href=\"{{config.pidLink}}\" title=\"{{config.description}}\">\n        <span class=\"{{config.kind.class}}\">{{config.name}}</span>\n      </a>\n      <ul ng-show=\"config.isFactory\">\n        <li ng-repeat=\"child in config.children\" class=\'{{child.class}} bundle-item\'>\n          <a ng-href=\"{{child.pidLink}}\" title=\"{{child.description}}\">\n            <span class=\"{{child.kind.class}}\">{{child.name}}</span>\n          </a>\n        </li>\n      </ul>\n    </li>\n  </ul>\n\n  <div modal=\"addPidDialog.show\" close=\"addPidDialog.close()\" options=\"addPidDialog.options\">\n    <form name=\"addPidDialogForm\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"addPid(newPid)\">\n      <div class=\"modal-header\"><h4>Add New Configuration</h4></div>\n      <div class=\"modal-body\">\n        <div class=\"control-group\">\n          <label class=\"control-label\" for=\"newPid\">New configuration ID</label>\n\n          <div class=\"controls\">\n            <input class=\"input-xlarge\" type=\"text\" id=\"newPid\" ng-model=\"newPid\"/>\n          </div>\n        </div>\n      </div>\n      <div class=\"modal-footer\">\n        <input class=\"btn btn-success\" ng-disabled=\"!(newPid !== \'\' && newPid !== undefined)\" type=\"submit\" value=\"Add\">\n        <input class=\"btn btn-primary\" ng-click=\"addPidDialog.close()\" type=\"button\" value=\"Cancel\">\n      </div>\n    </form>\n  </div>\n</div>\n\n");
 $templateCache.put("plugins/osgi/html/framework.html","<div class=\"container\" ng-controller=\"Osgi.FrameworkController\">\n    <h3>Framework Configuration</h3>\n    <div class=\"col-md-11\">\n    <table>\n        <tr>\n            <td><strong>Current Framework Start Level:</strong></td>\n            <td class=\"less-big\">{{startLevel}}</td>\n            <td><button class=\"btn btn-primary\" \n                        ng-click=\"edit(\'FrameworkStartLevel\', \'Framework Start Level\')\" \n                        title=\"Edit framework start level\"\n                        hawtio-show\n                        object-name=\"{{frameworkMBean}}\"\n                        method-name=\"setFrameworkStartLevel\">Edit</button></td>\n        </tr>\n        <tr><td><p></p></td></tr>\n        <tr>\n            <td><strong>Initial Bundle Start Level:</strong></td>\n            <td class=\"less-big\">{{initialBundleStartLevel}}</td>\n            <td><button class=\"btn btn-primary\"\n                        ng-click=\"edit(\'InitialBundleStartLevel\', \'Initial Bundle Start Level\')\" \n                        title=\"Edit initial bundle start level\"\n                        hawtio-show\n                        object-name=\"{{frameworkMBean}}\"\n                        method-name=\"setInitialBundleStartLevel\">Edit</button></td>\n        </tr>\n    </table>\n    </div>\n\n    <div modal=\"editDialog.show\" close=\"editDialog.close()\" options=\"editDialog.options\">\n        <form id=\"myForm\" class=\"form-horizontal no-bottom-margin\" ng-submit=\"editDialog.close()\">\n            <div class=\"modal-header\"><h4>Change {{editDisplayName}}</h4></div>\n            <div class=\"modal-body\">\n                <p>New Start Level (0-100): <input ng-model=\"editResult\" type=\"number\" min=\"0\" max=\"100\" required/></p>\n            </div>\n            <div class=\"modal-footer\">\n                <input class=\"btn\" ng-click=\"editDialog.close()\" type=\"submit\" value=\"Cancel\">\n                <input class=\"btn btn-primary\" ng-click=\"edited(editAttr, editDisplayName, editResult)\" type=\"submit\" value=\"OK\">\n            </div>\n        </form>\n    </div>\n</div>\n");
 $templateCache.put("plugins/osgi/html/layoutOsgi.html","<ul class=\"nav nav-tabs\" hawtio-auto-dropdown ng-controller=\"Karaf.NavBarController\">\n  <li ng-class=\'{active : isActive(\"#/osgi/configuration\") || isPrefixActive(\"#/osgi/pid\")}\'>\n      <a ng-href=\"#/osgi/configurations{{hash}}\">Configuration</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/bundle\")}\'>\n      <a ng-href=\"#/osgi/bundle-list{{hash}}\">Bundles</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/features\") || isActive(\"#/osgi/feature\")}\' ng-show=\"isFeaturesEnabled\">\n    <a ng-href=\"#/osgi/features{{hash}}\">Features</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/package\")}\'>\n      <a ng-href=\"#/osgi/packages{{hash}}\">Packages</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/service\")}\'>\n      <a ng-href=\"#/osgi/services{{hash}}\">Services</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/scr-components\")}\' ng-show=\"isScrEnabled\">\n    <a ng-href=\"#/osgi/scr-components{{hash}}\">Declarative Services</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/server\")}\'>\n    <a ng-href=\"#/osgi/server{{hash}}\">Server</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/fwk\")}\'>\n      <a ng-href=\"#/osgi/fwk{{hash}}\">Framework</a>\n  </li>\n  <li ng-class=\'{active : isActive(\"#/osgi/dependencies\")}\'>\n      <a ng-href=\"#/osgi/dependencies{{hash}}\">Dependencies</a>\n  </li>\n\n  <li class=\"dropdown overflow\" style=\"float: right !important; visibility: hidden;\">\n    <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\"><i class=\"fa fa-chevron-down\"></i></a>\n    <ul class=\"dropdown-menu right\"></ul>\n  </li>\n\n</ul>\n<div class=\"row\" ng-controller=\"Osgi.TopLevelController\">\n    <div ng-view></div>\n</div>\n\n\n");
 $templateCache.put("plugins/osgi/html/package-details.html","<div>\n    <table class=\"overviewSection\">\n        <tr>\n            <td><strong>Name:</strong></td>\n            <td class=\"less-big\">{{row.Name}}\n            </td>\n        </tr>\n        <tr>\n            <td><strong>Version:</strong></td>\n            <td class=\"less-big\">{{row.Version}}\n            </td>\n        </tr>\n        <tr>\n            <td><strong>Removal Pending:</strong></td>\n            <td class=\"less-big\">{{row.RemovalPending}}\n        </tr>\n        <tr>\n            <td><strong>Exporting Bundles:</strong></td>\n            <td>\n                <ul>\n                    <li ng-repeat=\"name in row.ExportingBundles\">\n                        <a href=\'#/osgi/bundle/{{name}}{{hash}}\'>{{name}}</a>\n                    </li>\n                </ul>\n            </td>\n        </tr>\n        <tr>\n            <td><strong>Importing Bundles:</strong></td>\n            <td>\n                <ul>\n                    <li ng-repeat=\"name in row.ImportingBundles\">\n                        <a href=\'#/osgi/bundle/{{name}}{{hash}}\'>{{name}}</a>\n                    </li>\n                </ul>\n            </td>\n        </tr>\n    </table>\n</div>");
