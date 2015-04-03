@@ -7,14 +7,11 @@ module Camel {
 
     $scope.initDone = false;
     $scope.data = [];
-    $scope.icons = {};
-    $scope.selectedRouteId = "";
 
     var columnDefs:any[] = [
       {
         field: 'id',
         displayName: 'Id',
-        cellTemplate: '<div class="ngCellText" ng-bind-html-unsafe="rowIcon(row.entity.id)"></div>',
         cellFilter: null,
         width: "**",
         resizable: true
@@ -202,55 +199,13 @@ module Camel {
       Core.$apply($scope);
     };
 
-    function initIdToIcon() {
-      console.log("initializing id and icons");
-
-      $scope.icons = {};
-      var routeXml = Core.pathGet(workspace.selection, ["routeXmlNode"]);
-      if (routeXml) {
-
-        // add route id first
-        var entry = {
-          img: "",
-          index: 0
-        };
-        entry.index = -1;
-        entry.img = "<img src='img/icons/camel/camel_route.png'>";
-        $scope.icons[$scope.selectedRouteId] = entry;
-
-        // then each processor id and icons
-        $(routeXml).find('*').each((idx, element) => {
-          var id = element.getAttribute("id");
-          if (id) {
-            var entry = {
-              img: "",
-              index: 0
-            };
-            entry.index = idx;
-            var icon = Camel.getRouteNodeIcon(element);
-            if (icon) {
-              entry.img = "<img src='" + icon + "'>";
-            } else {
-              entry.img = "";
-            }
-            $scope.icons[id] = entry;
-          }
-        });
-      }
-    }
-
     function loadData() {
       console.log("Loading Camel route profile data...");
 
-      $scope.selectedRouteId = getSelectedRouteId(workspace);
-      var routeMBean = getSelectionRouteMBean(workspace, $scope.selectedRouteId);
-      console.log("Selected route is " + $scope.selectedRouteId);
-
-      initIdToIcon();
-      console.log("Initialized icons, with " + $scope.icons.length + " icons");
+      var selectedRouteId = getSelectedRouteId(workspace);
+      var routeMBean = getSelectionRouteMBean(workspace, selectedRouteId);
 
       // schedule update the profile data, based on the configured interval
-
       if (routeMBean) {
         var query = {
           type: 'exec',
