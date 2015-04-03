@@ -252,6 +252,7 @@ module Camel {
       show: () => !workspace.isEndpointsFolder()
         && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext())
         && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia)
+        && getSelectionCamelRouteMetrics(workspace)
         && workspace.hasInvokeRightsForName(getSelectionCamelRouteMetrics(workspace), "dumpStatisticsAsJson"),
       href: () => "/camel/routeMetrics" + workspace.hash()
     });

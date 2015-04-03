@@ -4788,7 +4788,7 @@ var Camel;
             id: 'camel-route-metrics',
             title: function () { return '<i class="fa fa-bar-chart"></i> Route Metrics'; },
             //title: "View the entire JVMs Camel route metrics",
-            show: function () { return !workspace.isEndpointsFolder() && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext()) && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelRouteMetrics(workspace), "dumpStatisticsAsJson"); },
+            show: function () { return !workspace.isEndpointsFolder() && (workspace.isRoute() || workspace.isRoutesFolder() || workspace.isCamelContext()) && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia) && Camel.getSelectionCamelRouteMetrics(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelRouteMetrics(workspace), "dumpStatisticsAsJson"); },
             href: function () { return "/camel/routeMetrics" + workspace.hash(); }
         });
         tab.tabs.push({
