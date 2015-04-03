@@ -49,6 +49,18 @@ module Camel {
       return { 'message' : null}
   });
 
+  // service for the codehale metrics
+  _module.factory('metricsWatcher', ["$window", ($window) => {
+    var answer: any = $window.metricsWatcher;
+    if (!answer) {
+      // lets avoid any NPEs
+      answer = {};
+      $window.metricsWatcher = answer;
+    }
+    return answer;
+  }]);
+
+
   _module.run(["HawtioNav", "workspace", "jolokia", "viewRegistry", "layoutFull", "helpRegistry", "preferencesRegistry", "$templateCache", "$location", (nav:HawtioMainNav.Registry, workspace:Workspace, jolokia, viewRegistry, layoutFull, helpRegistry, preferencesRegistry, $templateCache:ng.ITemplateCacheService, $location) => {
 
     viewRegistry['camel/endpoint/'] = layoutFull;

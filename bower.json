@@ -5,6 +5,7 @@
     "hawtio"
   ],
   "main": [
+    "dist/metrics-watcher.js",
     "dist/camelModel.js",
     "dist/hawtio-wiki.js"
   ],
