@@ -85,6 +85,9 @@ module Camel {
         // okay we have the data then set the selected mbean which allows UI to display data
         $scope.selectedMBean = response.request.mbean;
 
+      } else {
+        // clear data
+        $scope.data = [];
       }
 
       $scope.initDone = "true";
@@ -95,7 +98,7 @@ module Camel {
 
     $scope.renderIcon = (state) => {
       return Camel.iconClass(state);
-    }
+    };
 
     function loadRestRegistry() {
       console.log("Loading inflight data...");
@@ -111,8 +114,6 @@ module Camel {
 
         // grab inflight in real time
         var query = {type: "exec", mbean: mbean, operation: 'browse()'};
-        jolokia.request(query, onInflight);
-
         Core.scopeStoreJolokiaHandle($scope, jolokia, jolokia.register(onInflight, query));
       }
     }
