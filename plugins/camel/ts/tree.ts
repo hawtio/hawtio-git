@@ -32,29 +32,32 @@ module Camel {
 
     $scope.$on("$routeChangeSuccess", function (event, current, previous) {
       // lets do this asynchronously to avoid Error: $digest already in progress
-      $timeout(updateSelectionFromURL, 50);
+      $timeout(updateSelectionFromURL, 50, false);
     });
 
     $scope.$watch('workspace.tree', function () {
       reloadFunction();
     });
 
-    var reloadOnContextFilterThrottled = Core.throttled(() => {
+    // TODO - how the tree is initialized is different, how this filter works needs to be revisited
+    /*
+    var reloadOnContextFilterThrottled = _.debounce(() => {
       reloadFunction(() => {
         $("#camelContextIdFilter").focus();
         Core.$apply($scope);
       });
-    }, 500);
+    }, 100, { trailing: true } );
 
     $scope.$watch('contextFilterText', function () {
       if ($scope.contextFilterText != $scope.lastContextFilterText) {
-        $timeout(reloadOnContextFilterThrottled, 250);
+        $timeout(reloadOnContextFilterThrottled, 250, false);
       }
     });
 
     $rootScope.$on('camel-contextFilterText', (event, value) => {
       $scope.contextFilterText = value;
     });
+    */
 
     $scope.$on('jmxTreeUpdated', function () {
       reloadFunction();
@@ -98,12 +101,12 @@ module Camel {
             var routes = children[0];
             if (routes.data.typeName === 'routes') {
               first = routes;
-              Core.$apply($scope);
+              //Core.$apply($scope);
               return first;
             }
           }
         }
-        Core.$apply($scope);
+        //Core.$apply($scope);
         return null;
       }, true);
       $scope.fullScreenViewLink = Camel.linkToFullScreenView(workspace);
