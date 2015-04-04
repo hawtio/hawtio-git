@@ -329,7 +329,7 @@ module Camel {
    * @method
    */
   export function isCamelPattern(nodeId) {
-    return Forms.isJsonType(nodeId, _apacheCamelModel, "org.apache.camel.model.OptionalIdentifiedDefinition");
+    return Forms.lookupDefinition(nodeId, _apacheCamelModel) != null;
   }
 
   /**
