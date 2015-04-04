@@ -10,6 +10,8 @@ declare module Camel {
     var defaultCamelMaximumTraceOrDebugBodyLength: number;
     var defaultCamelTraceOrDebugIncludeStreams: boolean;
     var defaultCamelRouteMetricMaxSeconds: number;
+    var defaultShowEIPDocumentation: boolean;
+    var defaultHideUnusedEIP: boolean;
     var _apacheCamelModel: any;
     var _jsonSchema: any;
     /**
@@ -276,6 +278,16 @@ declare module Camel {
      * @method
      */
     function routeMetricMaxSeconds(localStorage: any): any;
+    /**
+     * Whether to show EIP documentation
+     * @method
+     */
+    function showEIPDocumentation(localStorage: any): boolean;
+    /**
+     * Whether to hide unused EIP options
+     * @method
+     */
+    function hideUnusedEIP(localStorage: any): boolean;
     /**
      * Function to highlight the selected toNode in the nodes graph
      *
