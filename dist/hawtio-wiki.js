@@ -3033,6 +3033,243 @@ var ActiveMQ;
 })(ActiveMQ || (ActiveMQ = {}));
 
 /// <reference path="../../includes.ts"/>
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryInterfaces.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.context = '/docker-registry';
+    DockerRegistry.hash = UrlHelpers.join('#', DockerRegistry.context);
+    DockerRegistry.defaultRoute = UrlHelpers.join(DockerRegistry.hash, 'list');
+    DockerRegistry.basePath = UrlHelpers.join('plugins', DockerRegistry.context);
+    DockerRegistry.templatePath = UrlHelpers.join(DockerRegistry.basePath, 'html');
+    DockerRegistry.pluginName = 'DockerRegistry';
+    DockerRegistry.log = Logger.get(DockerRegistry.pluginName);
+    DockerRegistry.SEARCH_FRAGMENT = '/v1/search';
+    /**
+     * Fetch the available docker images in the registry, can only
+     * be called after app initialization
+     */
+    function getDockerImageRepositories(callback) {
+        var DockerRegistryRestURL = HawtioCore.injector.get("DockerRegistryRestURL");
+        var $http = HawtioCore.injector.get("$http");
+        DockerRegistryRestURL.then(function (restURL) {
+            $http.get(UrlHelpers.join(restURL, DockerRegistry.SEARCH_FRAGMENT)).success(function (data) {
+                callback(restURL, data);
+            }).error(function (data) {
+                DockerRegistry.log.debug("Error fetching image repositories:", data);
+                callback(restURL, null);
+            });
+        });
+    }
+    DockerRegistry.getDockerImageRepositories = getDockerImageRepositories;
+    function completeDockerRegistry() {
+        var $q = HawtioCore.injector.get("$q");
+        var $rootScope = HawtioCore.injector.get("$rootScope");
+        var deferred = $q.defer();
+        getDockerImageRepositories(function (restURL, repositories) {
+            if (repositories && repositories.results) {
+                // log.debug("Got back repositories: ", repositories);
+                var results = repositories.results;
+                results = results.sortBy(function (res) {
+                    return res.name;
+                }).first(15);
+                var names = results.map(function (res) {
+                    return res.name;
+                });
+                // log.debug("Results: ", names);
+                deferred.resolve(names);
+            }
+            else {
+                // log.debug("didn't get back anything, bailing");
+                deferred.reject([]);
+            }
+        });
+        return deferred.promise;
+    }
+    DockerRegistry.completeDockerRegistry = completeDockerRegistry;
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry._module = angular.module(DockerRegistry.pluginName, ['hawtio-core', 'ngResource']);
+    DockerRegistry.controller = PluginHelpers.createControllerFunction(DockerRegistry._module, DockerRegistry.pluginName);
+    DockerRegistry.route = PluginHelpers.createRoutingFunction(DockerRegistry.templatePath);
+    DockerRegistry._module.config(['$routeProvider', function ($routeProvider) {
+        $routeProvider.when(UrlHelpers.join(DockerRegistry.context, 'list'), DockerRegistry.route('list.html', false));
+    }]);
+    DockerRegistry._module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', function (jolokiaUrl, jolokia, $q, $rootScope) {
+        // TODO use the services plugin to find it?
+        /*
+            var answer = <ng.IDeferred<string>> $q.defer();
+            jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined,
+              <Jolokia.IParams> Core.onSuccess((response) => {
+                var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
+                log.debug("Discovered docker registry API URL: " , proxified);
+                answer.resolve(proxified);
+                Core.$apply($rootScope);
+              }, {
+                error: (response) => {
+                  log.debug("error fetching docker registry API details: ", response);
+                  answer.reject(response);
+                  Core.$apply($rootScope);
+                }
+              }));
+            return answer.promise;
+        */
+    }]);
+    DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
+        DockerRegistry.log.debug("Running");
+        viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
+        /* TODO commenting this out until we fix the above service :-)
+        workspace.topLevelTabs.push({
+          id: 'docker-registry',
+          content: 'Images',
+          isValid: (workspace:Core.Workspace) => true, // TODO workspace.treeContainsDomainAndProperties(Fabric.jmxDomain, { type: 'KubernetesManager' }),
+          isActive: (workspace:Core.Workspace) => workspace.isLinkActive('docker-registry'),
+          href: () => defaultRoute
+        });
+        */
+    }]);
+    hawtioPluginLoader.addModule(DockerRegistry.pluginName);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+/// <reference path="dockerRegistryPlugin.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.TopLevel = DockerRegistry.controller("TopLevel", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
+        $scope.repositories = [];
+        $scope.fetched = false;
+        $scope.restURL = '';
+        DockerRegistry.getDockerImageRepositories(function (restURL, repositories) {
+            $scope.restURL = restURL;
+            $scope.fetched = true;
+            if (repositories) {
+                $scope.repositories = repositories.results;
+                var previous = angular.toJson($scope.repositories);
+                $scope.fetch = PollHelpers.setupPolling($scope, function (next) {
+                    var searchURL = UrlHelpers.join($scope.restURL, DockerRegistry.SEARCH_FRAGMENT);
+                    $http.get(searchURL).success(function (repositories) {
+                        if (repositories && repositories.results) {
+                            if (previous !== angular.toJson(repositories.results)) {
+                                $scope.repositories = repositories.results;
+                                previous = angular.toJson($scope.repositories);
+                            }
+                        }
+                        next();
+                    });
+                });
+                $scope.fetch();
+            }
+            else {
+                DockerRegistry.log.debug("Failed initial fetch of image repositories");
+            }
+        });
+        $scope.$watchCollection('repositories', function (repositories) {
+            if (!Core.isBlank($scope.restURL)) {
+                if (!repositories || repositories.length === 0) {
+                    $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
+                    return;
+                }
+                // we've a new list of repositories, let's refresh our info on 'em
+                var outstanding = repositories.length;
+                function maybeNotify() {
+                    outstanding = outstanding - 1;
+                    if (outstanding <= 0) {
+                        $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
+                    }
+                }
+                repositories.forEach(function (repository) {
+                    var tagURL = UrlHelpers.join($scope.restURL, 'v1/repositories/' + repository.name + '/tags');
+                    // we'll give it half a second as sometimes tag info isn't instantly available
+                    $timeout(function () {
+                        DockerRegistry.log.debug("Fetching tags from URL: ", tagURL);
+                        $http.get(tagURL).success(function (tags) {
+                            DockerRegistry.log.debug("Got tags: ", tags, " for image repository: ", repository.name);
+                            repository.tags = tags;
+                            maybeNotify();
+                        }).error(function (data) {
+                            DockerRegistry.log.debug("Error fetching data for image repository: ", repository.name, " error: ", data);
+                            maybeNotify();
+                        });
+                    }, 500);
+                });
+            }
+        });
+    }]);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="dockerRegistryHelpers.ts"/>
+/// <reference path="dockerRegistryPlugin.ts"/>
+var DockerRegistry;
+(function (DockerRegistry) {
+    DockerRegistry.TagController = DockerRegistry.controller("TagController", ["$scope", function ($scope) {
+        $scope.selectImage = function (imageID) {
+            $scope.$emit("DockerRegistry.SelectedImageID", imageID);
+        };
+    }]);
+    DockerRegistry.ListController = DockerRegistry.controller("ListController", ["$scope", "$templateCache", "$http", function ($scope, $templateCache, $http) {
+        $scope.imageRepositories = [];
+        $scope.selectedImage = undefined;
+        $scope.tableConfig = {
+            data: 'imageRepositories',
+            showSelectionCheckbox: true,
+            enableRowClickSelection: false,
+            multiSelect: true,
+            selectedItems: [],
+            filterOptions: {
+                filterText: ''
+            },
+            columnDefs: [
+                { field: 'name', displayName: 'Name', defaultSort: true },
+                { field: 'description', displayName: 'Description' },
+                { field: 'tags', displayName: 'Tags', cellTemplate: $templateCache.get("tagsTemplate.html") }
+            ]
+        };
+        $scope.deletePrompt = function (selectedRepositories) {
+            UI.multiItemConfirmActionDialog({
+                collection: selectedRepositories,
+                index: 'name',
+                onClose: function (result) {
+                    if (result) {
+                        selectedRepositories.forEach(function (repository) {
+                            var deleteURL = UrlHelpers.join($scope.restURL, '/v1/repositories/' + repository.name + '/');
+                            DockerRegistry.log.debug("Using URL: ", deleteURL);
+                            $http.delete(deleteURL).success(function (data) {
+                                DockerRegistry.log.debug("Deleted repository: ", repository.name);
+                            }).error(function (data) {
+                                DockerRegistry.log.debug("Failed to delete repository: ", repository.name);
+                            });
+                        });
+                    }
+                },
+                title: 'Delete Repositories?',
+                action: 'The following repositories will be deleted:',
+                okText: 'Delete',
+                okClass: 'btn-danger',
+                custom: 'This operation is permanent once completed!',
+                customClass: 'alert alert-warning'
+            }).open();
+        };
+        $scope.$on("DockerRegistry.SelectedImageID", function ($event, imageID) {
+            var imageJsonURL = UrlHelpers.join($scope.restURL, '/v1/images/' + imageID + '/json');
+            $http.get(imageJsonURL).success(function (image) {
+                DockerRegistry.log.debug("Got image: ", image);
+                $scope.selectedImage = image;
+            });
+        });
+        $scope.$on('DockerRegistry.Repositories', function ($event, restURL, repositories) {
+            $scope.imageRepositories = repositories;
+        });
+    }]);
+})(DockerRegistry || (DockerRegistry = {}));
+
+/// <reference path="../../includes.ts"/>
 /**
  * @module Camel
  */
@@ -7452,6 +7689,7 @@ var Camel;
         $scope.viewTemplate = null;
         $scope.schema = Camel._apacheCamelModel;
         $scope.model = null;
+        $scope.labels = [];
         $scope.nodeData = null;
         $scope.icon = null;
         $scope.$watch('showHelp', function (newValue, oldValue) {
@@ -7503,6 +7741,12 @@ var Camel;
                         log.debug("Properties - data: " + JSON.stringify($scope.nodeData, null, "  "));
                         log.debug("Properties - schema: " + JSON.stringify($scope.model, null, "  "));
                     }
+                    // labels is named group in camelModel.js
+                    var labels = [];
+                    if ($scope.model.group) {
+                        labels = $scope.model.group.split(",");
+                    }
+                    $scope.labels = labels;
                     $scope.nodeData = Camel.getRouteNodeJSON(routeXmlNode);
                     $scope.icon = Camel.getRouteNodeIcon(routeXmlNode);
                     $scope.viewTemplate = "plugins/camel/html/nodePropertiesView.html";
@@ -8733,243 +8977,6 @@ var Camel;
         loadConverters();
     }]);
 })(Camel || (Camel = {}));
-
-/// <reference path="../../includes.ts"/>
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryInterfaces.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.context = '/docker-registry';
-    DockerRegistry.hash = UrlHelpers.join('#', DockerRegistry.context);
-    DockerRegistry.defaultRoute = UrlHelpers.join(DockerRegistry.hash, 'list');
-    DockerRegistry.basePath = UrlHelpers.join('plugins', DockerRegistry.context);
-    DockerRegistry.templatePath = UrlHelpers.join(DockerRegistry.basePath, 'html');
-    DockerRegistry.pluginName = 'DockerRegistry';
-    DockerRegistry.log = Logger.get(DockerRegistry.pluginName);
-    DockerRegistry.SEARCH_FRAGMENT = '/v1/search';
-    /**
-     * Fetch the available docker images in the registry, can only
-     * be called after app initialization
-     */
-    function getDockerImageRepositories(callback) {
-        var DockerRegistryRestURL = HawtioCore.injector.get("DockerRegistryRestURL");
-        var $http = HawtioCore.injector.get("$http");
-        DockerRegistryRestURL.then(function (restURL) {
-            $http.get(UrlHelpers.join(restURL, DockerRegistry.SEARCH_FRAGMENT)).success(function (data) {
-                callback(restURL, data);
-            }).error(function (data) {
-                DockerRegistry.log.debug("Error fetching image repositories:", data);
-                callback(restURL, null);
-            });
-        });
-    }
-    DockerRegistry.getDockerImageRepositories = getDockerImageRepositories;
-    function completeDockerRegistry() {
-        var $q = HawtioCore.injector.get("$q");
-        var $rootScope = HawtioCore.injector.get("$rootScope");
-        var deferred = $q.defer();
-        getDockerImageRepositories(function (restURL, repositories) {
-            if (repositories && repositories.results) {
-                // log.debug("Got back repositories: ", repositories);
-                var results = repositories.results;
-                results = results.sortBy(function (res) {
-                    return res.name;
-                }).first(15);
-                var names = results.map(function (res) {
-                    return res.name;
-                });
-                // log.debug("Results: ", names);
-                deferred.resolve(names);
-            }
-            else {
-                // log.debug("didn't get back anything, bailing");
-                deferred.reject([]);
-            }
-        });
-        return deferred.promise;
-    }
-    DockerRegistry.completeDockerRegistry = completeDockerRegistry;
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry._module = angular.module(DockerRegistry.pluginName, ['hawtio-core', 'ngResource']);
-    DockerRegistry.controller = PluginHelpers.createControllerFunction(DockerRegistry._module, DockerRegistry.pluginName);
-    DockerRegistry.route = PluginHelpers.createRoutingFunction(DockerRegistry.templatePath);
-    DockerRegistry._module.config(['$routeProvider', function ($routeProvider) {
-        $routeProvider.when(UrlHelpers.join(DockerRegistry.context, 'list'), DockerRegistry.route('list.html', false));
-    }]);
-    DockerRegistry._module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', function (jolokiaUrl, jolokia, $q, $rootScope) {
-        // TODO use the services plugin to find it?
-        /*
-            var answer = <ng.IDeferred<string>> $q.defer();
-            jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined,
-              <Jolokia.IParams> Core.onSuccess((response) => {
-                var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
-                log.debug("Discovered docker registry API URL: " , proxified);
-                answer.resolve(proxified);
-                Core.$apply($rootScope);
-              }, {
-                error: (response) => {
-                  log.debug("error fetching docker registry API details: ", response);
-                  answer.reject(response);
-                  Core.$apply($rootScope);
-                }
-              }));
-            return answer.promise;
-        */
-    }]);
-    DockerRegistry._module.run(['viewRegistry', 'workspace', function (viewRegistry, workspace) {
-        DockerRegistry.log.debug("Running");
-        viewRegistry['docker-registry'] = UrlHelpers.join(DockerRegistry.templatePath, 'layoutDockerRegistry.html');
-        /* TODO commenting this out until we fix the above service :-)
-        workspace.topLevelTabs.push({
-          id: 'docker-registry',
-          content: 'Images',
-          isValid: (workspace:Core.Workspace) => true, // TODO workspace.treeContainsDomainAndProperties(Fabric.jmxDomain, { type: 'KubernetesManager' }),
-          isActive: (workspace:Core.Workspace) => workspace.isLinkActive('docker-registry'),
-          href: () => defaultRoute
-        });
-        */
-    }]);
-    hawtioPluginLoader.addModule(DockerRegistry.pluginName);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-/// <reference path="dockerRegistryPlugin.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.TopLevel = DockerRegistry.controller("TopLevel", ["$scope", "$http", "$timeout", function ($scope, $http, $timeout) {
-        $scope.repositories = [];
-        $scope.fetched = false;
-        $scope.restURL = '';
-        DockerRegistry.getDockerImageRepositories(function (restURL, repositories) {
-            $scope.restURL = restURL;
-            $scope.fetched = true;
-            if (repositories) {
-                $scope.repositories = repositories.results;
-                var previous = angular.toJson($scope.repositories);
-                $scope.fetch = PollHelpers.setupPolling($scope, function (next) {
-                    var searchURL = UrlHelpers.join($scope.restURL, DockerRegistry.SEARCH_FRAGMENT);
-                    $http.get(searchURL).success(function (repositories) {
-                        if (repositories && repositories.results) {
-                            if (previous !== angular.toJson(repositories.results)) {
-                                $scope.repositories = repositories.results;
-                                previous = angular.toJson($scope.repositories);
-                            }
-                        }
-                        next();
-                    });
-                });
-                $scope.fetch();
-            }
-            else {
-                DockerRegistry.log.debug("Failed initial fetch of image repositories");
-            }
-        });
-        $scope.$watchCollection('repositories', function (repositories) {
-            if (!Core.isBlank($scope.restURL)) {
-                if (!repositories || repositories.length === 0) {
-                    $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
-                    return;
-                }
-                // we've a new list of repositories, let's refresh our info on 'em
-                var outstanding = repositories.length;
-                function maybeNotify() {
-                    outstanding = outstanding - 1;
-                    if (outstanding <= 0) {
-                        $scope.$broadcast("DockerRegistry.Repositories", $scope.restURL, repositories);
-                    }
-                }
-                repositories.forEach(function (repository) {
-                    var tagURL = UrlHelpers.join($scope.restURL, 'v1/repositories/' + repository.name + '/tags');
-                    // we'll give it half a second as sometimes tag info isn't instantly available
-                    $timeout(function () {
-                        DockerRegistry.log.debug("Fetching tags from URL: ", tagURL);
-                        $http.get(tagURL).success(function (tags) {
-                            DockerRegistry.log.debug("Got tags: ", tags, " for image repository: ", repository.name);
-                            repository.tags = tags;
-                            maybeNotify();
-                        }).error(function (data) {
-                            DockerRegistry.log.debug("Error fetching data for image repository: ", repository.name, " error: ", data);
-                            maybeNotify();
-                        });
-                    }, 500);
-                });
-            }
-        });
-    }]);
-})(DockerRegistry || (DockerRegistry = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="dockerRegistryHelpers.ts"/>
-/// <reference path="dockerRegistryPlugin.ts"/>
-var DockerRegistry;
-(function (DockerRegistry) {
-    DockerRegistry.TagController = DockerRegistry.controller("TagController", ["$scope", function ($scope) {
-        $scope.selectImage = function (imageID) {
-            $scope.$emit("DockerRegistry.SelectedImageID", imageID);
-        };
-    }]);
-    DockerRegistry.ListController = DockerRegistry.controller("ListController", ["$scope", "$templateCache", "$http", function ($scope, $templateCache, $http) {
-        $scope.imageRepositories = [];
-        $scope.selectedImage = undefined;
-        $scope.tableConfig = {
-            data: 'imageRepositories',
-            showSelectionCheckbox: true,
-            enableRowClickSelection: false,
-            multiSelect: true,
-            selectedItems: [],
-            filterOptions: {
-                filterText: ''
-            },
-            columnDefs: [
-                { field: 'name', displayName: 'Name', defaultSort: true },
-                { field: 'description', displayName: 'Description' },
-                { field: 'tags', displayName: 'Tags', cellTemplate: $templateCache.get("tagsTemplate.html") }
-            ]
-        };
-        $scope.deletePrompt = function (selectedRepositories) {
-            UI.multiItemConfirmActionDialog({
-                collection: selectedRepositories,
-                index: 'name',
-                onClose: function (result) {
-                    if (result) {
-                        selectedRepositories.forEach(function (repository) {
-                            var deleteURL = UrlHelpers.join($scope.restURL, '/v1/repositories/' + repository.name + '/');
-                            DockerRegistry.log.debug("Using URL: ", deleteURL);
-                            $http.delete(deleteURL).success(function (data) {
-                                DockerRegistry.log.debug("Deleted repository: ", repository.name);
-                            }).error(function (data) {
-                                DockerRegistry.log.debug("Failed to delete repository: ", repository.name);
-                            });
-                        });
-                    }
-                },
-                title: 'Delete Repositories?',
-                action: 'The following repositories will be deleted:',
-                okText: 'Delete',
-                okClass: 'btn-danger',
-                custom: 'This operation is permanent once completed!',
-                customClass: 'alert alert-warning'
-            }).open();
-        };
-        $scope.$on("DockerRegistry.SelectedImageID", function ($event, imageID) {
-            var imageJsonURL = UrlHelpers.join($scope.restURL, '/v1/images/' + imageID + '/json');
-            $http.get(imageJsonURL).success(function (image) {
-                DockerRegistry.log.debug("Got image: ", image);
-                $scope.selectedImage = image;
-            });
-        });
-        $scope.$on('DockerRegistry.Repositories', function ($event, restURL, repositories) {
-            $scope.imageRepositories = repositories;
-        });
-    }]);
-})(DockerRegistry || (DockerRegistry = {}));
 
 /// <reference path="../../includes.ts"/>
 /**
@@ -17850,8 +17857,8 @@ $templateCache.put("plugins/camel/html/debug.html","<div ng-controller=\"Camel.D
 $templateCache.put("plugins/camel/html/fabricDiagram.html","<style type=\"text/css\">\n\n  .col-md-5.node-panel {\n    margin-top: 5px;\n    margin-left: 5px;\n  }\n\n  .node-attributes dl {\n    margin-top: 5px;\n    margin-bottom: 10px;\n  }\n\n  .node-attributes dt {\n    width: 270px;\n  }\n\n  .node-attributes dd {\n    margin-left: 280px;\n  }\n\n  .node-attributes dd a {\n    /** lets make the destination links wrap */\n    -ms-word-break: break-all;\n    word-break: break-all;\n    -webkit-hyphens: auto;\n    -moz-hyphens: auto;\n    hyphens: auto;\n  }\n\n  ul.viewMenu li {\n    padding-left: 10px;\n    padding-top: 2px;\n    padding-bottom: 2px;\n  }\n\n  div#pop-up {\n    display: none;\n    position: absolute;\n    color: white;\n    font-size: 14px;\n    background: rgba(0, 0, 0, 0.6);\n    padding: 5px 10px 5px 10px;\n    -moz-border-radius: 8px 8px;\n    border-radius: 8px 8px;\n  }\n\n  div#pop-up-title {\n    font-size: 15px;\n    margin-bottom: 4px;\n    font-weight: bolder;\n  }\n\n  div#pop-up-content {\n    font-size: 12px;\n  }\n\n  rect.graphbox {\n    fill: #FFF;\n  }\n\n  rect.graphbox.frame {\n    stroke: #222;\n    stroke-width: 2px\n  }\n\n  /* only things directly related to the network graph should be here */\n\n  path.link {\n    fill: none;\n    stroke: #666;\n    stroke-width: 1.5px;\n  }\n\n  marker.context {\n    stroke: red;\n    fill: red;\n    stroke-width: 1.5px;\n  }\n\n  circle.context {\n    fill: #0c0;\n  }\n\n  circle.route {\n    fill: #c0c;\n    stroke-width: 1.3px;\n  }\n\n  circle.notActive {\n    fill: #c00;\n  }\n\n  path.link.group {\n    stroke: #ccc;\n  }\n\n  marker#group {\n    stroke: #ccc;\n    fill: #ccc;\n  }\n\n  circle.group {\n    fill: #eee;\n    stroke: #ccc;\n  }\n\n  circle.destination {\n    fill: #bbb;\n    stroke: #ccc;\n  }\n\n  circle.pinned {\n    stroke-width: 4.5px;\n  }\n\n  path.link.profile {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  marker#container {\n  }\n\n  circle.container {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  path.link.container {\n    stroke-dasharray: 0, 2 1;\n    stroke: #888;\n  }\n\n  circle {\n    fill: #ccc;\n    stroke: #333;\n    stroke-width: 1.5px;\n    cursor: pointer;\n  }\n\n  circle.closeMode {\n    cursor: crosshair;\n  }\n\n  path.link.destination {\n    stroke: #ccc;\n  }\n\n  circle.topic {\n    fill: #c0c;\n  }\n\n  circle.endpoint, circle.endpoints {\n    fill: #00c;\n  }\n\n  circle.selected {\n    stroke-width: 3px;\n  }\n\n  .selected {\n    stroke-width: 3px;\n  }\n\n  text {\n    font: 10px sans-serif;\n    pointer-events: none;\n  }\n\n  text.shadow {\n    stroke: #fff;\n    stroke-width: 3px;\n    stroke-opacity: .8;\n  }\n</style>\n\n\n<div class=\"row mq-page\" ng-controller=\"Camel.FabricDiagramController\">\n\n  <div ng-hide=\"inDashboard\" class=\"col-md-12 page-padded\">\n    <div class=\"section-header\">\n\n      <div class=\"section-filter\">\n        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"searchFilter\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"searchFilter = \'\'\"></i>\n      </div>\n\n      <div class=\"section-controls\">\n        <a href=\"#\"\n           class=\"dropdown-toggle\"\n           data-toggle=\"dropdown\">\n          View &nbsp;<i class=\"fa fa-caret-down\"></i>\n        </a>\n\n        <ul class=\"dropdown-menu viewMenu\">\n          <!--\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.consumer\"> Consumers\n                      </label>\n                    </li>\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.producer\"> Producers\n                      </label>\n                    </li>\n          -->\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.endpoint\"> Endpoint\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.route\"> Route\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.context\"> Context\n            </label>\n          </li>\n          <!--\n                    <li>\n                      <label class=\"checkbox\">\n                        <input type=\"checkbox\" ng-model=\"viewSettings.profile\"> Profiles\n                      </label>\n                    </li>\n          -->\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.container\"> Containers\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li title=\"Should we show the details panel on the left\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.panel\"> Details panel\n            </label>\n          </li>\n          <li title=\"Show the summary popup as you hover over nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.popup\"> Hover text\n            </label>\n          </li>\n          <li title=\"Show the labels next to nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.label\"> Label\n            </label>\n          </li>\n        </ul>\n\n        <!--\n                <a ng-href=\"#/fabric/mq/contexts{{hash}}\" title=\"View the context and container diagram\">\n                  <i class=\"fa fa-edit\"></i> Configuration\n                </a>\n        -->\n      </div>\n    </div>\n  </div>\n\n\n  <div id=\"pop-up\">\n    <div id=\"pop-up-title\"></div>\n    <div id=\"pop-up-content\"></div>\n  </div>\n\n  <div class=\"row\">\n    <div ng-show=\"containerCount\">\n      <div class=\"{{viewSettings.panel ? \'col-md-7\' : \'col-md-12\'}} canvas context-canvas\">\n        <div hawtio-force-graph graph=\"graph\" selected-model=\"selectedNode\" link-distance=\"150\" charge=\"-600\"\n             nodesize=\"10\" marker-kind=\"marker-end\"\n             style=\"min-height: 800px\">\n        </div>\n      </div>\n      <div ng-show=\"viewSettings.panel\" class=\"col-md-5 node-panel\">\n        <div ng-show=\"selectedNode\" class=\"node-attributes\">\n          <dl ng-repeat=\"property in selectedNodeProperties\" class=\"dl-horizontal\">\n            <dt title=\"{{property.key}}\">{{property.key}}:</dt>\n            <dd ng-bind-html-unsafe=\"property.value\"></dd>\n          </dl>\n        </div>\n      </div>\n    </div>\n    <div class=\"jumbotron\" ng-show=\"containerCount === 0 && isFmc\">\n      <p>There are currently no Camel routes running in this fabric</p>\n\n      <p>To try out the EIP browser try create one of the example <a\n              href=\"#/wiki/branch/{{versionId}}/view/fabric/profiles/example/quickstarts\">quickstarts</a></p>\n\n      <p>e.g. Try creating a container for:\n        <a class=\"btn btn-primary\"\n           href=\"#/fabric/containers/createContainer?profileIds=example-quickstarts-cbr&versionId={{versionId}}\">\n          Content Based Router Quickstart\n        </a>\n        <a class=\"btn btn-primary\"\n           href=\"#/fabric/containers/createContainer?profileIds=example-quickstarts-eip&versionId={{versionId}}\">\n          EIP Quickstart\n        </a>\n      </p>\n    </div>\n    <div class=\"jumbotron\" ng-show=\"containerCount === 0 && !isFmc\">\n      <p>There are currently no Camel routes running in this JVM</p>\n\n      <p>To try out the Camel diagram try create one more Camel routes</p>\n    </div>\n  </div>\n\n  <div ng-include=\"\'plugins/fabric/html/connectToContainerDialog.html\'\"></div>\n\n</div>\n\n\n");
 $templateCache.put("plugins/camel/html/inflight.html","<div class=\"row-fluid\" ng-controller=\"Camel.InflightController\">\n\n  <div ng-show=\"initDone\">\n\n    <div class=\"row-fluid\">\n      <div class=\"pull-right\">\n        <hawtio-filter ng-model=\"gridOptions.filterOptions.filterText\"\n                       placeholder=\"Filter...\"></hawtio-filter>\n      </div>\n    </div>\n\n    <div class=\"row-fluid\">\n      <table class=\"table table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n    </div>\n\n  </div>\n\n  <div ng-hide=\"initDone\">\n    <p class=\"text-center\"><i class=\"fa fa-spinner fa-spin\"></i></p>\n  </div>\n\n</div>\n\n");
 $templateCache.put("plugins/camel/html/layoutCamelTree.html","\n<script type=\"text/ng-template\" id=\"camelTreeHeader.html\">\n  <div class=\"tree-header\" ng-controller=\"Jmx.TreeHeaderController\">\n    <!--\n  <div class=\"camel tree-header\" ng-controller=\"Camel.TreeHeaderController\">\n    TODO - changes to the tree made this filter not work\n    <div class=\"left\">\n      <div class=\"section-filter\">\n        <input id=\"camelContextIdFilter\"\n               class=\"search-query\"\n               type=\"text\"\n               ng-model=\"contextFilterText\"\n               title=\"filter camel context IDs\"\n               placeholder=\"Filter...\">\n        <i class=\"fa fa-remove clickable\"\n           title=\"Clear filter\"\n           ng-click=\"contextFilterText = \'\'\"></i>\n      </div>\n    </div>\n    -->\n    <div class=\"right\">\n      <i class=\"fa fa-chevron-down clickable\"\n         title=\"Expand all nodes\"\n         ng-click=\"expandAll()\"></i>\n      <i class=\"fa fa-chevron-up clickable\"\n         title=\"Unexpand all nodes\"\n         ng-click=\"contractAll()\"></i>\n    </div>\n  </div>\n</script>\n\n<hawtio-pane position=\"left\" width=\"300\" header=\"camelTreeHeader.html\">\n  <div id=\"tree-container\" ng-controller=\"Jmx.MBeansController\">\n    <div class=\"camel-tree\" ng-controller=\"Camel.TreeController\">\n      <div id=\"cameltree\"></div>\n    </div>\n  </div>\n</hawtio-pane>\n<div class=\"row\">\n  <!--\n  <ng-include src=\"\'plugins/jmx/html/subLevelTabs.html\'\"></ng-include>\n  -->\n  <div id=\"properties\" ng-view></div>\n</div>\n");
-$templateCache.put("plugins/camel/html/nodePropertiesEdit.html","<div class=\"row-fluid\">\n\n  <!-- the label and input fields needs to be wider -->\n  <style>\n    input, textarea, .uneditable-input {\n      width: 600px;\n    }\n\n    input, textarea, .editable-input {\n      width: 600px;\n    }\n\n    .form-horizontal .control-label {\n      width: 180px;\n    }\n\n    .form-horizontal .controls {\n      margin-left: 200px;\n    }\n  </style>\n\n  <h3>\n    <img src=\"{{icon}}\" width=\"48\" height=\"48\" ng-show=\"icon\"/> {{model.title}}\n  </h3>\n\n  <div simple-form name=\"formViewer\" mode=\'edit\' entity=\'nodeData\' data=\'model\' schema=\"schema\"\n       showhelp=\"showHelp\"></div>\n</div>");
-$templateCache.put("plugins/camel/html/nodePropertiesView.html","<div class=\"row-fluid\">\n  <!-- the label and input fields needs to be wider -->\n  <style>\n    input, textarea, .uneditable-input {\n      width: 600px;\n    }\n\n    input, textarea, .editable-input {\n      width: 600px;\n    }\n\n    .form-horizontal .control-label {\n      width: 180px;\n    }\n\n    .form-horizontal .controls {\n      margin-left: 200px;\n    }\n  </style>\n\n  <h3>\n    <img src=\"{{icon}}\" width=\"48\" height=\"48\" ng-show=\"icon\"/> {{model.title}}\n  </h3>\n\n  <div simple-form name=\"formViewer\" mode=\'view\' entity=\'nodeData\' data=\'model\' schema=\"schema\"\n       showhelp=\"showHelp\" showempty=\"showEntity\"></div>\n</div>\n");
+$templateCache.put("plugins/camel/html/nodePropertiesEdit.html","<div class=\"row-fluid\">\n\n  <!-- the label and input fields needs to be wider -->\n  <style>\n    input, textarea, .uneditable-input {\n      width: 600px;\n    }\n\n    input, textarea, .editable-input {\n      width: 600px;\n    }\n\n    .form-horizontal .control-label {\n      width: 180px;\n    }\n\n    .form-horizontal .controls {\n      margin-left: 200px;\n    }\n  </style>\n\n  <h3>\n    <img src=\"{{icon}}\" width=\"48\" height=\"48\" ng-show=\"icon\"/> {{model.title}}\n    <span style=\"margin-left: 10px\" ng-repeat=\"label in labels track by $index\" class=\"pod-label badge\" title=\"{{label}}\">{{label}}</span>\n  </h3>\n\n  <div simple-form name=\"formViewer\" mode=\'edit\' entity=\'nodeData\' data=\'model\' schema=\"schema\"\n       showhelp=\"showHelp\"></div>\n</div>");
+$templateCache.put("plugins/camel/html/nodePropertiesView.html","<div class=\"row-fluid\">\n  <!-- the label and input fields needs to be wider -->\n  <style>\n    input, textarea, .uneditable-input {\n      width: 600px;\n    }\n\n    input, textarea, .editable-input {\n      width: 600px;\n    }\n\n    .form-horizontal .control-label {\n      width: 180px;\n    }\n\n    .form-horizontal .controls {\n      margin-left: 200px;\n    }\n  </style>\n\n  <h3>\n    <img src=\"{{icon}}\" width=\"48\" height=\"48\" ng-show=\"icon\"/> {{model.title}}\n    <span style=\"margin-left: 10px\" ng-repeat=\"label in labels track by $index\" class=\"pod-label badge\" title=\"{{label}}\">{{label}}</span>\n  </h3>\n\n  <div simple-form name=\"formViewer\" mode=\'view\' entity=\'nodeData\' data=\'model\' schema=\"schema\"\n       showhelp=\"showHelp\" showempty=\"showEntity\"></div>\n</div>\n");
 $templateCache.put("plugins/camel/html/preferences.html","<div ng-controller=\"Camel.PreferencesController\">\n  <form class=\"form-horizontal\">\n\n    <label class=\"control-label\">Show EIP documentation</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelShowEIPDocumentation\">\n        <span class=\"help-block\">Whether to show EIP documentation in the properties view and Camel route editor</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Hide unused EIP options</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelHideUnusedEIP\">\n        <span class=\"help-block\">Whether to hide EIP options which are not in use in the properties view</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Include Streams</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelTraceOrDebugIncludeStreams\">\n        <span class=\"help-block\">Whether to include stream based message body when using the tracer and debugger</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Maximum body length</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelMaximumTraceOrDebugBodyLength\" min=\"0\">\n        <span class=\"help-block\">The maximum length of the body before its clipped when using the tracer and debugger</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Maximum label length</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelMaximumLabelWidth\" min=\"0\">\n        <span class=\"help-block\">The maximum length of a label in Camel diagrams before it is clipped</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Do not use ID for label</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelIgnoreIdForLabel\">\n        <span class=\"help-block\">If enabled then we will ignore the ID value when viewing a pattern in a Camel diagram; otherwise we will use the ID value as the label (the tooltip will show the actual detail)</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Show Inflight Counter</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelShowInflightCounter\">\n        <span class=\"help-block\">Whether to show inflight counter in route diagram</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Route Metrics maximum seconds</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelRouteMetricMaxSeconds\" min=\"1\" max=\"100\">\n        <span class=\"help-block\">The maximum value in seconds used by the route metrics duration and histogram charts</span>\n      </div>\n    </div>\n\n  </form>\n</div>\n");
 $templateCache.put("plugins/camel/html/profileRoute.html","<div class=\"row\" ng-controller=\"Camel.ProfileRouteController\">\n\n    <div ng-show=\"initDone\">\n\n        <div class=\"row-fluid\">\n            <div class=\"pull-right\">\n                <hawtio-filter ng-model=\"gridOptions.filterOptions.filterText\"\n                               placeholder=\"Filter...\"></hawtio-filter>\n            </div>\n        </div>\n\n        <div class=\"row-fluid\">\n            <table class=\"table table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n        </div>\n\n    </div>\n\n    <div ng-hide=\"initDone\">\n        <p class=\"text-center\"><i class=\"fa fa-spinner fa-spin\"></i></p>\n    </div>\n\n</div>\n\n");
 $templateCache.put("plugins/camel/html/properties.html","<div ng-controller=\"Camel.PropertiesController\">\n\n  <div class=\"control-group inline-block\">\n    <form class=\"form-inline no-bottom-margin\">\n      <label>Show Documentation:\n        <input type=\"checkbox\" ng-model=\"showHelp\"\n               title=\"Show the documentation for the properties\"/>\n      </label>\n      <label>Hide Unused:\n        <input type=\"checkbox\" ng-model=\"showUsedOnly\"\n               title=\"Hides properties which has not been configured\"/>\n      </label>\n    </form>\n  </div>\n\n  <div ng-include=\"viewTemplate\"></div>\n</div>\n");

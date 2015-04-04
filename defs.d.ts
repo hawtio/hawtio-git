@@ -10,6 +10,11 @@
 /// <reference path="d.ts/activemq/ts/jobs.d.ts"/>
 /// <reference path="d.ts/activemq/ts/preferences.d.ts"/>
 /// <reference path="d.ts/activemq/ts/tree.d.ts"/>
+/// <reference path="d.ts/docker-registry/ts/dockerRegistryInterfaces.d.ts"/>
+/// <reference path="d.ts/docker-registry/ts/dockerRegistryHelpers.d.ts"/>
+/// <reference path="d.ts/docker-registry/ts/dockerRegistryPlugin.d.ts"/>
+/// <reference path="d.ts/docker-registry/ts/dockerRegistryTopLevel.d.ts"/>
+/// <reference path="d.ts/docker-registry/ts/list.d.ts"/>
 /// <reference path="d.ts/camel/ts/camelHelpers.d.ts"/>
 /// <reference path="d.ts/camel/ts/camelPlugin.d.ts"/>
 /// <reference path="d.ts/camel/ts/attributesToolBar.d.ts"/>
@@ -33,11 +38,6 @@
 /// <reference path="d.ts/camel/ts/trace.d.ts"/>
 /// <reference path="d.ts/camel/ts/tree.d.ts"/>
 /// <reference path="d.ts/camel/ts/typeConverter.d.ts"/>
-/// <reference path="d.ts/docker-registry/ts/dockerRegistryInterfaces.d.ts"/>
-/// <reference path="d.ts/docker-registry/ts/dockerRegistryHelpers.d.ts"/>
-/// <reference path="d.ts/docker-registry/ts/dockerRegistryPlugin.d.ts"/>
-/// <reference path="d.ts/docker-registry/ts/dockerRegistryTopLevel.d.ts"/>
-/// <reference path="d.ts/docker-registry/ts/list.d.ts"/>
 /// <reference path="d.ts/dozer/ts/dozerHelpers.d.ts"/>
 /// <reference path="d.ts/dozer/ts/model.d.ts"/>
 /// <reference path="d.ts/dozer/ts/schemaConfigure.d.ts"/>
