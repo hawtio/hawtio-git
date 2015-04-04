@@ -1,4 +1,4 @@
-var _apacheCamelModelVersion = '2.15-SNAPSHOT';
+var _apacheCamelModelVersion = '2.15.1';
 
 var _apacheCamelModel ={
   "definitions": {
@@ -22,7 +22,7 @@ var _apacheCamelModel ={
           "title": "Expression",
           "description": "The chosen language",
           "required": true,
-          "enum": [ "constant", "el", "groovy", "header", "javaScript", "jsonpath", "jxpath", "language", "method", "mvel", "ognl", "php", "property", "python", "ref", "ruby", "simple", "spel", "sql", "terser", "tokenize", "vtdxml", "xpath", "xquery", "xtokenize" ]
+          "enum": [ "constant", "el", "exchangeProperty", "groovy", "header", "javaScript", "jsonpath", "jxpath", "language", "method", "mvel", "ognl", "php", "python", "ref", "ruby", "simple", "spel", "sql", "terser", "tokenize", "vtdxml", "xpath", "xquery", "xtokenize" ]
         }
       }
     },
@@ -436,6 +436,14 @@ var _apacheCamelModel ={
       "acceptOutput": "false",
       "nextSiblingAddedAsChild": "true",
       "properties": {
+        "whenClauses": {
+          "kind": "element",
+          "type": "array",
+          "description": "Sets the when clauses",
+          "title": "When Clauses",
+          "required": false,
+          "deprecated": false
+        },
         "otherwise": {
           "kind": "element",
           "type": "object",
@@ -861,6 +869,14 @@ var _apacheCamelModel ={
           "defaultValue": "false",
           "description": "Ignore the invalidate endpoint exception when try to create a producer with that endpoint",
           "title": "Ignore Invalid Endpoints",
+          "required": false,
+          "deprecated": false
+        },
+        "cacheSize": {
+          "kind": "attribute",
+          "type": "integer",
+          "description": "Sets the maximum size used by the org.apache.camel.impl.ProducerCache which is used to cache and reuse producers when using this recipient list when uris are reused.",
+          "title": "Cache Size",
           "required": false,
           "deprecated": false
         },
@@ -2198,7 +2214,7 @@ var _apacheCamelModel ={
     "properties": {
       "type": "object",
       "title": "Properties",
-      "group": "configuration,resequence",
+      "group": "configuration",
       "icon": "generic24.png",
       "description": "A series of key value pair",
       "acceptInput": "false",
@@ -2211,6 +2227,34 @@ var _apacheCamelModel ={
           "description": "A series of properties as key value pairs",
           "title": "Property",
           "required": false,
+          "deprecated": false
+        }
+      }
+    },
+    "property": {
+      "type": "object",
+      "title": "Property",
+      "group": "configuration",
+      "icon": "generic24.png",
+      "description": "A key value pair",
+      "acceptInput": "false",
+      "acceptOutput": "false",
+      "nextSiblingAddedAsChild": "false",
+      "properties": {
+        "key": {
+          "kind": "attribute",
+          "type": "string",
+          "description": "Property key",
+          "title": "Key",
+          "required": true,
+          "deprecated": false
+        },
+        "value": {
+          "kind": "attribute",
+          "type": "string",
+          "description": "Property value",
+          "title": "Value",
+          "required": true,
           "deprecated": false
         }
       }
@@ -5637,7 +5681,7 @@ var _apacheCamelModel ={
     },
     "beanio": {
       "type": "object",
-      "title": "Beanio",
+      "title": "BeanIO",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "BeanIO data format",
@@ -5814,7 +5858,7 @@ var _apacheCamelModel ={
     },
     "crypto": {
       "type": "object",
-      "title": "Crypto",
+      "title": "Crypto (Java Cryptographic Extension)",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "Crypto data format",
@@ -5907,7 +5951,7 @@ var _apacheCamelModel ={
     },
     "csv": {
       "type": "object",
-      "title": "Csv",
+      "title": "CSV",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "CSV data format",
@@ -6111,7 +6155,7 @@ var _apacheCamelModel ={
     },
     "customDataFormat": {
       "type": "object",
-      "title": "Custom Data Format",
+      "title": "Custom",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "Custom data format",
@@ -6136,7 +6180,7 @@ var _apacheCamelModel ={
     },
     "dataFormats": {
       "type": "object",
-      "title": "Data Formats",
+      "title": "Data formats",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "To configure data formats",
@@ -6240,7 +6284,7 @@ var _apacheCamelModel ={
     },
     "gzip": {
       "type": "object",
-      "title": "Gzip",
+      "title": "GZip",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "GZip data format",
@@ -6257,7 +6301,7 @@ var _apacheCamelModel ={
     },
     "hl7": {
       "type": "object",
-      "title": "Hl7",
+      "title": "HL7",
       "group": "dataformat,transformation,hl7",
       "icon": "generic24.png",
       "description": "HL7 data format",
@@ -6283,7 +6327,7 @@ var _apacheCamelModel ={
     },
     "ical": {
       "type": "object",
-      "title": "Ical",
+      "title": "iCal",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "iCal data format",
@@ -6309,7 +6353,7 @@ var _apacheCamelModel ={
     },
     "jaxb": {
       "type": "object",
-      "title": "Jaxb",
+      "title": "JAXB",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "JAXB data format",
@@ -6435,7 +6479,7 @@ var _apacheCamelModel ={
     },
     "jibx": {
       "type": "object",
-      "title": "Jibx",
+      "title": "JiBX",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "JiBX data format",
@@ -6468,7 +6512,7 @@ var _apacheCamelModel ={
     },
     "json": {
       "type": "object",
-      "title": "Json",
+      "title": "JSon",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "Json data format",
@@ -6551,6 +6595,38 @@ var _apacheCamelModel ={
           "required": false,
           "deprecated": false
         },
+        "moduleClassNames": {
+          "kind": "attribute",
+          "type": "string",
+          "description": "To use custom Jackson modules com.fasterxml.jackson.databind.Module specified as a String with FQN class names. Multiple classes can be separated by comma.",
+          "title": "Module Class Names",
+          "required": false,
+          "deprecated": false
+        },
+        "moduleRefs": {
+          "kind": "attribute",
+          "type": "string",
+          "description": "To use custom Jackson modules referred from the Camel registry. Multiple modules can be separated by comma.",
+          "title": "Module Refs",
+          "required": false,
+          "deprecated": false
+        },
+        "enableFeatures": {
+          "kind": "attribute",
+          "type": "string",
+          "description": "Set of features to enable on the Jackson com.fasterxml.jackson.databind.ObjectMapper. The features should be a name that matches a enum from com.fasterxml.jackson.databind.SerializationFeature com.fasterxml.jackson.databind.DeserializationFeature or com.fasterxml.jackson.databind.MapperFeature Multiple features can be separated by comma",
+          "title": "Enable Features",
+          "required": false,
+          "deprecated": false
+        },
+        "disableFeatures": {
+          "kind": "attribute",
+          "type": "string",
+          "description": "Set of features to disable on the Jackson com.fasterxml.jackson.databind.ObjectMapper. The features should be a name that matches a enum from com.fasterxml.jackson.databind.SerializationFeature com.fasterxml.jackson.databind.DeserializationFeature or com.fasterxml.jackson.databind.MapperFeature Multiple features can be separated by comma",
+          "title": "Disable Features",
+          "required": false,
+          "deprecated": false
+        },
         "id": {
           "kind": "attribute",
           "type": "string",
@@ -6563,7 +6639,7 @@ var _apacheCamelModel ={
     },
     "pgp": {
       "type": "object",
-      "title": "Pgp",
+      "title": "PGP",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "PGP data format",
@@ -6719,7 +6795,7 @@ var _apacheCamelModel ={
     },
     "rss": {
       "type": "object",
-      "title": "Rss",
+      "title": "RSS",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "RSS data format",
@@ -6736,7 +6812,7 @@ var _apacheCamelModel ={
     },
     "secureXML": {
       "type": "object",
-      "title": "Secure X M L",
+      "title": "XML Security",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "xml-security data format",
@@ -6847,7 +6923,7 @@ var _apacheCamelModel ={
     },
     "serialization": {
       "type": "object",
-      "title": "Serialization",
+      "title": "Java Object Serialization",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "Java Object Serialization data format",
@@ -6864,7 +6940,7 @@ var _apacheCamelModel ={
     },
     "soapjaxb": {
       "type": "object",
-      "title": "Soapjaxb",
+      "title": "SOAP",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "SOAP data format",
@@ -6930,7 +7006,7 @@ var _apacheCamelModel ={
     },
     "string": {
       "type": "object",
-      "title": "String",
+      "title": "String Encoding",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "Represents the String (text based) DataFormat",
@@ -6972,7 +7048,7 @@ var _apacheCamelModel ={
     },
     "tidyMarkup": {
       "type": "object",
-      "title": "Tidy Markup",
+      "title": "TidyMarkup",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "Tidymark (wellformed HTML) data format",
@@ -6997,7 +7073,7 @@ var _apacheCamelModel ={
     },
     "univocity-csv": {
       "type": "object",
-      "title": "Univocity-csv",
+      "title": "uniVocity CSV",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "UniVocity CSV data format",
@@ -7163,7 +7239,7 @@ var _apacheCamelModel ={
     },
     "univocity-fixed": {
       "type": "object",
-      "title": "Univocity-fixed",
+      "title": "uniVocity Fixed Length",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "UniVocity fixed-width data format",
@@ -7320,7 +7396,7 @@ var _apacheCamelModel ={
     },
     "univocity-header": {
       "type": "object",
-      "title": "Univocity-header",
+      "title": "uniVocity Header",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "To configure headers for UniVocity data formats.",
@@ -7345,7 +7421,7 @@ var _apacheCamelModel ={
     },
     "univocity-tsv": {
       "type": "object",
-      "title": "Univocity-tsv",
+      "title": "uniVocity TSV",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "UniVocity TSV data format",
@@ -7484,7 +7560,7 @@ var _apacheCamelModel ={
     },
     "xmlBeans": {
       "type": "object",
-      "title": "Xml Beans",
+      "title": "XML Beans",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "XMLBeans data format",
@@ -7510,7 +7586,7 @@ var _apacheCamelModel ={
     },
     "xmljson": {
       "type": "object",
-      "title": "Xmljson",
+      "title": "XML JSon",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "xml-json data format",
@@ -7629,7 +7705,7 @@ var _apacheCamelModel ={
     },
     "xmlrpc": {
       "type": "object",
-      "title": "Xmlrpc",
+      "title": "XML RPC",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "xml-rpc data format",
@@ -7655,7 +7731,7 @@ var _apacheCamelModel ={
     },
     "xstream": {
       "type": "object",
-      "title": "Xstream",
+      "title": "XStream",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "xstream data format",
@@ -7736,7 +7812,7 @@ var _apacheCamelModel ={
     },
     "zip": {
       "type": "object",
-      "title": "Zip",
+      "title": "Zip Deflate Compression",
       "group": "dataformat,transformation",
       "icon": "generic24.png",
       "description": "zip data format (not for zip files)",
@@ -7824,10 +7900,44 @@ var _apacheCamelModel ={
     },
     "el": {
       "type": "object",
-      "title": "El",
+      "title": "EL",
       "group": "language",
       "icon": "generic24.png",
       "description": "For EL expressions and predicates",
+      "properties": {
+        "expression": {
+          "kind": "value",
+          "type": "string",
+          "description": "The expression value in your chosen language syntax",
+          "title": "Expression",
+          "required": true,
+          "deprecated": false
+        },
+        "trim": {
+          "kind": "attribute",
+          "type": "boolean",
+          "defaultValue": "true",
+          "description": "Whether to trim the value to remove leading and trailing whitespaces and line breaks",
+          "title": "Trim",
+          "required": false,
+          "deprecated": false
+        },
+        "id": {
+          "kind": "attribute",
+          "type": "string",
+          "description": "Sets the id of this node",
+          "title": "Id",
+          "required": false,
+          "deprecated": false
+        }
+      }
+    },
+    "exchangeProperty": {
+      "type": "object",
+      "title": "ExchangeProperty",
+      "group": "language",
+      "icon": "generic24.png",
+      "description": "An expression which extracts the named exchange property",
       "properties": {
         "expression": {
           "kind": "value",
@@ -7929,7 +8039,7 @@ var _apacheCamelModel ={
       "title": "Header",
       "group": "language",
       "icon": "generic24.png",
-      "description": "An expression which extracts the named header",
+      "description": "An expression which extracts the named exchange header",
       "properties": {
         "expression": {
           "kind": "value",
@@ -7960,7 +8070,7 @@ var _apacheCamelModel ={
     },
     "javaScript": {
       "type": "object",
-      "title": "Java Script",
+      "title": "JavaScript",
       "group": "language",
       "icon": "generic24.png",
       "description": "For JavaScript expressions and predicates",
@@ -7994,7 +8104,7 @@ var _apacheCamelModel ={
     },
     "jsonpath": {
       "type": "object",
-      "title": "Jsonpath",
+      "title": "JSonPath",
       "group": "language",
       "icon": "generic24.png",
       "description": "For JSonPath expressions and predicates",
@@ -8036,7 +8146,7 @@ var _apacheCamelModel ={
     },
     "jxpath": {
       "type": "object",
-      "title": "Jxpath",
+      "title": "JXPath",
       "group": "language",
       "icon": "generic24.png",
       "description": "For JXPath expressions and predicates",
@@ -8121,7 +8231,7 @@ var _apacheCamelModel ={
     },
     "method": {
       "type": "object",
-      "title": "Method",
+      "title": "Bean method",
       "group": "language",
       "icon": "generic24.png",
       "description": "For expressions and predicates using a java bean (aka method call)",
@@ -8187,7 +8297,7 @@ var _apacheCamelModel ={
     },
     "mvel": {
       "type": "object",
-      "title": "Mvel",
+      "title": "MVEL",
       "group": "language",
       "icon": "generic24.png",
       "description": "For MVEL expressions and predicates",
@@ -8221,7 +8331,7 @@ var _apacheCamelModel ={
     },
     "ognl": {
       "type": "object",
-      "title": "Ognl",
+      "title": "OGNL",
       "group": "language",
       "icon": "generic24.png",
       "description": "For OGNL expressions and predicates",
@@ -8255,44 +8365,10 @@ var _apacheCamelModel ={
     },
     "php": {
       "type": "object",
-      "title": "Php",
+      "title": "PHP",
       "group": "language",
       "icon": "generic24.png",
       "description": "For PHP expressions and predicates",
-      "properties": {
-        "expression": {
-          "kind": "value",
-          "type": "string",
-          "description": "The expression value in your chosen language syntax",
-          "title": "Expression",
-          "required": true,
-          "deprecated": false
-        },
-        "trim": {
-          "kind": "attribute",
-          "type": "boolean",
-          "defaultValue": "true",
-          "description": "Whether to trim the value to remove leading and trailing whitespaces and line breaks",
-          "title": "Trim",
-          "required": false,
-          "deprecated": false
-        },
-        "id": {
-          "kind": "attribute",
-          "type": "string",
-          "description": "Sets the id of this node",
-          "title": "Id",
-          "required": false,
-          "deprecated": false
-        }
-      }
-    },
-    "property": {
-      "type": "object",
-      "title": "Property",
-      "group": "language",
-      "icon": "generic24.png",
-      "description": "An expression which extracts the named exchange property",
       "properties": {
         "expression": {
           "kind": "value",
@@ -8467,7 +8543,7 @@ var _apacheCamelModel ={
     },
     "spel": {
       "type": "object",
-      "title": "Spel",
+      "title": "SpEL",
       "group": "language",
       "icon": "generic24.png",
       "description": "For Spring Expression Language (SpEL) expressions and predicates",
@@ -8501,7 +8577,7 @@ var _apacheCamelModel ={
     },
     "sql": {
       "type": "object",
-      "title": "Sql",
+      "title": "SQL",
       "group": "language",
       "icon": "generic24.png",
       "description": "For SQL expressions and predicates",
@@ -8535,7 +8611,7 @@ var _apacheCamelModel ={
     },
     "terser": {
       "type": "object",
-      "title": "Terser",
+      "title": "HL7 Terser",
       "group": "language,hl7",
       "icon": "generic24.png",
       "description": "For HL7 terser expressions and predicates",
@@ -8670,7 +8746,7 @@ var _apacheCamelModel ={
     },
     "vtdxml": {
       "type": "object",
-      "title": "Vtdxml",
+      "title": "VtdXML",
       "group": "language",
       "icon": "generic24.png",
       "description": "For VTD-XML (fast and efficient XPath) expressions and predicates",
@@ -8704,7 +8780,7 @@ var _apacheCamelModel ={
     },
     "xpath": {
       "type": "object",
-      "title": "Xpath",
+      "title": "XPath",
       "group": "language",
       "icon": "generic24.png",
       "description": "For XPath expressions and predicates",
@@ -8796,7 +8872,7 @@ var _apacheCamelModel ={
     },
     "xquery": {
       "type": "object",
-      "title": "Xquery",
+      "title": "XQuery",
       "group": "language",
       "icon": "generic24.png",
       "description": "For XQuery expressions and predicates",
@@ -8846,7 +8922,7 @@ var _apacheCamelModel ={
     },
     "xtokenize": {
       "type": "object",
-      "title": "Xtokenize",
+      "title": "XML Tokenize",
       "group": "language",
       "icon": "generic24.png",
       "description": "For expressions and predicates using a body or header tokenizer.",
