@@ -3141,9 +3141,9 @@ var Camel;
             angular.forEach(routeXmlNode.attributes, function (attr) {
                 answer[attr.name] = attr.value;
             });
-            // lets not iterate into routes or top level tags
+            // lets not iterate into routes/rests or top level tags
             var localName = routeXmlNode.localName;
-            if (localName !== "route" && localName !== "routes" && localName !== "camelContext") {
+            if (localName !== "route" && localName !== "routes" && localName !== "camelContext" && localName !== "rests") {
                 // lets look for nested elements and convert those
                 // explicitly looking for expressions
                 $(routeXmlNode).children("*").each(function (idx, element) {
@@ -7407,6 +7407,7 @@ var Camel;
 var Camel;
 (function (Camel) {
     Camel._module.controller("Camel.PropertiesController", ["$scope", "workspace", function ($scope, workspace) {
+        var log = Logger.get("Camel");
         $scope.viewTemplate = null;
         $scope.schema = Camel._apacheCamelModel;
         $scope.$on("$routeChangeSuccess", function (event, current, previous) {
@@ -7420,13 +7421,18 @@ var Camel;
         });
         function updateData() {
             var routeXmlNode = Camel.getSelectedRouteNode(workspace);
+            if (routeXmlNode != null) {
+                log.debug("Properties - Selected node " + routeXmlNode.nodeName);
+            }
             $scope.nodeData = Camel.getRouteNodeJSON(routeXmlNode);
             if (routeXmlNode) {
                 var nodeName = routeXmlNode.nodeName;
                 $scope.model = Camel.getCamelSchema(nodeName);
                 if ($scope.model) {
-                    console.log("data is: " + JSON.stringify($scope.nodeData, null, "  "));
-                    console.log("model schema is: " + JSON.stringify($scope.model, null, "  "));
+                    if (log.enabledFor(Logger.DEBUG)) {
+                        log.debug("Properties - data: " + JSON.stringify($scope.nodeData, null, "  "));
+                        log.debug("Properties - schema: " + JSON.stringify($scope.model, null, "  "));
+                    }
                     $scope.viewTemplate = "plugins/camel/html/nodePropertiesView.html";
                 }
             }

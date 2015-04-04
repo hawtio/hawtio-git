@@ -118,9 +118,9 @@ module Camel {
         answer[attr.name] = attr.value;
       });
 
-      // lets not iterate into routes or top level tags
+      // lets not iterate into routes/rests or top level tags
       var localName = routeXmlNode.localName;
-      if (localName !== "route" && localName !== "routes" && localName !== "camelContext") {
+      if (localName !== "route" && localName !== "routes" && localName !== "camelContext" && localName !== "rests") {
         // lets look for nested elements and convert those
         // explicitly looking for expressions
         $(routeXmlNode).children("*").each((idx, element) => {
