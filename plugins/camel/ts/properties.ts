@@ -3,11 +3,12 @@
 
 module Camel {
 
-  _module.controller("Camel.PropertiesController", ["$scope", "workspace", "localStorage", ($scope, workspace:Workspace, localStorage:WindowLocalStorage) => {
+  _module.controller("Camel.PropertiesController", ["$scope", "workspace", "localStorage", "jolokia", ($scope, workspace:Workspace, localStorage:WindowLocalStorage, jolokia) => {
     var log:Logging.Logger = Logger.get("Camel");
 
-    $scope.showHelp = Camel.showEIPDocumentation(localStorage);
-    $scope.showUsedOnly = Camel.hideUnusedEIP(localStorage);
+    $scope.hideHelp = Camel.hideOptionDocumentation(localStorage);
+    $scope.hideUnused = Camel.hideOptionUnusedValue(localStorage);
+    $scope.hideDefault = Camel.hideOptionDefaultValue(localStorage);
 
     $scope.viewTemplate = null;
     $scope.schema = _apacheCamelModel;
@@ -16,13 +17,19 @@ module Camel {
     $scope.nodeData = null;
     $scope.icon = null;
 
-    $scope.$watch('showHelp', (newValue, oldValue) => {
+    $scope.$watch('hideHelp', (newValue, oldValue) => {
       if (newValue !== oldValue) {
         updateData();
       }
     });
 
-    $scope.$watch('showUsedOnly', (newValue, oldValue) => {
+    $scope.$watch('hideUnused', (newValue, oldValue) => {
+      if (newValue !== oldValue) {
+        updateData();
+      }
+    });
+
+    $scope.$watch('hideDefault', (newValue, oldValue) => {
       if (newValue !== oldValue) {
         updateData();
       }
@@ -39,25 +46,49 @@ module Camel {
     });
 
     $scope.showEntity = function (id) {
-      log.info("Show entity: " + id);
-      if ($scope.showUsedOnly) {
-        // figure out if there is any data for the id
-        var value = Core.pathGet($scope.nodeData, id);
-        if (angular.isUndefined(value) || Core.isBlank(value)) {
+      log.debug("Show entity: " + id);
+
+      if ($scope.hideDefault) {
+        if (isDefaultValue(id)) {
           return false;
         }
-        if (angular.isString(value)) {
-          var aBool = "true" === value || "false" == value;
-          if (aBool) {
-            // hide false booleans
-            return Core.parseBooleanValue(value);
-          }
-          // to show then must not be blank
-          return !Core.isBlank(value);
+      }
+
+      if ($scope.hideUnused) {
+        if (!hasValue(id)) {
+          return false;
         }
       }
+
       return true;
     };
+
+    function isDefaultValue(id) {
+      var defaultValue = Core.pathGet($scope.model, ["properties", id, "defaultValue"]);
+      if (angular.isDefined(defaultValue)) {
+        // get the value
+        var value = Core.pathGet($scope.nodeData, id);
+        if (angular.isDefined(value)) {
+          // default value is always a String type, so try to convert value to a String
+          var str:string = value.toString();
+          // is it a default value
+          return str.localeCompare(defaultValue) === 0;
+        }
+      }
+      return false;
+    }
+
+    function hasValue(id) {
+      var value = Core.pathGet($scope.nodeData, id);
+      if (angular.isUndefined(value) || Core.isBlank(value)) {
+        return false;
+      }
+      if (angular.isString(value)) {
+        // to show then must not be blank
+        return !Core.isBlank(value);
+      }
+      return true;
+    }
 
     function updateData() {
       var routeXmlNode = getSelectedRouteNode(workspace);

@@ -20,6 +20,7 @@ module Camel {
     $routeProvider
             .when('/camel/browseEndpoint', {templateUrl: 'plugins/camel/html/browseEndpoint.html'})
             .when('/camel/endpoint/browse/:contextId/*endpointPath', {templateUrl: 'plugins/camel/html/browseEndpoint.html'})
+            .when('/camel/propertiesEndpoint', {templateUrl: 'plugins/camel/html/propertiesEndpoint.html'})
             .when('/camel/createEndpoint', {templateUrl: 'plugins/camel/html/createEndpoint.html'})
             .when('/camel/route/diagram/:contextId/:routeId', {templateUrl: 'plugins/camel/html/routes.html'})
             .when('/camel/routes', {templateUrl: 'plugins/camel/html/routes.html'})
@@ -312,6 +313,15 @@ module Camel {
       show: () => workspace.isEndpoint()
         && workspace.hasInvokeRights(workspace.selection, "browseAllMessagesAsXml"),
       href: () => "/camel/browseEndpoint" + workspace.hash()
+    });
+    tab.tabs.push({
+      id: 'camel-endpoint-properties',
+      title: () => '<i class="fa list"></i> Properties',
+      //title: "Show the endpoint properties",
+      show: () => workspace.isEndpoint()
+        && Camel.isCamelVersionEQGT(2, 15, workspace, jolokia)
+        && workspace.hasInvokeRights(workspace.selection, "explainEndpointJson"),
+      href: () => "/camel/propertiesEndpoint" + workspace.hash()
     });
     tab.tabs.push({
       id: 'camel-debug',

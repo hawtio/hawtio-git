@@ -31,12 +31,16 @@ module Camel {
         'value': Camel.defaultCamelRouteMetricMaxSeconds,
         'converter': parseInt
       },
-      'camelShowEIPDocumentation': {
-        'value': Camel.defaultShowEIPDocumentation,
+      'camelHideOptionDocumentation': {
+        'value': Camel.defaultHideOptionDocumentation,
         'converter': Core.parseBooleanValue
       },
-      'camelHideUnusedEIP': {
-        'value': Camel.defaultHideUnusedEIP,
+      'camelHideOptionDefaultValue': {
+        'value': Camel.defaultHideOptionDefaultValue,
+        'converter': Core.parseBooleanValue
+      },
+      'camelHideOptionUnusedValue': {
+        'value': Camel.defaultHideOptionUnusedValue,
         'converter': Core.parseBooleanValue
       }
     });
