@@ -15,8 +15,9 @@ module Camel {
   export var defaultCamelMaximumTraceOrDebugBodyLength = 5000;
   export var defaultCamelTraceOrDebugIncludeStreams = true;
   export var defaultCamelRouteMetricMaxSeconds = 10;
-  export var defaultShowEIPDocumentation = true;
-  export var defaultHideUnusedEIP = false;
+  export var defaultHideOptionDocumentation = false;
+  export var defaultHideOptionDefaultValue = false;
+  export var defaultHideOptionUnusedValue = false;
 
   export var _apacheCamelModel: any = undefined;
   export declare var _jsonSchema: any;
