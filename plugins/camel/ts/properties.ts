@@ -111,6 +111,8 @@ module Camel {
           $scope.nodeData = getRouteNodeJSON(routeXmlNode);
           $scope.icon = getRouteNodeIcon(routeXmlNode);
           $scope.viewTemplate = "plugins/camel/html/nodePropertiesView.html";
+
+          Core.$apply($scope);
         }
       }
     }

@@ -42,6 +42,7 @@
 /// <reference path="d.ts/dozer/ts/dozerHelpers.d.ts"/>
 /// <reference path="d.ts/dozer/ts/model.d.ts"/>
 /// <reference path="d.ts/dozer/ts/schemaConfigure.d.ts"/>
+/// <reference path="d.ts/git/ts/git.d.ts"/>
 /// <reference path="d.ts/fabric/ts/fabricHelpers.d.ts"/>
 /// <reference path="d.ts/karaf/ts/karafHelpers.d.ts"/>
 /// <reference path="d.ts/karaf/ts/karafPlugin.d.ts"/>
@@ -51,7 +52,6 @@
 /// <reference path="d.ts/karaf/ts/scr-component.d.ts"/>
 /// <reference path="d.ts/karaf/ts/scr-components.d.ts"/>
 /// <reference path="d.ts/karaf/ts/server.d.ts"/>
-/// <reference path="d.ts/git/ts/git.d.ts"/>
 /// <reference path="d.ts/maven/ts/mavenHelpers.d.ts"/>
 /// <reference path="d.ts/maven/ts/mavenPlugin.d.ts"/>
 /// <reference path="d.ts/maven/ts/artifact.d.ts"/>

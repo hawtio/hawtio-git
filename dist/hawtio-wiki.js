@@ -7559,6 +7559,7 @@ var Camel;
                     $scope.nodeData = Camel.getRouteNodeJSON(routeXmlNode);
                     $scope.icon = Camel.getRouteNodeIcon(routeXmlNode);
                     $scope.viewTemplate = "plugins/camel/html/nodePropertiesView.html";
+                    Core.$apply($scope);
                 }
             }
         }
@@ -7673,7 +7674,7 @@ var Camel;
                         operation: 'explainEndpointJson(java.lang.String,boolean)',
                         arguments: [url, true]
                     };
-                    jolokia.request(query, populateData);
+                    jolokia.request(query, Core.onSuccess(populateData));
                 }
             }
         }
@@ -7703,6 +7704,7 @@ var Camel;
                 }
                 $scope.labels = labels;
                 $scope.viewTemplate = "plugin/camel/html/nodePropertiesView.html";
+                Core.$apply($scope);
             }
         }
     }]);
@@ -9705,6 +9707,120 @@ var Dozer;
 })(Dozer || (Dozer = {}));
 
 /// <reference path="../../includes.ts"/>
+/// <reference path="gitHelpers.ts"/>
+/**
+ * @module Git
+ * @main Git
+ */
+var Git;
+(function (Git) {
+    /**
+     * A default implementation which uses jolokia and the
+     * GitFacadeMXBean over JMX
+     *
+     * @class JolokiaGit
+     * @uses GitRepository
+     *
+     */
+    var JolokiaGit = (function () {
+        function JolokiaGit(mbean, jolokia, localStorage, userDetails, branch) {
+            if (branch === void 0) { branch = "master"; }
+            this.mbean = mbean;
+            this.jolokia = jolokia;
+            this.localStorage = localStorage;
+            this.userDetails = userDetails;
+            this.branch = branch;
+        }
+        JolokiaGit.prototype.getRepositoryLabel = function (fn, error) {
+            return this.jolokia.request({ type: "read", mbean: this.mbean, attribute: ["RepositoryLabel"] }, Core.onSuccess(function (result) {
+                fn(result.value.RepositoryLabel);
+            }, { error: error }));
+        };
+        JolokiaGit.prototype.exists = function (branch, path, fn) {
+            var result;
+            if (angular.isDefined(fn) && fn) {
+                result = this.jolokia.execute(this.mbean, "exists", branch, path, Core.onSuccess(fn));
+            }
+            else {
+                result = this.jolokia.execute(this.mbean, "exists", branch, path);
+            }
+            if (angular.isDefined(result) && result) {
+                return true;
+            }
+            else {
+                return false;
+            }
+        };
+        JolokiaGit.prototype.read = function (branch, path, fn) {
+            return this.jolokia.execute(this.mbean, "read", branch, path, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.write = function (branch, path, commitMessage, contents, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "write", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.writeBase64 = function (branch, path, commitMessage, contents, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "writeBase64", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.createDirectory = function (branch, path, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "createDirectory", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.revertTo = function (branch, objectId, blobPath, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "revertTo", branch, objectId, blobPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.rename = function (branch, oldPath, newPath, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "rename", branch, oldPath, newPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.remove = function (branch, path, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "remove", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.completePath = function (branch, completionText, directoriesOnly, fn) {
+            return this.jolokia.execute(this.mbean, "completePath", branch, completionText, directoriesOnly, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.history = function (branch, objectId, path, limit, fn) {
+            return this.jolokia.execute(this.mbean, "history", branch, objectId, path, limit, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.commitTree = function (commitId, fn) {
+            return this.jolokia.execute(this.mbean, "getCommitTree", commitId, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.commitInfo = function (commitId, fn) {
+            return this.jolokia.execute(this.mbean, "getCommitInfo", commitId, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.diff = function (objectId, baseObjectId, path, fn) {
+            return this.jolokia.execute(this.mbean, "diff", objectId, baseObjectId, path, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.getContent = function (objectId, blobPath, fn) {
+            return this.jolokia.execute(this.mbean, "getContent", objectId, blobPath, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.readJsonChildContent = function (path, nameWildcard, search, fn) {
+            return this.jolokia.execute(this.mbean, "readJsonChildContent", this.branch, path, nameWildcard, search, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.branches = function (fn) {
+            return this.jolokia.execute(this.mbean, "branches", Core.onSuccess(fn));
+        };
+        // TODO move...
+        JolokiaGit.prototype.getUserName = function () {
+            return this.localStorage["gitUserName"] || this.userDetails.username || "anonymous";
+        };
+        JolokiaGit.prototype.getUserEmail = function () {
+            return this.localStorage["gitUserEmail"] || "anonymous@gmail.com";
+        };
+        return JolokiaGit;
+    })();
+    Git.JolokiaGit = JolokiaGit;
+})(Git || (Git = {}));
+
+/// <reference path="../../includes.ts"/>
 /**
  * A bunch of API stubs for now until we remove references to Fabric or refactor the code
  * to work nicely in Kubernetes
@@ -10808,120 +10924,6 @@ var Karaf;
         }
     }]);
 })(Karaf || (Karaf = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="gitHelpers.ts"/>
-/**
- * @module Git
- * @main Git
- */
-var Git;
-(function (Git) {
-    /**
-     * A default implementation which uses jolokia and the
-     * GitFacadeMXBean over JMX
-     *
-     * @class JolokiaGit
-     * @uses GitRepository
-     *
-     */
-    var JolokiaGit = (function () {
-        function JolokiaGit(mbean, jolokia, localStorage, userDetails, branch) {
-            if (branch === void 0) { branch = "master"; }
-            this.mbean = mbean;
-            this.jolokia = jolokia;
-            this.localStorage = localStorage;
-            this.userDetails = userDetails;
-            this.branch = branch;
-        }
-        JolokiaGit.prototype.getRepositoryLabel = function (fn, error) {
-            return this.jolokia.request({ type: "read", mbean: this.mbean, attribute: ["RepositoryLabel"] }, Core.onSuccess(function (result) {
-                fn(result.value.RepositoryLabel);
-            }, { error: error }));
-        };
-        JolokiaGit.prototype.exists = function (branch, path, fn) {
-            var result;
-            if (angular.isDefined(fn) && fn) {
-                result = this.jolokia.execute(this.mbean, "exists", branch, path, Core.onSuccess(fn));
-            }
-            else {
-                result = this.jolokia.execute(this.mbean, "exists", branch, path);
-            }
-            if (angular.isDefined(result) && result) {
-                return true;
-            }
-            else {
-                return false;
-            }
-        };
-        JolokiaGit.prototype.read = function (branch, path, fn) {
-            return this.jolokia.execute(this.mbean, "read", branch, path, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.write = function (branch, path, commitMessage, contents, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "write", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.writeBase64 = function (branch, path, commitMessage, contents, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "writeBase64", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.createDirectory = function (branch, path, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "createDirectory", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.revertTo = function (branch, objectId, blobPath, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "revertTo", branch, objectId, blobPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.rename = function (branch, oldPath, newPath, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "rename", branch, oldPath, newPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.remove = function (branch, path, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "remove", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.completePath = function (branch, completionText, directoriesOnly, fn) {
-            return this.jolokia.execute(this.mbean, "completePath", branch, completionText, directoriesOnly, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.history = function (branch, objectId, path, limit, fn) {
-            return this.jolokia.execute(this.mbean, "history", branch, objectId, path, limit, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.commitTree = function (commitId, fn) {
-            return this.jolokia.execute(this.mbean, "getCommitTree", commitId, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.commitInfo = function (commitId, fn) {
-            return this.jolokia.execute(this.mbean, "getCommitInfo", commitId, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.diff = function (objectId, baseObjectId, path, fn) {
-            return this.jolokia.execute(this.mbean, "diff", objectId, baseObjectId, path, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.getContent = function (objectId, blobPath, fn) {
-            return this.jolokia.execute(this.mbean, "getContent", objectId, blobPath, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.readJsonChildContent = function (path, nameWildcard, search, fn) {
-            return this.jolokia.execute(this.mbean, "readJsonChildContent", this.branch, path, nameWildcard, search, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.branches = function (fn) {
-            return this.jolokia.execute(this.mbean, "branches", Core.onSuccess(fn));
-        };
-        // TODO move...
-        JolokiaGit.prototype.getUserName = function () {
-            return this.localStorage["gitUserName"] || this.userDetails.username || "anonymous";
-        };
-        JolokiaGit.prototype.getUserEmail = function () {
-            return this.localStorage["gitUserEmail"] || "anonymous@gmail.com";
-        };
-        return JolokiaGit;
-    })();
-    Git.JolokiaGit = JolokiaGit;
-})(Git || (Git = {}));
 
 /// <reference path="../../includes.ts"/>
 /**

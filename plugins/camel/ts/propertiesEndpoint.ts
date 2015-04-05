@@ -120,7 +120,7 @@ module Camel {
             operation: 'explainEndpointJson(java.lang.String,boolean)',
             arguments: [url, true]
           };
-          jolokia.request(query, populateData);
+          jolokia.request(query, Core.onSuccess(populateData));
         }
       }
     }
@@ -156,6 +156,8 @@ module Camel {
         $scope.labels = labels;
 
         $scope.viewTemplate = "plugin/camel/html/nodePropertiesView.html";
+
+        Core.$apply($scope);
       }
     }
 
