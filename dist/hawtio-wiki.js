@@ -7569,6 +7569,149 @@ var Camel;
 /// <reference path="camelPlugin.ts"/>
 var Camel;
 (function (Camel) {
+    Camel._module.controller("Camel.PropertiesEndpointController", ["$scope", "workspace", "localStorage", "jolokia", function ($scope, workspace, localStorage, jolokia) {
+        var log = Logger.get("Camel");
+        $scope.hideHelp = Camel.hideOptionDocumentation(localStorage);
+        $scope.hideUnused = Camel.hideOptionUnusedValue(localStorage);
+        $scope.hideDefault = Camel.hideOptionDefaultValue(localStorage);
+        $scope.viewTemplate = null;
+        $scope.schema = null;
+        $scope.model = null;
+        $scope.labels = [];
+        $scope.nodeData = null;
+        $scope.icon = null;
+        $scope.endpointUrl = null;
+        $scope.$watch('hideHelp', function (newValue, oldValue) {
+            if (newValue !== oldValue) {
+                updateData();
+            }
+        });
+        $scope.$watch('hideUnused', function (newValue, oldValue) {
+            if (newValue !== oldValue) {
+                updateData();
+            }
+        });
+        $scope.$watch('hideDefault', function (newValue, oldValue) {
+            if (newValue !== oldValue) {
+                updateData();
+            }
+        });
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            // lets do this asynchronously to avoid Error: $digest already in progress
+            setTimeout(updateData, 50);
+        });
+        $scope.$watch('workspace.selection', function () {
+            if (workspace.moveIfViewInvalid())
+                return;
+            updateData();
+        });
+        $scope.showEntity = function (id) {
+            log.debug("Show entity: " + id);
+            if ($scope.hideDefault) {
+                if (isDefaultValue(id)) {
+                    return false;
+                }
+            }
+            if ($scope.hideUnused) {
+                if (!hasValue(id)) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        function isDefaultValue(id) {
+            var defaultValue = Core.pathGet($scope.model, ["properties", id, "defaultValue"]);
+            if (angular.isDefined(defaultValue)) {
+                // get the value
+                var value = Core.pathGet($scope.nodeData, id);
+                if (angular.isDefined(value)) {
+                    // default value is always a String type, so try to convert value to a String
+                    var str = value.toString();
+                    // is it a default value
+                    return str.localeCompare(defaultValue) === 0;
+                }
+            }
+            return false;
+        }
+        function hasValue(id) {
+            var value = Core.pathGet($scope.nodeData, id);
+            if (angular.isUndefined(value) || Core.isBlank(value)) {
+                return false;
+            }
+            if (angular.isString(value)) {
+                // to show then must not be blank
+                return !Core.isBlank(value);
+            }
+            return true;
+        }
+        function updateData() {
+            var contextMBean = Camel.getSelectionCamelContextMBean(workspace);
+            var endpointMBean = null;
+            if ($scope.contextId && $scope.endpointPath) {
+                var node = workspace.findMBeanWithProperties(Camel.jmxDomain, {
+                    context: $scope.contextId,
+                    type: "endpoints",
+                    name: $scope.endpointPath
+                });
+                if (node) {
+                    endpointMBean = node.objectName;
+                }
+            }
+            if (!endpointMBean) {
+                endpointMBean = workspace.getSelectedMBeanName();
+            }
+            if (endpointMBean && contextMBean) {
+                // TODO: grab url from tree instead? avoids a JMX call
+                var reply = jolokia.request({ type: "read", mbean: endpointMBean, attribute: ["EndpointUri"] });
+                var url = reply.value["EndpointUri"];
+                if (url) {
+                    $scope.endpointUrl = url;
+                    log.info("Calling explainEndpointJson for url: " + url);
+                    var query = {
+                        type: 'exec',
+                        mbean: contextMBean,
+                        operation: 'explainEndpointJson(java.lang.String,boolean)',
+                        arguments: [url, true]
+                    };
+                    jolokia.request(query, populateData);
+                }
+            }
+        }
+        function populateData(response) {
+            log.debug("Populate data " + response);
+            var data = response.value;
+            if (data) {
+                // the model is json object from the string data
+                $scope.model = JSON.parse(data);
+                // set title and description
+                $scope.model.title = $scope.endpointUrl;
+                $scope.model.description = $scope.model.component.description;
+                // TODO: look for specific endpoint icon,
+                $scope.icon = Core.url("/img/icons/camel/endpoint24.png");
+                // grab all values form the model as they are the current data we need to add to node data (not all properties has a value)
+                $scope.nodeData = {};
+                angular.forEach($scope.model.properties, function (property, key) {
+                    // does it have a value or fallback to use a default value
+                    var value = property["value"] || property["defaultValue"];
+                    if (angular.isDefined(value) && value !== null) {
+                        $scope.nodeData[key] = value;
+                    }
+                });
+                var labels = [];
+                if ($scope.model.component.label) {
+                    labels = $scope.model.component.label.split(",");
+                }
+                $scope.labels = labels;
+                $scope.viewTemplate = "plugin/camel/html/nodePropertiesView.html";
+            }
+        }
+    }]);
+})(Camel || (Camel = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="camelPlugin.ts"/>
+var Camel;
+(function (Camel) {
     Camel._module.controller("Camel.RestServiceController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
         $scope.data = [];
         $scope.selectedMBean = null;
@@ -9655,120 +9798,6 @@ var Fabric;
 })(Fabric || (Fabric = {}));
 
 /// <reference path="../../includes.ts"/>
-/// <reference path="gitHelpers.ts"/>
-/**
- * @module Git
- * @main Git
- */
-var Git;
-(function (Git) {
-    /**
-     * A default implementation which uses jolokia and the
-     * GitFacadeMXBean over JMX
-     *
-     * @class JolokiaGit
-     * @uses GitRepository
-     *
-     */
-    var JolokiaGit = (function () {
-        function JolokiaGit(mbean, jolokia, localStorage, userDetails, branch) {
-            if (branch === void 0) { branch = "master"; }
-            this.mbean = mbean;
-            this.jolokia = jolokia;
-            this.localStorage = localStorage;
-            this.userDetails = userDetails;
-            this.branch = branch;
-        }
-        JolokiaGit.prototype.getRepositoryLabel = function (fn, error) {
-            return this.jolokia.request({ type: "read", mbean: this.mbean, attribute: ["RepositoryLabel"] }, Core.onSuccess(function (result) {
-                fn(result.value.RepositoryLabel);
-            }, { error: error }));
-        };
-        JolokiaGit.prototype.exists = function (branch, path, fn) {
-            var result;
-            if (angular.isDefined(fn) && fn) {
-                result = this.jolokia.execute(this.mbean, "exists", branch, path, Core.onSuccess(fn));
-            }
-            else {
-                result = this.jolokia.execute(this.mbean, "exists", branch, path);
-            }
-            if (angular.isDefined(result) && result) {
-                return true;
-            }
-            else {
-                return false;
-            }
-        };
-        JolokiaGit.prototype.read = function (branch, path, fn) {
-            return this.jolokia.execute(this.mbean, "read", branch, path, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.write = function (branch, path, commitMessage, contents, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "write", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.writeBase64 = function (branch, path, commitMessage, contents, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "writeBase64", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.createDirectory = function (branch, path, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "createDirectory", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.revertTo = function (branch, objectId, blobPath, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "revertTo", branch, objectId, blobPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.rename = function (branch, oldPath, newPath, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "rename", branch, oldPath, newPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.remove = function (branch, path, commitMessage, fn) {
-            var authorName = this.getUserName();
-            var authorEmail = this.getUserEmail();
-            return this.jolokia.execute(this.mbean, "remove", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.completePath = function (branch, completionText, directoriesOnly, fn) {
-            return this.jolokia.execute(this.mbean, "completePath", branch, completionText, directoriesOnly, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.history = function (branch, objectId, path, limit, fn) {
-            return this.jolokia.execute(this.mbean, "history", branch, objectId, path, limit, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.commitTree = function (commitId, fn) {
-            return this.jolokia.execute(this.mbean, "getCommitTree", commitId, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.commitInfo = function (commitId, fn) {
-            return this.jolokia.execute(this.mbean, "getCommitInfo", commitId, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.diff = function (objectId, baseObjectId, path, fn) {
-            return this.jolokia.execute(this.mbean, "diff", objectId, baseObjectId, path, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.getContent = function (objectId, blobPath, fn) {
-            return this.jolokia.execute(this.mbean, "getContent", objectId, blobPath, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.readJsonChildContent = function (path, nameWildcard, search, fn) {
-            return this.jolokia.execute(this.mbean, "readJsonChildContent", this.branch, path, nameWildcard, search, Core.onSuccess(fn));
-        };
-        JolokiaGit.prototype.branches = function (fn) {
-            return this.jolokia.execute(this.mbean, "branches", Core.onSuccess(fn));
-        };
-        // TODO move...
-        JolokiaGit.prototype.getUserName = function () {
-            return this.localStorage["gitUserName"] || this.userDetails.username || "anonymous";
-        };
-        JolokiaGit.prototype.getUserEmail = function () {
-            return this.localStorage["gitUserEmail"] || "anonymous@gmail.com";
-        };
-        return JolokiaGit;
-    })();
-    Git.JolokiaGit = JolokiaGit;
-})(Git || (Git = {}));
-
-/// <reference path="../../includes.ts"/>
 /**
  * @module Karaf
  */
@@ -10779,6 +10808,120 @@ var Karaf;
         }
     }]);
 })(Karaf || (Karaf = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="gitHelpers.ts"/>
+/**
+ * @module Git
+ * @main Git
+ */
+var Git;
+(function (Git) {
+    /**
+     * A default implementation which uses jolokia and the
+     * GitFacadeMXBean over JMX
+     *
+     * @class JolokiaGit
+     * @uses GitRepository
+     *
+     */
+    var JolokiaGit = (function () {
+        function JolokiaGit(mbean, jolokia, localStorage, userDetails, branch) {
+            if (branch === void 0) { branch = "master"; }
+            this.mbean = mbean;
+            this.jolokia = jolokia;
+            this.localStorage = localStorage;
+            this.userDetails = userDetails;
+            this.branch = branch;
+        }
+        JolokiaGit.prototype.getRepositoryLabel = function (fn, error) {
+            return this.jolokia.request({ type: "read", mbean: this.mbean, attribute: ["RepositoryLabel"] }, Core.onSuccess(function (result) {
+                fn(result.value.RepositoryLabel);
+            }, { error: error }));
+        };
+        JolokiaGit.prototype.exists = function (branch, path, fn) {
+            var result;
+            if (angular.isDefined(fn) && fn) {
+                result = this.jolokia.execute(this.mbean, "exists", branch, path, Core.onSuccess(fn));
+            }
+            else {
+                result = this.jolokia.execute(this.mbean, "exists", branch, path);
+            }
+            if (angular.isDefined(result) && result) {
+                return true;
+            }
+            else {
+                return false;
+            }
+        };
+        JolokiaGit.prototype.read = function (branch, path, fn) {
+            return this.jolokia.execute(this.mbean, "read", branch, path, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.write = function (branch, path, commitMessage, contents, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "write", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.writeBase64 = function (branch, path, commitMessage, contents, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "writeBase64", branch, path, commitMessage, authorName, authorEmail, contents, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.createDirectory = function (branch, path, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "createDirectory", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.revertTo = function (branch, objectId, blobPath, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "revertTo", branch, objectId, blobPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.rename = function (branch, oldPath, newPath, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "rename", branch, oldPath, newPath, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.remove = function (branch, path, commitMessage, fn) {
+            var authorName = this.getUserName();
+            var authorEmail = this.getUserEmail();
+            return this.jolokia.execute(this.mbean, "remove", branch, path, commitMessage, authorName, authorEmail, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.completePath = function (branch, completionText, directoriesOnly, fn) {
+            return this.jolokia.execute(this.mbean, "completePath", branch, completionText, directoriesOnly, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.history = function (branch, objectId, path, limit, fn) {
+            return this.jolokia.execute(this.mbean, "history", branch, objectId, path, limit, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.commitTree = function (commitId, fn) {
+            return this.jolokia.execute(this.mbean, "getCommitTree", commitId, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.commitInfo = function (commitId, fn) {
+            return this.jolokia.execute(this.mbean, "getCommitInfo", commitId, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.diff = function (objectId, baseObjectId, path, fn) {
+            return this.jolokia.execute(this.mbean, "diff", objectId, baseObjectId, path, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.getContent = function (objectId, blobPath, fn) {
+            return this.jolokia.execute(this.mbean, "getContent", objectId, blobPath, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.readJsonChildContent = function (path, nameWildcard, search, fn) {
+            return this.jolokia.execute(this.mbean, "readJsonChildContent", this.branch, path, nameWildcard, search, Core.onSuccess(fn));
+        };
+        JolokiaGit.prototype.branches = function (fn) {
+            return this.jolokia.execute(this.mbean, "branches", Core.onSuccess(fn));
+        };
+        // TODO move...
+        JolokiaGit.prototype.getUserName = function () {
+            return this.localStorage["gitUserName"] || this.userDetails.username || "anonymous";
+        };
+        JolokiaGit.prototype.getUserEmail = function () {
+            return this.localStorage["gitUserEmail"] || "anonymous@gmail.com";
+        };
+        return JolokiaGit;
+    })();
+    Git.JolokiaGit = JolokiaGit;
+})(Git || (Git = {}));
 
 /// <reference path="../../includes.ts"/>
 /**
@@ -17908,6 +18051,7 @@ $templateCache.put("plugins/camel/html/nodePropertiesView.html","<div class=\"ro
 $templateCache.put("plugins/camel/html/preferences.html","<div ng-controller=\"Camel.PreferencesController\">\n  <form class=\"form-horizontal\">\n\n    <label class=\"control-label\">Hide documentation for options</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelHideOptionDocumentation\">\n        <span class=\"help-block\">Whether to hide documentation in the properties view and Camel route editor</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Hide options with default values</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelHideOptionDefaultValue\">\n        <span class=\"help-block\">Whether to hide options that are using a default value in the properties view</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Hide options with unused values</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelHideOptionUnusedValue\">\n        <span class=\"help-block\">Whether to hide unused/empty options in the properties view</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Include Streams</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelTraceOrDebugIncludeStreams\">\n        <span class=\"help-block\">Whether to include stream based message body when using the tracer and debugger</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Maximum body length</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelMaximumTraceOrDebugBodyLength\" min=\"0\">\n        <span class=\"help-block\">The maximum length of the body before its clipped when using the tracer and debugger</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Maximum label length</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelMaximumLabelWidth\" min=\"0\">\n        <span class=\"help-block\">The maximum length of a label in Camel diagrams before it is clipped</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Do not use ID for label</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelIgnoreIdForLabel\">\n        <span class=\"help-block\">If enabled then we will ignore the ID value when viewing a pattern in a Camel diagram; otherwise we will use the ID value as the label (the tooltip will show the actual detail)</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Show Inflight Counter</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelShowInflightCounter\">\n        <span class=\"help-block\">Whether to show inflight counter in route diagram</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Route Metrics maximum seconds</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelRouteMetricMaxSeconds\" min=\"1\" max=\"100\">\n        <span class=\"help-block\">The maximum value in seconds used by the route metrics duration and histogram charts</span>\n      </div>\n    </div>\n\n  </form>\n</div>\n");
 $templateCache.put("plugins/camel/html/profileRoute.html","<div class=\"row\" ng-controller=\"Camel.ProfileRouteController\">\n\n    <div ng-show=\"initDone\">\n\n        <div class=\"row-fluid\">\n            <div class=\"pull-right\">\n                <hawtio-filter ng-model=\"gridOptions.filterOptions.filterText\"\n                               placeholder=\"Filter...\"></hawtio-filter>\n            </div>\n        </div>\n\n        <div class=\"row-fluid\">\n            <table class=\"table table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n        </div>\n\n    </div>\n\n    <div ng-hide=\"initDone\">\n        <p class=\"text-center\"><i class=\"fa fa-spinner fa-spin\"></i></p>\n    </div>\n\n</div>\n\n");
 $templateCache.put("plugins/camel/html/properties.html","<div ng-controller=\"Camel.PropertiesController\">\n\n  <div class=\"control-group inline-block\">\n    <form class=\"form-inline no-bottom-margin\">\n      <label>Hide Documentation:\n        <input type=\"checkbox\" ng-model=\"hideHelp\"\n               title=\"Hide documentation for the options\"/>\n      </label>\n      <label>Hide Default:\n        <input type=\"checkbox\" ng-model=\"hideDefault\"\n               title=\"Hide options with default values\"/>\n      </label>\n      <label>Hide Unused:\n        <input type=\"checkbox\" ng-model=\"hideUnused\"\n               title=\"Hide options with default values\"/>\n      </label>\n    </form>\n  </div>\n\n  <div ng-include=\"viewTemplate\"></div>\n</div>\n");
+$templateCache.put("plugins/camel/html/propertiesEndpoint.html","<div ng-controller=\"Camel.PropertiesEndpointController\">\n\n  <div class=\"control-group inline-block\">\n    <form class=\"form-inline no-bottom-margin\">\n      <label>Hide Documentation:\n        <input type=\"checkbox\" ng-model=\"hideHelp\"\n               title=\"Hide documentation for the options\"/>\n      </label>\n      <label>Hide Default:\n        <input type=\"checkbox\" ng-model=\"hideDefault\"\n               title=\"Hide options with default values\"/>\n      </label>\n      <label>Hide Unused:\n        <input type=\"checkbox\" ng-model=\"hideUnused\"\n               title=\"Hide options with unused/empty values\"/>\n      </label>\n    </form>\n  </div>\n\n  <div ng-include=\"viewTemplate\"></div>\n</div>\n");
 $templateCache.put("plugins/camel/html/restRegistry.html","<div class=\"row\" ng-controller=\"Camel.RestServiceController\">\n\n  <div ng-show=\"selectedMBean\">\n\n    <div class=\"row\" ng-show=\"data.length > 0\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline no-bottom-margin\">\n          <fieldset>\n            <div class=\"control-group inline-block\">\n              <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\"\n                     ng-model=\"gridOptions.filterOptions.filterText\">\n            </div>\n          </fieldset>\n        </form>\n      </div>\n    </div>\n\n    <div class=\"row\" ng-show=\"data.length > 0\">\n      <table class=\"table table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n    </div>\n    <div class=\"row well\" ng-show=\"data.length == 0\">\n      <form>\n        <p>There are no Rest Services registered in this CamelContext.</p>\n      </form>\n    </div>\n  </div>\n\n  <div ng-hide=\"selectedMBean\">\n    <p class=\"text-center\"><i class=\"fa fa-spinner fa-spin\"></i></p>\n  </div>\n\n</div>\n\n");
 $templateCache.put("plugins/camel/html/routeMetrics.html","<div class=\"row\" ng-controller=\"Camel.RouteMetricsController\">\n\n  <div class=\"row\">\n    <div class=\"pull-right\">\n      <form class=\"form-inline no-bottom-margin\">\n        <fieldset>\n          <div class=\"control-group inline-block\">\n            <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"filterText\">\n          </div>\n        </fieldset>\n      </form>\n    </div>\n  </div>\n\n  <div class=\"row\" ng-show=\"!initDone\">\n    Loading...\n  </div>\n\n  <div class=\"col-md-8 centered well\" ng-show=\"initDone && metricDivs.length === 0\">\n    <form>\n      This Camel context has no route metrics data.\n    </form>\n  </div>\n\n  <!-- div to contain the graphs -->\n  <div class=\"metricsWatcher container mainContent\">\n    <div id=\"{{metric.id}}\" class=\"row\" ng-repeat=\"metric in metricDivs track by $index\" style=\"{{filterByRoute(metric)}}\"></div>\n  </div>\n\n</div>\n\n");
 $templateCache.put("plugins/camel/html/routes.html","<style>\n\n  #node-CLOSED rect {\n    stroke-width: 1px;\n    fill: #f88;\n  }\n\n  .node:hover,\n  .node > *:hover,\n  rect > *:hover {\n    cursor: pointer;\n    opacity: 0.6;\n  }\n\n  path.edge {\n    fill: none;\n    stroke: #666;\n    stroke-width: 3px;\n  }\n\n  .edge:hover {\n    cursor: pointer;\n    opacity: 0.4;\n  }\n\n  text.counter {\n    stroke: #080;\n  }\n\n  text.inflight {\n    stroke: #08f;\n  }\n</style>\n<div ng-class=\"{\'wiki-fixed\' : !isJmxTab}\" id=\"canvas\" ng-controller=\"Camel.RouteController\">\n  <!--\n  <div ng-hide=\"isJmxTab\">\n    <ng-include src=\"\'plugins/camel/html/breadcrumbBar.html\'\"></ng-include>\n  </div>\n  -->\n  <svg class=\"camel-diagram\" width=0 height=0>\n    <defs>\n      <marker id=\"arrowhead\"\n              viewBox=\"0 0 10 10\"\n              refX=\"8\"\n              refY=\"5\"\n              markerUnits=\"strokeWidth\"\n              markerWidth=\"4\"\n              markerHeight=\"3\"\n              orient=\"auto\"\n              style=\"fill: #333\">\n        <path d=\"M 0 0 L 10 5 L 0 10 z\"></path>\n      </marker>\n\n      <filter id=\"drop-shadow\" width=\"300%\" height=\"300%\">\n        <feGaussianBlur in=\"SourceAlpha\" result=\"blur-out\" stdDeviation=\"19\"/>\n        <feOffset in=\"blur-out\" result=\"the-shadow\" dx=\"2\" dy=\"2\"/>\n        <feComponentTransfer xmlns=\"http://www.w3.org/2000/svg\">\n          <feFuncA type=\"linear\" slope=\"0.2\"/>\n        </feComponentTransfer>\n        <feMerge xmlns=\"http://www.w3.org/2000/svg\">\n          <feMergeNode/>\n          <feMergeNode in=\"SourceGraphic\"/>\n        </feMerge>\n      </filter>\n      <linearGradient id=\"rect-gradient\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\">\n        <stop offset=\"0%\" style=\"stop-color:rgb(254,254,255);stop-opacity:1\"/>\n        <stop offset=\"100%\" style=\"stop-color:rgb(247,247,255);stop-opacity:1\"/>\n      </linearGradient>\n      <linearGradient id=\"rect-select-gradient\" x1=\"0%\" y1=\"0%\" x2=\"0%\" y2=\"100%\">\n        <stop offset=\"0%\" style=\"stop-color: #ffffa0; stop-opacity: 0.7\"/>\n        <stop offset=\"100%\" style=\"stop-color: #f0f0a0; stop-opacity: 0.7\"/>\n      </linearGradient>\n    </defs>\n  </svg>\n</div>\n\n");

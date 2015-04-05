@@ -25,6 +25,7 @@
 /// <reference path="d.ts/camel/ts/preferences.d.ts"/>
 /// <reference path="d.ts/camel/ts/profile.d.ts"/>
 /// <reference path="d.ts/camel/ts/properties.d.ts"/>
+/// <reference path="d.ts/camel/ts/propertiesEndpoint.d.ts"/>
 /// <reference path="d.ts/camel/ts/restRegistry.d.ts"/>
 /// <reference path="d.ts/camel/ts/routeMetrics.d.ts"/>
 /// <reference path="d.ts/camel/ts/routes.d.ts"/>
@@ -42,7 +43,6 @@
 /// <reference path="d.ts/dozer/ts/model.d.ts"/>
 /// <reference path="d.ts/dozer/ts/schemaConfigure.d.ts"/>
 /// <reference path="d.ts/fabric/ts/fabricHelpers.d.ts"/>
-/// <reference path="d.ts/git/ts/git.d.ts"/>
 /// <reference path="d.ts/karaf/ts/karafHelpers.d.ts"/>
 /// <reference path="d.ts/karaf/ts/karafPlugin.d.ts"/>
 /// <reference path="d.ts/karaf/ts/feature.d.ts"/>
@@ -51,6 +51,7 @@
 /// <reference path="d.ts/karaf/ts/scr-component.d.ts"/>
 /// <reference path="d.ts/karaf/ts/scr-components.d.ts"/>
 /// <reference path="d.ts/karaf/ts/server.d.ts"/>
+/// <reference path="d.ts/git/ts/git.d.ts"/>
 /// <reference path="d.ts/maven/ts/mavenHelpers.d.ts"/>
 /// <reference path="d.ts/maven/ts/mavenPlugin.d.ts"/>
 /// <reference path="d.ts/maven/ts/artifact.d.ts"/>
