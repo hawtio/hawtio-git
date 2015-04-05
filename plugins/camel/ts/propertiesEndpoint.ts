@@ -1,5 +1,6 @@
 /// <reference path="../../includes.ts"/>
 /// <reference path="camelPlugin.ts"/>
+
 module Camel {
 
   _module.controller("Camel.PropertiesEndpointController", ["$scope", "workspace", "localStorage", "jolokia", ($scope, workspace:Workspace, localStorage:WindowLocalStorage, jolokia) => {
@@ -155,7 +156,7 @@ module Camel {
         }
         $scope.labels = labels;
 
-        $scope.viewTemplate = "plugin/camel/html/nodePropertiesView.html";
+        $scope.viewTemplate = "plugins/camel/html/nodePropertiesView.html";
 
         Core.$apply($scope);
       }
