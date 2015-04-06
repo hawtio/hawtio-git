@@ -20,7 +20,6 @@ module Camel {
     $routeProvider
             .when('/camel/browseEndpoint', {templateUrl: 'plugins/camel/html/browseEndpoint.html'})
             .when('/camel/endpoint/browse/:contextId/*endpointPath', {templateUrl: 'plugins/camel/html/browseEndpoint.html'})
-            .when('/camel/propertiesEndpoint', {templateUrl: 'plugins/camel/html/propertiesEndpoint.html'})
             .when('/camel/createEndpoint', {templateUrl: 'plugins/camel/html/createEndpoint.html'})
             .when('/camel/route/diagram/:contextId/:routeId', {templateUrl: 'plugins/camel/html/routes.html'})
             .when('/camel/routes', {templateUrl: 'plugins/camel/html/routes.html'})
@@ -34,7 +33,9 @@ module Camel {
             .when('/camel/traceRoute', {templateUrl: 'plugins/camel/html/traceRoute.html'})
             .when('/camel/debugRoute', {templateUrl: 'plugins/camel/html/debug.html'})
             .when('/camel/profileRoute', {templateUrl: 'plugins/camel/html/profileRoute.html'})
-            .when('/camel/properties', {templateUrl: 'plugins/camel/html/properties.html'});
+            .when('/camel/properties', {templateUrl: 'plugins/camel/html/properties.html'})
+            .when('/camel/propertiesComponent', {templateUrl: 'plugins/camel/html/propertiesComponent.html'})
+            .when('/camel/propertiesEndpoint', {templateUrl: 'plugins/camel/html/propertiesEndpoint.html'});
   }]);
 
   _module.factory('tracerStatus',function () {
@@ -322,6 +323,16 @@ module Camel {
         && Camel.isCamelVersionEQGT(2, 15, workspace, jolokia)
         && workspace.hasInvokeRights(workspace.selection, "explainEndpointJson"),
       href: () => "/camel/propertiesEndpoint" + workspace.hash()
+    });
+    // TODO: add workspace isCamelComponent
+    tab.tabs.push({
+      id: 'camel-component-properties',
+      title: () => '<i class="fa list"></i> Properties',
+      //title: "Show the component properties",
+      show: () =>
+        Camel.isCamelVersionEQGT(2, 15, workspace, jolokia)
+        && workspace.hasInvokeRights(workspace.selection, "explainComponentJson"),
+      href: () => "/camel/propertiesComponent" + workspace.hash()
     });
     tab.tabs.push({
       id: 'camel-debug',
