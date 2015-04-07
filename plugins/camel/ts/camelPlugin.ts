@@ -312,7 +312,7 @@ module Camel {
         && (workspace.isCamelContext() || workspace.isRoutesFolder())
         && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia)
         && getSelectionCamelRestRegistry(workspace)
-        && hasRestServices(workspace, jolokia)
+        /*&& hasRestServices(workspace, jolokia)*/ // TODO: optimize this so we only invoke it one time until reload
         && workspace.hasInvokeRightsForName(getSelectionCamelRestRegistry(workspace), "listRestServices"),
       href: () => "/camel/restRegistry" + workspace.hash()
     });

@@ -29,6 +29,13 @@ module Camel {
   });
 
 
+  /**
+   * Does the given CamelContext has any rest services
+   *
+   * @param workspace
+   * @param jolokia
+   * @returns {boolean}
+   */
   export function hasRestServices(workspace:Workspace, jolokia):boolean {
     var mbean = getSelectionCamelRestRegistry(workspace);
 
