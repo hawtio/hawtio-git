@@ -15,6 +15,7 @@ declare module Camel {
     var defaultHideOptionUnusedValue: boolean;
     var _apacheCamelModel: any;
     var _jsonSchema: any;
+    function hasRestServices(workspace: Workspace, jolokia: any): boolean;
     /**
      * Looks up the route XML for the given context and selected route and
      * processes the selected route's XML with the given function

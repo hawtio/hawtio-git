@@ -29,6 +29,18 @@ module Camel {
   });
 
 
+  export function hasRestServices(workspace:Workspace, jolokia):boolean {
+    var mbean = getSelectionCamelRestRegistry(workspace);
+
+    if (mbean) {
+      var reply = jolokia.request({ type: "read", mbean: mbean, attribute: ["NumberOfRestServices"] });
+      var num:number = reply.value["NumberOfRestServices"];
+      return num > 0;
+    } else {
+      return false;
+    }
+  }
+
   /**
    * Looks up the route XML for the given context and selected route and
    * processes the selected route's XML with the given function
