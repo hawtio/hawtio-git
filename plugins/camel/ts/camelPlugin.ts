@@ -311,6 +311,7 @@ module Camel {
         !workspace.isEndpointsFolder() && !workspace.isEndpoint()
         && (workspace.isCamelContext() || workspace.isRoutesFolder())
         && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia)
+        && getSelectionCamelRestRegistry(workspace)
         && workspace.hasInvokeRightsForName(getSelectionCamelRestRegistry(workspace), "listRestServices"),
       href: () => "/camel/restRegistry" + workspace.hash()
     });
@@ -332,12 +333,12 @@ module Camel {
         && workspace.hasInvokeRights(workspace.selection, "explainEndpointJson"),
       href: () => "/camel/propertiesEndpoint" + workspace.hash()
     });
-    // TODO: add workspace isCamelComponent
     tab.tabs.push({
       id: 'camel-component-properties',
       title: () => '<i class="fa fa-list"></i> Properties',
       //title: "Show the component properties",
-      show: () => workspace.isTopTabActive("camel")
+      show: () =>
+        workspace.isComponent()
         && Camel.isCamelVersionEQGT(2, 15, workspace, jolokia)
         && workspace.hasInvokeRights(workspace.selection, "explainComponentJson"),
       href: () => "/camel/propertiesComponent" + workspace.hash()
@@ -412,6 +413,7 @@ module Camel {
               var contextsFolder = entries["context"];
               var routesNode = entries["routes"];
               var endpointsNode = entries["endpoints"];
+              var componentsNode = entries["components"];
               if (contextsFolder) {
                 var contextNode = contextsFolder.children[0];
                 if (contextNode) {
@@ -425,7 +427,7 @@ module Camel {
                     folder.entries = contextNode.entries;
                     folder.typeName = contextNode.typeName;
                     folder.key = contextNode.key;
-                    folder.version = contextNode.version
+                    folder.version = contextNode.version;
                     if (routesNode) {
                       var routesFolder = new Folder("Routes");
                       routesFolder.addClass = "org-apache-camel-routes-folder";
@@ -454,11 +456,29 @@ module Camel {
                       endpointsFolder.key = endpointsNode.key;
                       endpointsFolder.domain = endpointsNode.domain;
                     }
+                    if (componentsNode) {
+                      var componentsFolder = new Folder("Components");
+                      componentsFolder.addClass = "org-apache-camel-components-folder";
+                      componentsFolder.parent = contextsFolder;
+                      componentsFolder.children = componentsNode.children;
+                      angular.forEach(endpointsFolder.children, (n) => {
+                        n.addClass = "org-apache-camel-components";
+                        if (!getContextId(n)) {
+                          n.entries["context"] = contextNode.entries["context"];
+                        }
+                      });
+                      folder.children.push(componentsFolder);
+                      componentsFolder.entries = contextNode.entries;
+                      componentsFolder.typeName = "components";
+                      componentsFolder.key = componentsNode.key;
+                      componentsFolder.domain = componentsNode.domain;
+                    }
+
                     var jmxNode = new Folder("MBeans");
 
-                    // lets add all the entries which are not one context/routes/endpoints
+                    // lets add all the entries which are not one context/routes/endpoints/components as MBeans
                     angular.forEach(entries, (jmxChild, name) => {
-                      if (name !== "context" && name !== "routes" && name !== "endpoints") {
+                      if (name !== "context" && name !== "routes" && name !== "endpoints" && name !== "components") {
                         jmxNode.children.push(jmxChild);
                       }
                     });
