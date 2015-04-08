@@ -148,7 +148,7 @@ module Wiki {
 
     $scope.save = () => {
       // generate the new XML
-      if ($scope.rootFolder) {
+      if ($scope.modified && $scope.rootFolder) {
         var xmlNode = Camel.generateXmlFromFolder($scope.rootFolder);
         if (xmlNode) {
           var text = Core.xmlNodeToString(xmlNode);
