@@ -27,7 +27,7 @@
                data-placement="bottom">
               <i class="fa fa-picture"></i> Canvas</a></li>
           <li ng-class="{active : false}">
-            <a ng-href='{{startLink}}/camel/properties/{{pageId}}' title="Switch to the tree based view"
+            <a href='' ng-click='confirmSwitchToTreeView()' title="Switch to the tree based view"
                data-placement="bottom">
               <i class="fa fa-sitemap"></i> Tree</a></li>
 
@@ -41,8 +41,7 @@
                data-placement="bottom">
               <i class="fa fa-magic"></i> Layout</a></li>
 
-          <li class="pull-right" style="margin-top: 0; margin-bottom: 0;">
-            </li>
+          <li class="pull-right" style="margin-top: 0; margin-bottom: 0;"></li>
 
           <!--
           <li class="pull-right">
@@ -86,36 +85,36 @@
             <div class="modal-body">
 
               <div ng-show="!selectedEndpoint"> -->
-                <!-- pattern form --> <!--
+        <!-- pattern form --> <!--
                 <div simple-form name="formEditor" entity='nodeData' data='nodeModel' schema="schema"
                      onsubmit="updatePropertiesAndCloseDialog"></div>
               </div>
               <div ng-show="selectedEndpoint"> -->
-                <!-- endpoint form -->
-                <!--
-                <div class="control-group">
-                  <label class="control-label" for="endpointPath">Endpoint</label>
+        <!-- endpoint form -->
+        <!--
+        <div class="control-group">
+          <label class="control-label" for="endpointPath">Endpoint</label>
 
-                  <div class="controls">
-                    <input id="endpointPath" class="col-md-10" type="text" ng-model="endpointPath" placeholder="name"
-                           typeahead="title for title in endpointCompletions($viewValue) | filter:$viewValue"
-                           typeahead-editable='true'
-                           min-length="1">
-                  </div>
-                </div>
-                <div simple-form name="formEditor" entity='endpointParameters' data='endpointSchema'
-                     schema="schema"></div>
-              </div>
-
-
-            </div>
-            <div class="modal-footer">
-              <input class="btn btn-primary add" type="submit" ng-click="updatePropertiesAndCloseDialog()" value="OK">
-              <button class="btn btn-warning cancel" type="button" ng-click="propertiesDialog.close()">Cancel</button>
-            </div>
-          </form>
+          <div class="controls">
+            <input id="endpointPath" class="span10" type="text" ng-model="endpointPath" placeholder="name"
+                   typeahead="title for title in endpointCompletions($viewValue) | filter:$viewValue"
+                   typeahead-editable='true'
+                   min-length="1">
+          </div>
         </div>
-        -->
+        <div simple-form name="formEditor" entity='endpointParameters' data='endpointSchema'
+             schema="schema"></div>
+      </div>
+
+
+    </div>
+    <div class="modal-footer">
+      <input class="btn btn-primary add" type="submit" ng-click="updatePropertiesAndCloseDialog()" value="OK">
+      <button class="btn btn-warning cancel" type="button" ng-click="propertiesDialog.close()">Cancel</button>
+    </div>
+  </form>
+</div>
+-->
 
       </div>
     </div>
@@ -199,5 +198,12 @@
         </div>
       </div>
     </div>
+
+    <div hawtio-confirm-dialog="switchToTreeView.show" ok-button-text="Yes" cancel-button-text="No" on-ok="doSwitchToTreeView()" title="You have unsaved changes">
+      <div class="dialog-body">
+        <p>Do you really want to switch views?</p>
+      </div>
+    </div>
+
   </div>
 </div>

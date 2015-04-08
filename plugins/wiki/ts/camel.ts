@@ -9,11 +9,13 @@
  */
 module Wiki {
 
-  _module.controller("Wiki.CamelController", ["$scope", "$location", "$routeParams", "localStorage", "workspace", "wikiRepository", "jolokia", ($scope, $location, $routeParams, localStorage:WindowLocalStorage, workspace:Workspace, wikiRepository:GitWikiRepository, jolokia) => {
+  export var CamelController = _module.controller("Wiki.CamelController", ["$scope", "$location", "$routeParams", "localStorage", "workspace", "wikiRepository", "jolokia", ($scope, $location, $routeParams, localStorage:WindowLocalStorage, workspace:Workspace, wikiRepository:GitWikiRepository, jolokia) => {
     Wiki.initScope($scope, $routeParams, $location);
     Camel.initEndpointChooserScope($scope, $location, localStorage, workspace, jolokia);
     $scope.schema = Camel.getConfiguredCamelModel();
     $scope.modified = false;
+
+    $scope.switchToCanvasView = new UI.Dialog();
 
     $scope.findProfileCamelContext = true;
     $scope.camelSelectionDetails = {
@@ -26,21 +28,21 @@ module Wiki {
     };
 
     $scope.camelSubLevelTabs = [
-      {
-        content: '<i class="fa fa-picture"></i> Canvas',
-        title: "Edit the diagram in a draggy droppy way",
-        isValid: (workspace:Workspace) => true,
-        href: () => Wiki.startLink($scope.branch) + "/camel/canvas/" + $scope.pageId
-      },
-      {
-        content: '<i class=" fa fa-sitemap"></i> Tree',
+      /*{
+       content: '<i class="icon-picture"></i> Canvas',
+       title: "Edit the diagram in a draggy droppy way",
+       isValid: (workspace:Workspace) => true,
+       href: () => Wiki.startLink($scope.branch) + "/camel/canvas/" + $scope.pageId
+       },
+       */{
+        content: '<i class=" icon-sitemap"></i> Tree',
         title: "View the routes as a tree",
         isValid: (workspace:Workspace) => true,
         href: () => Wiki.startLink($scope.branch) + "/camel/properties/" + $scope.pageId
       },
       /*
        {
-       content: '<i class="fa fa-sitemap"></i> Diagram',
+       content: '<i class="icon-sitemap"></i> Diagram',
        title: "View a diagram of the route",
        isValid: (workspace:Workspace) => true,
        href: () => Wiki.startLink($scope.branch) + "/camel/diagram/" + $scope.pageId
@@ -48,7 +50,7 @@ module Wiki {
        */
     ];
 
-    var routeModel = Camel._apacheCamelModel.definitions.route;
+    var routeModel = _apacheCamelModel.definitions.route;
     routeModel["_id"] = "route";
 
     $scope.addDialog = new UI.Dialog();
@@ -62,7 +64,7 @@ module Wiki {
     $scope.paletteActivations = ["Routing_aggregate"];
 
     // load $scope.paletteTree
-    angular.forEach(Camel._apacheCamelModel.definitions, (value, key) => {
+    angular.forEach(_apacheCamelModel.definitions, (value, key) => {
       if (value.group) {
         var group = (key === "route") ? $scope.paletteTree : $scope.paletteTree.getOrElse(value.group);
         if (!group.key) {
@@ -276,9 +278,9 @@ module Wiki {
         //var nodeName = routeXmlNode.localName;
         $scope.nodeModel = Camel.getCamelSchema(nodeName);
         if ($scope.nodeModel) {
-          $scope.propertiesTemplate = "plugins/wiki/html/camelPropertiesEdit.html";
+          $scope.propertiesTemplate = "app/wiki/html/camelPropertiesEdit.html";
         }
-        $scope.diagramTemplate = "plugins/camel/html/routes.html";
+        $scope.diagramTemplate = "app/camel/html/routes.html";
         Core.$apply($scope);
       }
     };
@@ -467,5 +469,18 @@ module Wiki {
        }
        */
     }
+
+    $scope.doSwitchToCanvasView = () => {
+      $location.url(Core.trimLeading((Wiki.startLink($scope.branch) + "/camel/canvas/" + $scope.pageId), '#'));
+    };
+
+    $scope.confirmSwitchToCanvasView = () => {
+      if ($scope.modified) {
+        $scope.switchToCanvasView.open();
+      } else {
+        $scope.doSwitchToCanvasView();
+      }
+    };
+
   }]);
 }
