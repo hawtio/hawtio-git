@@ -4848,21 +4848,7 @@ var Camel;
             index: -2
         });
         tab.tabs.push({
-            id: 'camel-inflight-exchanges',
-            title: function () { return '<i class="fa fa-bar-chart"></i> Inflight Exchanges'; },
-            //title: "View the entire JVMs Camel inflight exchanges",
-            show: function () { return !workspace.isEndpointsFolder() && !workspace.isEndpoint() && (workspace.isCamelContext() || workspace.isRoutesFolder() || workspace.isRoute()) && Camel.isCamelVersionEQGT(2, 15, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelInflightRepository(workspace), "browse"); },
-            href: function () { return "/camel/inflight" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-route-metrics',
-            title: function () { return '<i class="fa fa-bar-chart"></i> Route Metrics'; },
-            //title: "View the entire JVMs Camel route metrics",
-            show: function () { return !workspace.isEndpointsFolder() && !workspace.isEndpoint() && (workspace.isCamelContext() || workspace.isRoutesFolder()) && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia) && Camel.getSelectionCamelRouteMetrics(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelRouteMetrics(workspace), "dumpStatisticsAsJson"); },
-            href: function () { return "/camel/routeMetrics" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-source',
+            id: 'camel-route-source',
             title: function () { return '<i class=" fa fa-file-code-o"></i> Source'; },
             //title: "View the source of the Camel routes",
             show: function () { return !workspace.isEndpointsFolder() && !workspace.isEndpoint() && (workspace.isRoute() || workspace.isRoutesFolder()) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"); },
@@ -4870,32 +4856,11 @@ var Camel;
             href: function () { return "/camel/source" + workspace.hash(); }
         });
         tab.tabs.push({
-            id: 'camel-properties',
+            id: 'camel-route-properties',
             title: function () { return '<i class=" fa fa-edit"></i> Properties'; },
             //title: "View the pattern properties",
             show: function () { return Camel.getSelectedRouteNode(workspace); },
             href: function () { return "/camel/properties" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-type-converters',
-            title: function () { return '<i class="fa fa-list"></i> Type Converters'; },
-            //title: "List all the type converters registered in the context",
-            show: function () { return !workspace.isEndpointsFolder() && !workspace.isEndpoint() && (workspace.isCamelContext() || workspace.isRoutesFolder()) && Camel.isCamelVersionEQGT(2, 13, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTypeConverter(workspace), "listTypeConverters"); },
-            href: function () { return "/camel/typeConverter" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-rest-services',
-            title: function () { return '<i class="fa fa-list"></i> Rest Services'; },
-            //title: "List all the REST services registered in the context",
-            show: function () { return !workspace.isEndpointsFolder() && !workspace.isEndpoint() && (workspace.isCamelContext() || workspace.isRoutesFolder()) && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia) && Camel.getSelectionCamelRestRegistry(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelRestRegistry(workspace), "listRestServices"); },
-            href: function () { return "/camel/restRegistry" + workspace.hash(); }
-        });
-        tab.tabs.push({
-            id: 'camel-browser',
-            title: function () { return '<i class="fa fa-envelope"></i> Browse'; },
-            //title: "Browse the messages on the endpoint",
-            show: function () { return workspace.isEndpoint() && workspace.hasInvokeRights(workspace.selection, "browseAllMessagesAsXml"); },
-            href: function () { return "/camel/browseEndpoint" + workspace.hash(); }
         });
         tab.tabs.push({
             id: 'camel-endpoint-properties',
@@ -4912,35 +4877,70 @@ var Camel;
             href: function () { return "/camel/propertiesComponent" + workspace.hash(); }
         });
         tab.tabs.push({
-            id: 'camel-debug',
-            title: function () { return '<i class="fa fa-stethoscope"></i> Debug'; },
-            //title: "Debug the Camel route",
-            show: function () { return workspace.isRoute() && Camel.getSelectionCamelDebugMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelDebugMBean(workspace), "getBreakpoints"); },
-            href: function () { return "/camel/debugRoute" + workspace.hash(); }
+            id: 'camel-inflight-exchanges',
+            title: function () { return '<i class="fa fa-bar-chart"></i> Inflight Exchanges'; },
+            //title: "View the entire JVMs Camel inflight exchanges",
+            show: function () { return !workspace.isEndpointsFolder() && !workspace.isEndpoint() && !workspace.isComponentsFolder() && !workspace.isComponent() && (workspace.isCamelContext() || workspace.isRoutesFolder() || workspace.isRoute()) && Camel.isCamelVersionEQGT(2, 15, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelInflightRepository(workspace), "browse"); },
+            href: function () { return "/camel/inflight" + workspace.hash(); }
         });
         tab.tabs.push({
-            id: 'camel-trace',
-            title: function () { return '<i class="fa fa-envelope"></i> Trace'; },
-            //title: "Trace the messages flowing through the Camel route",
-            show: function () { return workspace.isRoute() && Camel.getSelectionCamelTraceMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"); },
-            href: function () { return "/camel/traceRoute" + workspace.hash(); }
+            id: 'camel-route-metrics',
+            title: function () { return '<i class="fa fa-bar-chart"></i> Route Metrics'; },
+            //title: "View the entire JVMs Camel route metrics",
+            show: function () { return !workspace.isEndpointsFolder() && !workspace.isEndpoint() && (workspace.isCamelContext() || workspace.isRoutesFolder()) && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia) && Camel.getSelectionCamelRouteMetrics(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelRouteMetrics(workspace), "dumpStatisticsAsJson"); },
+            href: function () { return "/camel/routeMetrics" + workspace.hash(); }
         });
         tab.tabs.push({
-            id: 'camel-profile',
+            id: 'camel-rest-services',
+            title: function () { return '<i class="fa fa-list"></i> Rest Services'; },
+            //title: "List all the REST services registered in the context",
+            show: function () { return !workspace.isEndpointsFolder() && !workspace.isEndpoint() && !workspace.isComponentsFolder() && !workspace.isComponent() && (workspace.isCamelContext() || workspace.isRoutesFolder()) && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia) && Camel.getSelectionCamelRestRegistry(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelRestRegistry(workspace), "listRestServices"); },
+            href: function () { return "/camel/restRegistry" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-type-converters',
+            title: function () { return '<i class="fa fa-list"></i> Type Converters'; },
+            //title: "List all the type converters registered in the context",
+            show: function () { return !workspace.isEndpointsFolder() && !workspace.isEndpoint() && !workspace.isComponentsFolder() && !workspace.isComponent() && (workspace.isCamelContext() || workspace.isRoutesFolder()) && Camel.isCamelVersionEQGT(2, 13, workspace, jolokia) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTypeConverter(workspace), "listTypeConverters"); },
+            href: function () { return "/camel/typeConverter" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-route-profile',
             title: function () { return '<i class="fa fa-bar-chart"></i> Profile'; },
             //title: "Profile the messages flowing through the Camel route",
             show: function () { return workspace.isRoute() && Camel.getSelectionCamelTraceMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"); },
             href: function () { return "/camel/profileRoute" + workspace.hash(); }
         });
         tab.tabs.push({
-            id: 'camel-send',
+            id: 'camel-route-debug',
+            title: function () { return '<i class="fa fa-stethoscope"></i> Debug'; },
+            //title: "Debug the Camel route",
+            show: function () { return workspace.isRoute() && Camel.getSelectionCamelDebugMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelDebugMBean(workspace), "getBreakpoints"); },
+            href: function () { return "/camel/debugRoute" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-route-trace',
+            title: function () { return '<i class="fa fa-envelope"></i> Trace'; },
+            //title: "Trace the messages flowing through the Camel route",
+            show: function () { return workspace.isRoute() && Camel.getSelectionCamelTraceMBean(workspace) && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"); },
+            href: function () { return "/camel/traceRoute" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-endpoint-browser',
+            title: function () { return '<i class="fa fa-envelope"></i> Browse'; },
+            //title: "Browse the messages on the endpoint",
+            show: function () { return workspace.isEndpoint() && workspace.hasInvokeRights(workspace.selection, "browseAllMessagesAsXml"); },
+            href: function () { return "/camel/browseEndpoint" + workspace.hash(); }
+        });
+        tab.tabs.push({
+            id: 'camel-endpoint-send',
             title: function () { return '<i class="fa fa-pencil"></i> Send'; },
             //title: "Send a message to this endpoint",
             show: function () { return workspace.isEndpoint() && workspace.hasInvokeRights(workspace.selection, workspace.selection.domain === "org.apache.camel" ? "sendBodyAndHeaders" : "sendTextMessage"); },
             href: function () { return "/camel/sendMessage" + workspace.hash(); }
         });
         tab.tabs.push({
-            id: 'camel-endpoint',
+            id: 'camel-endpoint-create',
             title: function () { return '<i class="fa fa-plus"></i> Endpoint'; },
             //title: "Create a new endpoint",
             show: function () { return workspace.isEndpointsFolder() && workspace.hasInvokeRights(workspace.selection, "createEndpoint"); },

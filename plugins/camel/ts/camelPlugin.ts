@@ -252,11 +252,50 @@ module Camel {
       index: -2
     });
     tab.tabs.push({
+      id: 'camel-route-source',
+      title: () => '<i class=" fa fa-file-code-o"></i> Source',
+      //title: "View the source of the Camel routes",
+      show: () =>
+      !workspace.isEndpointsFolder() && !workspace.isEndpoint()
+      && (workspace.isRoute() || workspace.isRoutesFolder())
+      && workspace.hasInvokeRightsForName(getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"),
+      isSelected: () => workspace.isLinkActive('camel/source'),
+      href: () => "/camel/source" + workspace.hash()
+    });
+    tab.tabs.push({
+      id: 'camel-route-properties',
+      title: () => '<i class=" fa fa-edit"></i> Properties',
+      //title: "View the pattern properties",
+      show: () => getSelectedRouteNode(workspace),
+      href: () => "/camel/properties" + workspace.hash()
+    });
+    tab.tabs.push({
+      id: 'camel-endpoint-properties',
+      title: () => '<i class="fa fa-list"></i> Properties',
+      //title: "Show the endpoint properties",
+      show: () =>
+      workspace.isEndpoint()
+      && Camel.isCamelVersionEQGT(2, 15, workspace, jolokia)
+      && workspace.hasInvokeRights(workspace.selection, "explainEndpointJson"),
+      href: () => "/camel/propertiesEndpoint" + workspace.hash()
+    });
+    tab.tabs.push({
+      id: 'camel-component-properties',
+      title: () => '<i class="fa fa-list"></i> Properties',
+      //title: "Show the component properties",
+      show: () =>
+      workspace.isComponent()
+      && Camel.isCamelVersionEQGT(2, 15, workspace, jolokia)
+      && workspace.hasInvokeRights(workspace.selection, "explainComponentJson"),
+      href: () => "/camel/propertiesComponent" + workspace.hash()
+    });
+    tab.tabs.push({
       id: 'camel-inflight-exchanges',
       title: () => '<i class="fa fa-bar-chart"></i> Inflight Exchanges',
       //title: "View the entire JVMs Camel inflight exchanges",
       show: () =>
         !workspace.isEndpointsFolder() && !workspace.isEndpoint()
+        && !workspace.isComponentsFolder() && !workspace.isComponent()
         && (workspace.isCamelContext() || workspace.isRoutesFolder() || workspace.isRoute())
         && Camel.isCamelVersionEQGT(2, 15, workspace, jolokia)
         && workspace.hasInvokeRightsForName(getSelectionCamelInflightRepository(workspace), "browse"),
@@ -275,40 +314,12 @@ module Camel {
       href: () => "/camel/routeMetrics" + workspace.hash()
     });
     tab.tabs.push({
-      id: 'camel-source',
-      title: () => '<i class=" fa fa-file-code-o"></i> Source',
-      //title: "View the source of the Camel routes",
-      show: () =>
-        !workspace.isEndpointsFolder() && !workspace.isEndpoint()
-        && (workspace.isRoute() || workspace.isRoutesFolder())
-        && workspace.hasInvokeRightsForName(getSelectionCamelContextMBean(workspace), "dumpRoutesAsXml"),
-      isSelected: () => workspace.isLinkActive('camel/source'),
-      href: () => "/camel/source" + workspace.hash()
-    });
-    tab.tabs.push({
-      id: 'camel-properties',
-      title: () => '<i class=" fa fa-edit"></i> Properties',
-      //title: "View the pattern properties",
-      show: () => getSelectedRouteNode(workspace),
-      href: () => "/camel/properties" + workspace.hash()
-    });
-    tab.tabs.push({
-      id: 'camel-type-converters',
-      title: () => '<i class="fa fa-list"></i> Type Converters',
-      //title: "List all the type converters registered in the context",
-      show: () =>
-        !workspace.isEndpointsFolder() && !workspace.isEndpoint()
-        && (workspace.isCamelContext() || workspace.isRoutesFolder())
-        && Camel.isCamelVersionEQGT(2, 13, workspace, jolokia)
-        && workspace.hasInvokeRightsForName(getSelectionCamelTypeConverter(workspace), "listTypeConverters"),
-      href: () => "/camel/typeConverter" + workspace.hash()
-    });
-    tab.tabs.push({
       id: 'camel-rest-services',
       title: () =>'<i class="fa fa-list"></i> Rest Services',
       //title: "List all the REST services registered in the context",
       show: () =>
         !workspace.isEndpointsFolder() && !workspace.isEndpoint()
+        && !workspace.isComponentsFolder() && !workspace.isComponent()
         && (workspace.isCamelContext() || workspace.isRoutesFolder())
         && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia)
         && getSelectionCamelRestRegistry(workspace)
@@ -317,35 +328,28 @@ module Camel {
       href: () => "/camel/restRegistry" + workspace.hash()
     });
     tab.tabs.push({
-      id: 'camel-browser',
-      title: () => '<i class="fa fa-envelope"></i> Browse',
-      //title: "Browse the messages on the endpoint",
-      show: () => workspace.isEndpoint()
-        && workspace.hasInvokeRights(workspace.selection, "browseAllMessagesAsXml"),
-      href: () => "/camel/browseEndpoint" + workspace.hash()
-    });
-    tab.tabs.push({
-      id: 'camel-endpoint-properties',
-      title: () => '<i class="fa fa-list"></i> Properties',
-      //title: "Show the endpoint properties",
+      id: 'camel-type-converters',
+      title: () => '<i class="fa fa-list"></i> Type Converters',
+      //title: "List all the type converters registered in the context",
       show: () =>
-        workspace.isEndpoint()
-        && Camel.isCamelVersionEQGT(2, 15, workspace, jolokia)
-        && workspace.hasInvokeRights(workspace.selection, "explainEndpointJson"),
-      href: () => "/camel/propertiesEndpoint" + workspace.hash()
+      !workspace.isEndpointsFolder() && !workspace.isEndpoint()
+      && !workspace.isComponentsFolder() && !workspace.isComponent()
+      && (workspace.isCamelContext() || workspace.isRoutesFolder())
+      && Camel.isCamelVersionEQGT(2, 13, workspace, jolokia)
+      && workspace.hasInvokeRightsForName(getSelectionCamelTypeConverter(workspace), "listTypeConverters"),
+      href: () => "/camel/typeConverter" + workspace.hash()
     });
     tab.tabs.push({
-      id: 'camel-component-properties',
-      title: () => '<i class="fa fa-list"></i> Properties',
-      //title: "Show the component properties",
-      show: () =>
-        workspace.isComponent()
-        && Camel.isCamelVersionEQGT(2, 15, workspace, jolokia)
-        && workspace.hasInvokeRights(workspace.selection, "explainComponentJson"),
-      href: () => "/camel/propertiesComponent" + workspace.hash()
+      id: 'camel-route-profile',
+      title: () => '<i class="fa fa-bar-chart"></i> Profile',
+      //title: "Profile the messages flowing through the Camel route",
+      show: () => workspace.isRoute()
+      && Camel.getSelectionCamelTraceMBean(workspace)
+      && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"),
+      href: () => "/camel/profileRoute" + workspace.hash()
     });
     tab.tabs.push({
-      id: 'camel-debug',
+      id: 'camel-route-debug',
       title: () => '<i class="fa fa-stethoscope"></i> Debug',
       //title: "Debug the Camel route",
       show: () => workspace.isRoute()
@@ -354,7 +358,7 @@ module Camel {
       href: () => "/camel/debugRoute" + workspace.hash()
     });
     tab.tabs.push({
-      id: 'camel-trace',
+      id: 'camel-route-trace',
       title: () => '<i class="fa fa-envelope"></i> Trace',
       //title: "Trace the messages flowing through the Camel route",
       show: () => workspace.isRoute()
@@ -363,16 +367,15 @@ module Camel {
       href: () => "/camel/traceRoute" + workspace.hash()
     });
     tab.tabs.push({
-      id: 'camel-profile',
-      title: () => '<i class="fa fa-bar-chart"></i> Profile',
-      //title: "Profile the messages flowing through the Camel route",
-      show: () => workspace.isRoute()
-        && Camel.getSelectionCamelTraceMBean(workspace)
-        && workspace.hasInvokeRightsForName(Camel.getSelectionCamelTraceMBean(workspace), "dumpAllTracedMessagesAsXml"),
-      href: () => "/camel/profileRoute" + workspace.hash()
+      id: 'camel-endpoint-browser',
+      title: () => '<i class="fa fa-envelope"></i> Browse',
+      //title: "Browse the messages on the endpoint",
+      show: () => workspace.isEndpoint()
+      && workspace.hasInvokeRights(workspace.selection, "browseAllMessagesAsXml"),
+      href: () => "/camel/browseEndpoint" + workspace.hash()
     });
     tab.tabs.push({
-      id: 'camel-send',
+      id: 'camel-endpoint-send',
       title: () => '<i class="fa fa-pencil"></i> Send',
       //title: "Send a message to this endpoint",
       show: () => workspace.isEndpoint()
@@ -380,7 +383,7 @@ module Camel {
       href: () => "/camel/sendMessage" + workspace.hash()
     });
     tab.tabs.push({
-      id: 'camel-endpoint',
+      id: 'camel-endpoint-create',
       title: () =>'<i class="fa fa-plus"></i> Endpoint',
       //title: "Create a new endpoint",
       show: () => workspace.isEndpointsFolder()
