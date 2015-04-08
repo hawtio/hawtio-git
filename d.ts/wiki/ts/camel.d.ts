@@ -7,4 +7,5 @@
  * @module Wiki
  */
 declare module Wiki {
+    var CamelController: ng.IModule;
 }
