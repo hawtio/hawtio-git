@@ -117,16 +117,20 @@ module Camel {
       {field: 'ExchangesFailed', displayName: 'Failed #'},
       {field: 'FailuresHandled', displayName: 'Failed Handled #'},
       {field: 'ExchangesTotal', displayName: 'Total #', visible: false},
-      {field: 'InflightExchanges', displayName: 'Inflight #'},
+      {field: 'ExchangesInflight', displayName: 'Inflight #'},
+      {field: 'InflightExchanges', displayName: 'Inflight #', visible: false},
       {field: 'MeanProcessingTime', displayName: 'Mean Time'},
       {field: 'MinProcessingTime', displayName: 'Min Time'},
       {field: 'MaxProcessingTime', displayName: 'Max Time'},
       {field: 'TotalProcessingTime', displayName: 'Total Time', visible: false},
       {field: 'LastProcessingTime', displayName: 'Last Time', visible: false},
+      {field: 'DeltaProcessingTime', displayName: 'Delta Time'},
       {field: 'LastExchangeCompletedTimestamp', displayName: 'Last completed', visible: false},
       {field: 'LastExchangeFailedTimestamp', displayName: 'Last failed', visible: false},
       {field: 'Redeliveries', displayName: 'Redelivery #', visible: false},
-      {field: 'ExternalRedeliveries', displayName: 'External Redelivery #', visible: false}
+      {field: 'ExternalRedeliveries', displayName: 'External Redelivery #', visible: false},
+      {field: 'StartedRoutes', displayName: 'Started Routes #'},
+      {field: 'TotalRoutes', displayName: 'Total Routes #'}
     ];
     attributes[jmxDomain + "/routes/folder"] = [
       stateColumn,
@@ -136,13 +140,15 @@ module Camel {
       {field: 'ExchangesFailed', displayName: 'Failed #'},
       {field: 'FailuresHandled', displayName: 'Failed Handled #'},
       {field: 'ExchangesTotal', displayName: 'Total #', visible: false},
-      {field: 'InflightExchanges', displayName: 'Inflight #'},
+      {field: 'ExchangesInflight', displayName: 'Inflight #'},
+      {field: 'InflightExchanges', displayName: 'Inflight #', visible: false},
       {field: 'MeanProcessingTime', displayName: 'Mean Time'},
       {field: 'MinProcessingTime', displayName: 'Min Time'},
       {field: 'MaxProcessingTime', displayName: 'Max Time'},
       {field: 'TotalProcessingTime', displayName: 'Total Time', visible: false},
       {field: 'DeltaProcessingTime', displayName: 'Delta Time', visible: false},
       {field: 'LastProcessingTime', displayName: 'Last Time', visible: false},
+      {field: 'DeltaProcessingTime', displayName: 'Delta Time'},
       {field: 'LastExchangeCompletedTimestamp', displayName: 'Last completed', visible: false},
       {field: 'LastExchangeFailedTimestamp', displayName: 'Last failed', visible: false},
       {field: 'Redeliveries', displayName: 'Redelivery #', visible: false},
@@ -157,12 +163,14 @@ module Camel {
       {field: 'ExchangesFailed', displayName: 'Failed #'},
       {field: 'FailuresHandled', displayName: 'Failed Handled #'},
       {field: 'ExchangesTotal', displayName: 'Total #', visible: false},
-      {field: 'InflightExchanges', displayName: 'Inflight #'},
+      {field: 'ExchangesInflight', displayName: 'Inflight #'},
+      {field: 'InflightExchanges', displayName: 'Inflight #', visible: false},
       {field: 'MeanProcessingTime', displayName: 'Mean Time'},
       {field: 'MinProcessingTime', displayName: 'Min Time'},
       {field: 'MaxProcessingTime', displayName: 'Max Time'},
       {field: 'TotalProcessingTime', displayName: 'Total Time', visible: false},
       {field: 'LastProcessingTime', displayName: 'Last Time', visible: false},
+      {field: 'DeltaProcessingTime', displayName: 'Delta Time'},
       {field: 'LastExchangeCompletedTimestamp', displayName: 'Last completed', visible: false},
       {field: 'LastExchangeFailedTimestamp', displayName: 'Last failed', visible: false},
       {field: 'Redeliveries', displayName: 'Redelivery #', visible: false},
@@ -323,7 +331,7 @@ module Camel {
         && (workspace.isCamelContext() || workspace.isRoutesFolder())
         && Camel.isCamelVersionEQGT(2, 14, workspace, jolokia)
         && getSelectionCamelRestRegistry(workspace)
-        /*&& hasRestServices(workspace, jolokia)*/ // TODO: optimize this so we only invoke it one time until reload
+        && hasRestServices(workspace, jolokia) // TODO: optimize this so we only invoke it one time until reload
         && workspace.hasInvokeRightsForName(getSelectionCamelRestRegistry(workspace), "listRestServices"),
       href: () => "/camel/restRegistry" + workspace.hash()
     });
