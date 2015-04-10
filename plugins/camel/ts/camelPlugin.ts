@@ -33,9 +33,9 @@ module Camel {
             .when('/camel/traceRoute', {templateUrl: 'plugins/camel/html/traceRoute.html'})
             .when('/camel/debugRoute', {templateUrl: 'plugins/camel/html/debug.html'})
             .when('/camel/profileRoute', {templateUrl: 'plugins/camel/html/profileRoute.html'})
-            .when('/camel/properties', {templateUrl: 'plugins/camel/html/properties.html', reloadOnSearch: false})
-            .when('/camel/propertiesComponent', {templateUrl: 'plugins/camel/html/propertiesComponent.html', reloadOnSearch: false})
-            .when('/camel/propertiesEndpoint', {templateUrl: 'plugins/camel/html/propertiesEndpoint.html', reloadOnSearch: false});
+            .when('/camel/properties', {templateUrl: 'plugins/camel/html/properties.html'})
+            .when('/camel/propertiesComponent', {templateUrl: 'plugins/camel/html/propertiesComponent.html'})
+            .when('/camel/propertiesEndpoint', {templateUrl: 'plugins/camel/html/propertiesEndpoint.html'});
   }]);
 
   _module.factory('tracerStatus',function () {
