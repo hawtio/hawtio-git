@@ -138,12 +138,18 @@ module Camel {
       return answer;
     }
 
+    var onClickGraphNode = function(node) {
+      // stop marking the node as selected which it does by default
+      log.debug("Clicked on Camel Route Diagram node: " + node.cid);
+      $location.path('/camel/properties').search({"main-tab": "camel", "sub-tab": "camel-route-properties", "nid": node.cid});
+    };
+
     function showGraph(nodes, links) {
       var canvasDiv = $element;
       var width = getWidth();
       var height = getHeight();
       var svg = canvasDiv.children("svg")[0];
-      $scope.graphData = Core.dagreLayoutGraph(nodes, links, width, height, svg);
+      $scope.graphData = Core.dagreLayoutGraph(nodes, links, width, height, svg, false, onClickGraphNode);
 
       var gNodes = canvasDiv.find("g.node");
       gNodes.click(function() {
