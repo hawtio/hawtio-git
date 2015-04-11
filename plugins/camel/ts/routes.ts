@@ -149,7 +149,17 @@ module Camel {
       var width = getWidth();
       var height = getHeight();
       var svg = canvasDiv.children("svg")[0];
-      $scope.graphData = Core.dagreLayoutGraph(nodes, links, width, height, svg, false, onClickGraphNode);
+
+      // do not allow clicking on node to show properties if debugging or tracing as that is for selecting the node instead
+      var onClick;
+      var path = $location.path();
+      if (path.startsWith("/camel/debugRoute") || path.startsWith("/camel/traceRoute")) {
+        onClick = null;
+      } else {
+        onClick = onClickGraphNode;
+      }
+
+      $scope.graphData = Core.dagreLayoutGraph(nodes, links, width, height, svg, false, onClick);
 
       var gNodes = canvasDiv.find("g.node");
       gNodes.click(function() {
