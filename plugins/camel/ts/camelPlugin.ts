@@ -472,7 +472,7 @@ module Camel {
                       componentsFolder.addClass = "org-apache-camel-components-folder";
                       componentsFolder.parent = contextsFolder;
                       componentsFolder.children = componentsNode.children;
-                      angular.forEach(endpointsFolder.children, (n) => {
+                      angular.forEach(componentsFolder.children, (n) => {
                         n.addClass = "org-apache-camel-components";
                         if (!getContextId(n)) {
                           n.entries["context"] = contextNode.entries["context"];
