@@ -70,7 +70,7 @@ module ActiveMQ {
       if (mbean) {
         var operation;
         if (isQueue) {
-          operation = "addQueue(java.lang.String)"
+          operation = "addQueue(java.lang.String)";
           $scope.message = "Created queue " + name;
         } else {
           operation = "addTopic(java.lang.String)";
@@ -95,7 +95,7 @@ module ActiveMQ {
         var isQueue = "Topic" !== (entries["Type"] || entries["destinationType"]);
         var operation;
         if (isQueue) {
-          operation = "removeQueue(java.lang.String)"
+          operation = "removeQueue(java.lang.String)";
           $scope.message = "Deleted queue " + name;
         } else {
           operation = "removeTopic(java.lang.String)";
