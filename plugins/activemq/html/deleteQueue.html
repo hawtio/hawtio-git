@@ -33,7 +33,9 @@
   </div>
 
   <div hawtio-confirm-dialog="deleteDialog"
+       title="Confirm delete queue"
        ok-button-text="Delete"
+       cancel-button-text="Cancel"
        on-ok="deleteDestination()">
     <div class="dialog-body">
       <p>You are about to delete the <b>{{name().unescapeHTML()}}</b> queue</p>
@@ -42,7 +44,9 @@
   </div>
 
   <div hawtio-confirm-dialog="purgeDialog"
+       title="Confirm purge queue"
        ok-button-text="Purge"
+       cancel-button-text="Cancel"
        on-ok="purgeDestination()">
     <div class="dialog-body">
       <p>You are about to purge the <b>{{name().unescapeHTML()}}</b> queue</p>

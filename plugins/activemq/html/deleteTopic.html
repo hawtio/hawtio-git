@@ -25,7 +25,9 @@
   </div>
 
   <div hawtio-confirm-dialog="deleteDialog"
+       title="Confirm delete topic"
        ok-button-text="Delete"
+       cancel-button-text="Cancel"
        on-ok="deleteDestination()">
     <div class="dialog-body">
       <p>You are about to delete the <b>{{name().unescapeHTML()}}</b> topic</p>
