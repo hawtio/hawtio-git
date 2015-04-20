@@ -30,18 +30,19 @@ module ActiveMQ {
     function operationSuccess() {
       $scope.destinationName = "";
       $scope.workspace.operationCounter += 1;
-      Core.$apply($scope);
       Core.notification("success", $scope.message);
       $scope.workspace.loadTree();
+      Core.$apply($scope);
     }
 
     function deleteSuccess() {
       // lets set the selection to the parent
       workspace.removeAndSelectParentNode();
       $scope.workspace.operationCounter += 1;
-      Core.$apply($scope);
       Core.notification("success", $scope.message);
-      $scope.workspace.loadTree();
+      // and switch to show the attributes (table view)
+      $location.path('/jmx/attributes').search({"main-tab": "activemq", "sub-tab": "activemq-attributes"});
+      Core.$apply($scope);
     }
 
     function getBrokerMBean(jolokia) {
@@ -104,16 +105,6 @@ module ActiveMQ {
           $scope.message = "Deleted topic " + name;
         }
         jolokia.execute(mbean, operation, name, Core.onSuccess(deleteSuccess));
-
-        // the entity we just deleted are no longer som redirect to the folder
-        // TODO: figure out cid
-        if (isQueue) {
-          var cid = "root-org.apache.activemq-Broker-myBroker-Queue";
-          $location.path('/jmx/attributes').search({"main-tab": "activemq", "sub-tab": "activemq-attributes", "nid": cid});
-        } else {
-          var cid = "root-org.apache.activemq-Broker-myBroker-Topic";
-          $location.path('/jmx/attributes').search({"main-tab": "activemq", "sub-tab": "activemq-attributes", "nid": cid});
-        }
       }
     };
 
