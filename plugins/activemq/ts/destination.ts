@@ -6,7 +6,9 @@ module ActiveMQ {
   _module.controller("ActiveMQ.DestinationController", ["$scope", "workspace", "jolokia", ($scope, workspace:Workspace, jolokia) => {
     $scope.workspace = workspace;
     $scope.message = "";
-    $scope.queueType = 'true';
+    $scope.destinationName = "";
+    $scope.queueType = (isTopicsFolder(workspace) || isTopic(workspace)) ? "false" : "true";
+    $scope.destinationTypeName = $scope.queueType ? "Queue" : "Topic";
 
     $scope.deleteDialog = false;
     $scope.purgeDialog = false;
@@ -14,7 +16,7 @@ module ActiveMQ {
     updateQueueType();
 
     function updateQueueType() {
-      $scope.destinationTypeName = $scope.queueType ? "Queue" : "Topic";
+      $scope.destinationTypeName = $scope.queueType  === "true" ? "Queue" : "Topic";
     }
 
     $scope.$watch('queueType', function () {
@@ -69,7 +71,7 @@ module ActiveMQ {
       var mbean = getBrokerMBean(jolokia);
       if (mbean) {
         var operation;
-        if (isQueue) {
+        if (isQueue === "true") {
           operation = "addQueue(java.lang.String)";
           $scope.message = "Created queue " + name;
         } else {

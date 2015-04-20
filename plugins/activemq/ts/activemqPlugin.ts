@@ -13,8 +13,6 @@ module ActiveMQ {
             when('/activemq/browseQueue', {templateUrl: 'plugins/activemq/html/browseQueue.html'}).
             when('/activemq/diagram', {templateUrl: 'plugins/activemq/html/brokerDiagram.html', reloadOnSearch: false}).
             when('/activemq/createDestination', {templateUrl: 'plugins/activemq/html/createDestination.html'}).
-            when('/activemq/createQueue', {templateUrl: 'plugins/activemq/html/createQueue.html'}).
-            when('/activemq/createTopic', {templateUrl: 'plugins/activemq/html/createTopic.html'}).
             when('/activemq/deleteQueue', {templateUrl: 'plugins/activemq/html/deleteQueue.html'}).
             when('/activemq/deleteTopic', {templateUrl: 'plugins/activemq/html/deleteTopic.html'}).
             when('/activemq/sendMessage', {templateUrl: 'plugins/camel/html/sendMessage.html'}).
@@ -115,70 +113,56 @@ module ActiveMQ {
     tab.tabs.push({
       id: 'activemq-diagram',
       title: () => '<i class="fa fa-picture"></i> Diagram',
-      //title: "View a diagram of the producers, destinations and consumers",
+      tooltip: () => "View a diagram of the producers, destinations and consumers",
       show: () =>  workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(jmxDomain),
       href: () => "/activemq/diagram" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-browse',
       title: () => '<i class="fa fa-envelope"></i> Browse',
-      //title: "Browse the messages on the queue",
+      tooltip: () => "Browse the messages on the queue",
       show: () => isQueue(workspace) && workspace.hasInvokeRights(workspace.selection, "browse()"),
       href: () => "/activemq/browseQueue" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-send',
       title: () => '<i class="fa fa-pencil"></i> Send',
-      //title: "Send a message to this destination",
+      tooltip: () => "Send a message to this destination",
       show: () => (isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(workspace.selection, "sendTextMessage(java.util.Map,java.lang.String,java.lang.String,java.lang.String)"),
       href: () => "/activemq/sendMessage" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-durable-subscribers',
       title: () => '<i class="fa fa-list"></i> Durable Subscribers',
-      //title: "Manage durable subscribers",
+      tooltip: () => "Manage durable subscribers",
       show: () => isBroker(workspace),
       href: () => "/activemq/durableSubscribers" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-jobs',
       title: () => '<i class="fa fa-list"></i> Jobs',
-      //title: "Manage jobs",
+      tooltip: () => "Manage jobs",
       show: () => isJobScheduler(workspace),
       href: () => "/activemq/jobs" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-create-destination',
       title: () => '<i class="fa fa-plus"></i> Create',
-      //title: "Create a new destination",
+      tooltip: () => "Create a new destination",
       show: () => (isBroker(workspace) || isQueuesFolder(workspace) || isTopicsFolder(workspace) || isQueue(workspace) || isTopic(workspace)) && workspace.hasInvokeRights(getBroker(workspace), "addQueue", "addTopic"),
       href: () => "/activemq/createDestination" + workspace.hash()
     });
     tab.tabs.push({
-      id: 'activemq-create-queue',
-      title: () => '<i class="fa fa-plus"></i> Create',
-      //title: "Create a new queue",
-      show: () => isQueuesFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"),
-      href: () => "/activemq/createQueue" + workspace.hash()
-    });
-    tab.tabs.push({
-      id: 'activemq-create-topic',
-      title: () => '<i class="fa fa-plus"></i> Create',
-      //title: "Create a new topic",
-      show: () => isTopicsFolder(workspace) && workspace.hasInvokeRights(getBroker(workspace), "addQueue"),
-      href: () => "/activemq/createTopic" + workspace.hash()
-    });
-    tab.tabs.push({
       id: 'activemq-delete-topic',
-      title: () => '<i class="fa fa-remove"></i> Delete Topic',
-      //title: "Delete this topic",
+      title: () => '<i class="fa fa-remove"></i> Delete',
+      tooltip: () => "Delete this topic",
       show: () => isTopic(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeTopic"),
       href: () => "/activemq/deleteTopic" + workspace.hash()
     });
     tab.tabs.push({
       id: 'activemq-delete-queue',
       title: () => '<i class="fa fa-remove"></i> Delete',
-      //title: "Delete or purge this queue",
+      tooltip: () => "Delete or purge this queue",
       show: () => isQueue(workspace) && workspace.hasInvokeRights(getBroker(workspace), "removeQueue"),
       href: () => "/activemq/deleteQueue" + workspace.hash()
     });
