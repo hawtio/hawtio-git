@@ -1,9 +1,6 @@
 /// <reference path="d.ts/includes.d.ts"/>
 /// <reference path="d.ts/activemq/ts/activemqHelpers.d.ts"/>
 /// <reference path="d.ts/activemq/ts/activemqPlugin.d.ts"/>
-/// <reference path="d.ts/git/ts/gitHelpers.d.ts"/>
-/// <reference path="d.ts/wiki/ts/wikiHelpers.d.ts"/>
-/// <reference path="d.ts/activemq/ts/brokerDiagram.d.ts"/>
 /// <reference path="d.ts/activemq/ts/browse.d.ts"/>
 /// <reference path="d.ts/activemq/ts/destination.d.ts"/>
 /// <reference path="d.ts/activemq/ts/durableSubscriber.d.ts"/>
@@ -44,6 +41,7 @@
 /// <reference path="d.ts/dozer/ts/model.d.ts"/>
 /// <reference path="d.ts/dozer/ts/schemaConfigure.d.ts"/>
 /// <reference path="d.ts/fabric/ts/fabricHelpers.d.ts"/>
+/// <reference path="d.ts/git/ts/gitHelpers.d.ts"/>
 /// <reference path="d.ts/git/ts/git.d.ts"/>
 /// <reference path="d.ts/karaf/ts/karafHelpers.d.ts"/>
 /// <reference path="d.ts/karaf/ts/karafPlugin.d.ts"/>
@@ -78,6 +76,7 @@
 /// <reference path="d.ts/osgi/ts/pid.d.ts"/>
 /// <reference path="d.ts/osgi/ts/services.d.ts"/>
 /// <reference path="d.ts/osgi/ts/svc-dependencies.d.ts"/>
+/// <reference path="d.ts/wiki/ts/wikiHelpers.d.ts"/>
 /// <reference path="d.ts/wiki/ts/wikiPlugin.d.ts"/>
 /// <reference path="d.ts/wiki/ts/camel.d.ts"/>
 /// <reference path="d.ts/wiki/ts/camelCanvas.d.ts"/>

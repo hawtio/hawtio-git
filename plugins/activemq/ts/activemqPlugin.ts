@@ -11,7 +11,6 @@ module ActiveMQ {
   _module.config(["$routeProvider", ($routeProvider) => {
     $routeProvider.
             when('/activemq/browseQueue', {templateUrl: 'plugins/activemq/html/browseQueue.html'}).
-            when('/activemq/diagram', {templateUrl: 'plugins/activemq/html/brokerDiagram.html', reloadOnSearch: false}).
             when('/activemq/createDestination', {templateUrl: 'plugins/activemq/html/createDestination.html'}).
             when('/activemq/deleteQueue', {templateUrl: 'plugins/activemq/html/deleteQueue.html'}).
             when('/activemq/deleteTopic', {templateUrl: 'plugins/activemq/html/deleteTopic.html'}).
@@ -110,13 +109,6 @@ module ActiveMQ {
                      .build();
     tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache, 'activemq');
     // add sub level tabs
-    tab.tabs.push({
-      id: 'activemq-diagram',
-      title: () => '<i class="fa fa-picture"></i> Diagram',
-      tooltip: () => "View a diagram of the producers, destinations and consumers",
-      show: () =>  workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(jmxDomain),
-      href: () => "/activemq/diagram" + workspace.hash()
-    });
     tab.tabs.push({
       id: 'activemq-browse',
       title: () => '<i class="fa fa-envelope"></i> Browse',

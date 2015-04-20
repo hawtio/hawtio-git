@@ -131,7 +131,7 @@ var ActiveMQ;
 (function (ActiveMQ) {
     ActiveMQ._module = angular.module(ActiveMQ.pluginName, []);
     ActiveMQ._module.config(["$routeProvider", function ($routeProvider) {
-        $routeProvider.when('/activemq/browseQueue', { templateUrl: 'plugins/activemq/html/browseQueue.html' }).when('/activemq/diagram', { templateUrl: 'plugins/activemq/html/brokerDiagram.html', reloadOnSearch: false }).when('/activemq/createDestination', { templateUrl: 'plugins/activemq/html/createDestination.html' }).when('/activemq/deleteQueue', { templateUrl: 'plugins/activemq/html/deleteQueue.html' }).when('/activemq/deleteTopic', { templateUrl: 'plugins/activemq/html/deleteTopic.html' }).when('/activemq/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html' }).when('/activemq/durableSubscribers', { templateUrl: 'plugins/activemq/html/durableSubscribers.html' }).when('/activemq/jobs', { templateUrl: 'plugins/activemq/html/jobs.html' });
+        $routeProvider.when('/activemq/browseQueue', { templateUrl: 'plugins/activemq/html/browseQueue.html' }).when('/activemq/createDestination', { templateUrl: 'plugins/activemq/html/createDestination.html' }).when('/activemq/deleteQueue', { templateUrl: 'plugins/activemq/html/deleteQueue.html' }).when('/activemq/deleteTopic', { templateUrl: 'plugins/activemq/html/deleteTopic.html' }).when('/activemq/sendMessage', { templateUrl: 'plugins/camel/html/sendMessage.html' }).when('/activemq/durableSubscribers', { templateUrl: 'plugins/activemq/html/durableSubscribers.html' }).when('/activemq/jobs', { templateUrl: 'plugins/activemq/html/jobs.html' });
     }]);
     ActiveMQ._module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", "preferencesRegistry", "$templateCache", function (nav, $location, workspace, viewRegistry, helpRegistry, preferencesRegistry, $templateCache) {
         viewRegistry['{ "main-tab": "activemq" }'] = 'plugins/activemq/html/layoutActiveMQTree.html';
@@ -213,13 +213,6 @@ var ActiveMQ;
         }).href(function () { return myUrl; }).isValid(function () { return workspace.treeContainsDomainAndProperties(ActiveMQ.jmxDomain); }).build();
         tab.tabs = Jmx.getNavItems(builder, workspace, $templateCache, 'activemq');
         // add sub level tabs
-        tab.tabs.push({
-            id: 'activemq-diagram',
-            title: function () { return '<i class="fa fa-picture"></i> Diagram'; },
-            tooltip: function () { return "View a diagram of the producers, destinations and consumers"; },
-            show: function () { return workspace.isTopTabActive("activemq") || workspace.selectionHasDomain(ActiveMQ.jmxDomain); },
-            href: function () { return "/activemq/diagram" + workspace.hash(); }
-        });
         tab.tabs.push({
             id: 'activemq-browse',
             title: function () { return '<i class="fa fa-envelope"></i> Browse'; },
@@ -364,1716 +357,6 @@ var ActiveMQ;
         return false;
     }
     ActiveMQ.isBroker = isBroker;
-})(ActiveMQ || (ActiveMQ = {}));
-
-/**
- * @module Git
- */
-var Git;
-(function (Git) {
-    function createGitRepository(workspace, jolokia, localStorage) {
-        var mbean = getGitMBean(workspace);
-        if (mbean && jolokia) {
-            return new Git.JolokiaGit(mbean, jolokia, localStorage, workspace.userDetails);
-        }
-        // TODO use local storage to make a little wiki thingy?
-        return null;
-    }
-    Git.createGitRepository = createGitRepository;
-    Git.jmxDomain = "hawtio";
-    Git.mbeanType = "GitFacade";
-    function hasGit(workspace) {
-        return getGitMBean(workspace) !== null;
-    }
-    Git.hasGit = hasGit;
-    /**
-     * Returns the JMX ObjectName of the git mbean
-     * @method getGitMBean
-     * @for Git
-     * @param {Workspace} workspace
-     * @return {String}
-     */
-    function getGitMBean(workspace) {
-        return Core.getMBeanTypeObjectName(workspace, Git.jmxDomain, Git.mbeanType);
-    }
-    Git.getGitMBean = getGitMBean;
-    /**
-     * Returns the Folder for the git mbean if it can be found
-     * @method getGitMBeanFolder
-     * @for Git
-     * @param {Workspace} workspace
-     * @return {Folder}
-     */
-    function getGitMBeanFolder(workspace) {
-        return Core.getMBeanTypeFolder(workspace, Git.jmxDomain, Git.mbeanType);
-    }
-    Git.getGitMBeanFolder = getGitMBeanFolder;
-    /**
-     * Returns true if the git mbean is a fabric configuration repository
-     * (so we can use it for the fabric plugin)
-     * @method isGitMBeanFabric
-     * @for Git
-     * @param {Workspace} workspace
-     * @return {Boolean}
-     */
-    function isGitMBeanFabric(workspace) {
-        var folder = getGitMBeanFolder(workspace);
-        return folder && folder.entries["repo"] === "fabric";
-    }
-    Git.isGitMBeanFabric = isGitMBeanFabric;
-})(Git || (Git = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="../../git/ts/gitHelpers.ts"/>
-/**
- * @module Wiki
- */
-var Wiki;
-(function (Wiki) {
-    Wiki.log = Logger.get("Wiki");
-    Wiki.camelNamespaces = ["http://camel.apache.org/schema/spring", "http://camel.apache.org/schema/blueprint"];
-    Wiki.springNamespaces = ["http://www.springframework.org/schema/beans"];
-    Wiki.droolsNamespaces = ["http://drools.org/schema/drools-spring"];
-    Wiki.dozerNamespaces = ["http://dozer.sourceforge.net"];
-    Wiki.activemqNamespaces = ["http://activemq.apache.org/schema/core"];
-    Wiki.excludeAdjustmentPrefixes = ["http://", "https://", "#"];
-    (function (ViewMode) {
-        ViewMode[ViewMode["List"] = 0] = "List";
-        ViewMode[ViewMode["Icon"] = 1] = "Icon";
-    })(Wiki.ViewMode || (Wiki.ViewMode = {}));
-    var ViewMode = Wiki.ViewMode;
-    ;
-    /**
-     * The custom views within the wiki namespace; either "/wiki/$foo" or "/wiki/branch/$branch/$foo"
-     */
-    Wiki.customWikiViewPages = ["/formTable", "/camel/diagram", "/camel/canvas", "/camel/properties", "/dozer/mappings"];
-    /**
-     * Which extensions do we wish to hide in the wiki file listing
-     * @property hideExtensions
-     * @for Wiki
-     * @type Array
-     */
-    Wiki.hideExtensions = [".profile"];
-    var defaultFileNamePattern = /^[a-zA-Z0-9._-]*$/;
-    var defaultFileNamePatternInvalid = "Name must be: letters, numbers, and . _ or - characters";
-    var defaultFileNameExtensionPattern = "";
-    var defaultLowerCaseFileNamePattern = /^[a-z0-9._-]*$/;
-    var defaultLowerCaseFileNamePatternInvalid = "Name must be: lower-case letters, numbers, and . _ or - characters";
-    /**
-     * The wizard tree for creating new content in the wiki
-     * @property documentTemplates
-     * @for Wiki
-     * @type Array
-     */
-    Wiki.documentTemplates = [
-        {
-            label: "Folder",
-            tooltip: "Create a new folder to contain documents",
-            folder: true,
-            icon: "/img/icons/wiki/folder.gif",
-            exemplar: "myfolder",
-            regex: defaultLowerCaseFileNamePattern,
-            invalid: defaultLowerCaseFileNamePatternInvalid
-        },
-        {
-            label: "App",
-            tooltip: "Creates a new App folder used to configure and run containers",
-            addClass: "fa fa-cog green",
-            exemplar: 'myapp',
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: '',
-            generated: {
-                mbean: ['io.fabric8', { type: 'KubernetesTemplateManager' }],
-                init: function (workspace, $scope) {
-                },
-                generate: function (options) {
-                    Wiki.log.debug("Got options: ", options);
-                    options.form.name = options.name;
-                    options.form.path = options.parentId;
-                    options.form.branch = options.branch;
-                    var json = angular.toJson(options.form);
-                    var jolokia = HawtioCore.injector.get("jolokia");
-                    jolokia.request({
-                        type: 'exec',
-                        mbean: 'io.fabric8:type=KubernetesTemplateManager',
-                        operation: 'createAppByJson',
-                        arguments: [json]
-                    }, Core.onSuccess(function (response) {
-                        Wiki.log.debug("Generated app, response: ", response);
-                        options.success(undefined);
-                    }, {
-                        error: function (response) {
-                            options.error(response.error);
-                        }
-                    }));
-                },
-                form: function (workspace, $scope) {
-                    if (!$scope.doDockerRegistryCompletion) {
-                        $scope.fetchDockerRepositories = function () {
-                            return DockerRegistry.completeDockerRegistry();
-                        };
-                    }
-                    return {
-                        summaryMarkdown: 'Add app summary here',
-                        replicaCount: 1
-                    };
-                },
-                schema: {
-                    description: 'App settings',
-                    type: 'java.lang.String',
-                    properties: {
-                        'dockerImage': {
-                            'description': 'Docker Image',
-                            'type': 'java.lang.String',
-                            'input-attributes': {
-                                'required': '',
-                                'class': 'input-xlarge',
-                                'typeahead': 'repo for repo in fetchDockerRepositories() | filter:$viewValue',
-                                'typeahead-wait-ms': '200'
-                            }
-                        },
-                        'summaryMarkdown': {
-                            'description': 'Short Description',
-                            'type': 'java.lang.String',
-                            'input-attributes': { 'class': 'input-xlarge' }
-                        },
-                        'replicaCount': {
-                            'description': 'Replica Count',
-                            'type': 'java.lang.Integer',
-                            'input-attributes': {
-                                min: '0'
-                            }
-                        },
-                        'labels': {
-                            'description': 'Labels',
-                            'type': 'map',
-                            'items': {
-                                'type': 'string'
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        {
-            label: "Fabric8 Profile",
-            tooltip: "Create a new empty fabric profile. Using a hyphen ('-') will create a folder heirarchy, for example 'my-awesome-profile' will be available via the path 'my/awesome/profile'.",
-            profile: true,
-            addClass: "fa fa-book green",
-            exemplar: "user-profile",
-            regex: defaultLowerCaseFileNamePattern,
-            invalid: defaultLowerCaseFileNamePatternInvalid,
-            fabricOnly: true
-        },
-        {
-            label: "Properties File",
-            tooltip: "A properties file typically used to configure Java classes",
-            exemplar: "properties-file.properties",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".properties"
-        },
-        {
-            label: "JSON File",
-            tooltip: "A file containing JSON data",
-            exemplar: "document.json",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".json"
-        },
-        {
-            label: "Key Store File",
-            tooltip: "Creates a keystore (database) of cryptographic keys, X.509 certificate chains, and trusted certificates.",
-            exemplar: 'keystore.jks',
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".jks",
-            generated: {
-                mbean: ['hawtio', { type: 'KeystoreService' }],
-                init: function (workspace, $scope) {
-                    var mbean = 'hawtio:type=KeystoreService';
-                    var response = workspace.jolokia.request({ type: "read", mbean: mbean, attribute: "SecurityProviderInfo" }, {
-                        success: function (response) {
-                            $scope.securityProviderInfo = response.value;
-                            Core.$apply($scope);
-                        },
-                        error: function (response) {
-                            console.log('Could not find the supported security algorithms: ', response.error);
-                            Core.$apply($scope);
-                        }
-                    });
-                },
-                generate: function (options) {
-                    var encodedForm = JSON.stringify(options.form);
-                    var mbean = 'hawtio:type=KeystoreService';
-                    var response = options.workspace.jolokia.request({
-                        type: 'exec',
-                        mbean: mbean,
-                        operation: 'createKeyStoreViaJSON(java.lang.String)',
-                        arguments: [encodedForm]
-                    }, {
-                        method: 'POST',
-                        success: function (response) {
-                            options.success(response.value);
-                        },
-                        error: function (response) {
-                            options.error(response.error);
-                        }
-                    });
-                },
-                form: function (workspace, $scope) {
-                    return {
-                        storeType: $scope.securityProviderInfo.supportedKeyStoreTypes[0],
-                        createPrivateKey: false,
-                        keyLength: 4096,
-                        keyAlgorithm: $scope.securityProviderInfo.supportedKeyAlgorithms[0],
-                        keyValidity: 365
-                    };
-                },
-                schema: {
-                    "description": "Keystore Settings",
-                    "type": "java.lang.String",
-                    "properties": {
-                        "storePassword": {
-                            "description": "Keystore password.",
-                            "type": "password",
-                            'input-attributes': { "required": "", "ng-minlength": 6 }
-                        },
-                        "storeType": {
-                            "description": "The type of store to create",
-                            "type": "java.lang.String",
-                            'input-element': "select",
-                            'input-attributes': { "ng-options": "v for v in securityProviderInfo.supportedKeyStoreTypes" }
-                        },
-                        "createPrivateKey": {
-                            "description": "Should we generate a self-signed private key?",
-                            "type": "boolean"
-                        },
-                        "keyCommonName": {
-                            "description": "The common name of the key, typically set to the hostname of the server",
-                            "type": "java.lang.String",
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        },
-                        "keyLength": {
-                            "description": "The length of the cryptographic key",
-                            "type": "Long",
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        },
-                        "keyAlgorithm": {
-                            "description": "The key algorithm",
-                            "type": "java.lang.String",
-                            'input-element': "select",
-                            'input-attributes': { "ng-options": "v for v in securityProviderInfo.supportedKeyAlgorithms" },
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        },
-                        "keyValidity": {
-                            "description": "The number of days the key will be valid for",
-                            "type": "Long",
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        },
-                        "keyPassword": {
-                            "description": "Password to the private key",
-                            "type": "password",
-                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
-                        }
-                    }
-                }
-            }
-        },
-        {
-            label: "Markdown Document",
-            tooltip: "A basic markup document using the Markdown wiki markup, particularly useful for ReadMe files in directories",
-            exemplar: "ReadMe.md",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".md"
-        },
-        {
-            label: "Text Document",
-            tooltip: "A plain text file",
-            exemplar: "document.text",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".txt"
-        },
-        {
-            label: "HTML Document",
-            tooltip: "A HTML document you can edit directly using the HTML markup",
-            exemplar: "document.html",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".html"
-        },
-        {
-            label: "XML Document",
-            tooltip: "An empty XML document",
-            exemplar: "document.xml",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".xml"
-        },
-        {
-            label: "Integration Flows",
-            tooltip: "Camel routes for defining your integration flows",
-            children: [
-                {
-                    label: "Camel XML document",
-                    tooltip: "A vanilla Camel XML document for integration flows",
-                    icon: "/img/icons/camel.svg",
-                    exemplar: "camel.xml",
-                    regex: defaultFileNamePattern,
-                    invalid: defaultFileNamePatternInvalid,
-                    extension: ".xml"
-                },
-                {
-                    label: "Camel OSGi Blueprint XML document",
-                    tooltip: "A vanilla Camel XML document for integration flows when using OSGi Blueprint",
-                    icon: "/img/icons/camel.svg",
-                    exemplar: "camel-blueprint.xml",
-                    regex: defaultFileNamePattern,
-                    invalid: defaultFileNamePatternInvalid,
-                    extension: ".xml"
-                },
-                {
-                    label: "Camel Spring XML document",
-                    tooltip: "A vanilla Camel XML document for integration flows when using the Spring framework",
-                    icon: "/img/icons/camel.svg",
-                    exemplar: "camel-spring.xml",
-                    regex: defaultFileNamePattern,
-                    invalid: defaultFileNamePatternInvalid,
-                    extension: ".xml"
-                }
-            ]
-        },
-        {
-            label: "Data Mapping Document",
-            tooltip: "Dozer based configuration of mapping documents",
-            icon: "/img/icons/dozer/dozer.gif",
-            exemplar: "dozer-mapping.xml",
-            regex: defaultFileNamePattern,
-            invalid: defaultFileNamePatternInvalid,
-            extension: ".xml"
-        }
-    ];
-    function isFMCContainer(workspace) {
-        return false;
-    }
-    Wiki.isFMCContainer = isFMCContainer;
-    function isWikiEnabled(workspace, jolokia, localStorage) {
-        return Git.createGitRepository(workspace, jolokia, localStorage) !== null;
-    }
-    Wiki.isWikiEnabled = isWikiEnabled;
-    function goToLink(link, $timeout, $location) {
-        var href = Core.trimLeading(link, "#");
-        $timeout(function () {
-            Wiki.log.debug("About to navigate to: " + href);
-            $location.url(href);
-        }, 100);
-    }
-    Wiki.goToLink = goToLink;
-    /**
-     * Returns all the links for the given branch for the custom views, starting with "/"
-     * @param $scope
-     * @returns {string[]}
-     */
-    function customViewLinks($scope) {
-        var branch = $scope.branch;
-        var prefix = Core.trimLeading(Wiki.startLink(branch), "#");
-        return Wiki.customWikiViewPages.map(function (path) { return prefix + path; });
-    }
-    Wiki.customViewLinks = customViewLinks;
-    /**
-     * Returns a new create document wizard tree
-     * @method createWizardTree
-     * @for Wiki
-     * @static
-     */
-    function createWizardTree(workspace, $scope) {
-        var root = new Folder("New Documents");
-        addCreateWizardFolders(workspace, $scope, root, Wiki.documentTemplates);
-        return root;
-    }
-    Wiki.createWizardTree = createWizardTree;
-    function addCreateWizardFolders(workspace, $scope, parent, templates) {
-        angular.forEach(templates, function (template) {
-            if (template['fabricOnly'] && !Fabric.hasFabric(workspace)) {
-                return;
-            }
-            if (template.generated) {
-                if (template.generated.mbean) {
-                    var exists = workspace.treeContainsDomainAndProperties.apply(workspace, template.generated.mbean);
-                    if (!exists) {
-                        return;
-                    }
-                }
-                if (template.generated.init) {
-                    template.generated.init(workspace, $scope);
-                }
-            }
-            var title = template.label || key;
-            var node = new Folder(title);
-            node.parent = parent;
-            node.entity = template;
-            var addClass = template.addClass;
-            if (addClass) {
-                node.addClass = addClass;
-            }
-            var key = template.exemplar;
-            var parentKey = parent.key || "";
-            node.key = parentKey ? parentKey + "_" + key : key;
-            var icon = template.icon;
-            if (icon) {
-                node.icon = Core.url(icon);
-            }
-            // compiler was complaining about 'label' had no idea where it's coming from
-            // var tooltip = value["tooltip"] || value["description"] || label;
-            var tooltip = template["tooltip"] || template["description"] || '';
-            node.tooltip = tooltip;
-            if (template["folder"]) {
-                node.isFolder = function () {
-                    return true;
-                };
-            }
-            parent.children.push(node);
-            var children = template.children;
-            if (children) {
-                addCreateWizardFolders(workspace, $scope, node, children);
-            }
-        });
-    }
-    Wiki.addCreateWizardFolders = addCreateWizardFolders;
-    function startLink(branch) {
-        var start = "/wiki";
-        if (branch) {
-            start = UrlHelpers.join(start, 'branch', branch);
-        }
-        return start;
-    }
-    Wiki.startLink = startLink;
-    /**
-     * Returns true if the given filename/path is an index page (named index.* and is a markdown/html page).
-     *
-     * @param path
-     * @returns {boolean}
-     */
-    function isIndexPage(path) {
-        return path && (path.endsWith("index.md") || path.endsWith("index.html") || path.endsWith("index")) ? true : false;
-    }
-    Wiki.isIndexPage = isIndexPage;
-    function viewLink(branch, pageId, $location, fileName) {
-        if (fileName === void 0) { fileName = null; }
-        var link = null;
-        var start = startLink(branch);
-        if (pageId) {
-            // figure out which view to use for this page
-            var view = isIndexPage(pageId) ? "/book/" : "/view/";
-            link = start + view + encodePath(Core.trimLeading(pageId, "/"));
-        }
-        else {
-            // lets use the current path
-            var path = $location.path();
-            link = "#" + path.replace(/(edit|create)/, "view");
-        }
-        if (fileName && pageId && pageId.endsWith(fileName)) {
-            return link;
-        }
-        if (fileName) {
-            if (!link.endsWith("/")) {
-                link += "/";
-            }
-            link += fileName;
-        }
-        return link;
-    }
-    Wiki.viewLink = viewLink;
-    function branchLink(branch, pageId, $location, fileName) {
-        if (fileName === void 0) { fileName = null; }
-        return viewLink(branch, pageId, $location, fileName);
-    }
-    Wiki.branchLink = branchLink;
-    function editLink(branch, pageId, $location) {
-        var link = null;
-        var format = Wiki.fileFormat(pageId);
-        switch (format) {
-            case "image":
-                break;
-            default:
-                var start = startLink(branch);
-                if (pageId) {
-                    link = start + "/edit/" + encodePath(pageId);
-                }
-                else {
-                    // lets use the current path
-                    var path = $location.path();
-                    link = "#" + path.replace(/(view|create)/, "edit");
-                }
-        }
-        return link;
-    }
-    Wiki.editLink = editLink;
-    function createLink(branch, pageId, $location, $scope) {
-        var path = $location.path();
-        var start = startLink(branch);
-        var link = '';
-        if (pageId) {
-            link = start + "/create/" + encodePath(pageId);
-        }
-        else {
-            // lets use the current path
-            link = "#" + path.replace(/(view|edit|formTable)/, "create");
-        }
-        // we have the link so lets now remove the last path
-        // or if there is no / in the path then remove the last section
-        var idx = link.lastIndexOf("/");
-        if (idx > 0 && !$scope.children && !path.startsWith("/wiki/formTable")) {
-            link = link.substring(0, idx + 1);
-        }
-        return link;
-    }
-    Wiki.createLink = createLink;
-    function encodePath(pageId) {
-        return pageId.split("/").map(encodeURIComponent).join("/");
-    }
-    Wiki.encodePath = encodePath;
-    function decodePath(pageId) {
-        return pageId.split("/").map(decodeURIComponent).join("/");
-    }
-    Wiki.decodePath = decodePath;
-    function fileFormat(name, fileExtensionTypeRegistry) {
-        var extension = fileExtension(name);
-        var answer = null;
-        if (!fileExtensionTypeRegistry) {
-            fileExtensionTypeRegistry = HawtioCore.injector.get("fileExtensionTypeRegistry");
-        }
-        angular.forEach(fileExtensionTypeRegistry, function (array, key) {
-            if (array.indexOf(extension) >= 0) {
-                answer = key;
-            }
-        });
-        return answer;
-    }
-    Wiki.fileFormat = fileFormat;
-    /**
-     * Returns the file name of the given path; stripping off any directories
-     * @method fileName
-     * @for Wiki
-     * @static
-     * @param {String} path
-     * @return {String}
-     */
-    function fileName(path) {
-        if (path) {
-            var idx = path.lastIndexOf("/");
-            if (idx > 0) {
-                return path.substring(idx + 1);
-            }
-        }
-        return path;
-    }
-    Wiki.fileName = fileName;
-    /**
-     * Returns the folder of the given path (everything but the last path name)
-     * @method fileParent
-     * @for Wiki
-     * @static
-     * @param {String} path
-     * @return {String}
-     */
-    function fileParent(path) {
-        if (path) {
-            var idx = path.lastIndexOf("/");
-            if (idx > 0) {
-                return path.substring(0, idx);
-            }
-        }
-        // lets return the root directory
-        return "";
-    }
-    Wiki.fileParent = fileParent;
-    /**
-     * Returns the file name for the given name; we hide some extensions
-     * @method hideFineNameExtensions
-     * @for Wiki
-     * @static
-     * @param {String} name
-     * @return {String}
-     */
-    function hideFileNameExtensions(name) {
-        if (name) {
-            angular.forEach(Wiki.hideExtensions, function (extension) {
-                if (name.endsWith(extension)) {
-                    name = name.substring(0, name.length - extension.length);
-                }
-            });
-        }
-        return name;
-    }
-    Wiki.hideFileNameExtensions = hideFileNameExtensions;
-    /**
-     * Returns the URL to perform a GET or POST for the given branch name and path
-     */
-    function gitRestURL(branch, path) {
-        var url = gitRelativeURL(branch, path);
-        url = Core.url('/' + url);
-        var connectionName = Core.getConnectionNameParameter();
-        if (connectionName) {
-            var connectionOptions = Core.getConnectOptions(connectionName);
-            if (connectionOptions) {
-                connectionOptions.path = url;
-                url = Core.createServerConnectionUrl(connectionOptions);
-            }
-        }
-        return url;
-    }
-    Wiki.gitRestURL = gitRestURL;
-    function gitUrlPrefix() {
-        var prefix = "";
-        var injector = HawtioCore.injector;
-        if (injector) {
-            prefix = injector.get("WikiGitUrlPrefix") || "";
-        }
-        return prefix;
-    }
-    /**
-   * Returns a relative URL to perform a GET or POST for the given branch/path
-   */
-    function gitRelativeURL(branch, path) {
-        var prefix = gitUrlPrefix();
-        branch = branch || "master";
-        path = path || "/";
-        return UrlHelpers.join(prefix, "git/" + branch, path);
-    }
-    Wiki.gitRelativeURL = gitRelativeURL;
-    /**
-     * Takes a row containing the entity object; or can take the entity directly.
-     *
-     * It then uses the name, directory and xmlNamespaces properties
-     *
-     * @method fileIconHtml
-     * @for Wiki
-     * @static
-     * @param {any} row
-     * @return {String}
-     *
-     */
-    function fileIconHtml(row) {
-        var name = row.name;
-        var path = row.path;
-        var branch = row.branch;
-        var directory = row.directory;
-        var xmlNamespaces = row.xmlNamespaces;
-        var iconUrl = row.iconUrl;
-        var entity = row.entity;
-        if (entity) {
-            name = name || entity.name;
-            path = path || entity.path;
-            branch = branch || entity.branch;
-            directory = directory || entity.directory;
-            xmlNamespaces = xmlNamespaces || entity.xmlNamespaces;
-            iconUrl = iconUrl || entity.iconUrl;
-        }
-        branch = branch || "master";
-        var css = null;
-        var icon = null;
-        var extension = fileExtension(name);
-        // TODO could we use different icons for markdown v xml v html
-        if (xmlNamespaces && xmlNamespaces.length) {
-            if (xmlNamespaces.any(function (ns) { return Wiki.camelNamespaces.any(ns); })) {
-                icon = "img/icons/camel.svg";
-            }
-            else if (xmlNamespaces.any(function (ns) { return Wiki.dozerNamespaces.any(ns); })) {
-                icon = "img/icons/dozer/dozer.gif";
-            }
-            else if (xmlNamespaces.any(function (ns) { return Wiki.activemqNamespaces.any(ns); })) {
-                icon = "img/icons/messagebroker.svg";
-            }
-            else {
-                Wiki.log.debug("file " + name + " has namespaces " + xmlNamespaces);
-            }
-        }
-        if (iconUrl) {
-            css = null;
-            var prefix = gitUrlPrefix();
-            icon = UrlHelpers.join(prefix, "git", iconUrl);
-            var connectionName = Core.getConnectionNameParameter();
-            if (connectionName) {
-                var connectionOptions = Core.getConnectOptions(connectionName);
-                if (connectionOptions) {
-                    connectionOptions.path = Core.url('/' + icon);
-                    icon = Core.createServerConnectionUrl(connectionOptions);
-                }
-            }
-        }
-        if (!icon) {
-            if (directory) {
-                switch (extension) {
-                    case 'profile':
-                        css = "fa fa-book";
-                        break;
-                    default:
-                        // log.debug("No match for extension: ", extension, " using a generic folder icon");
-                        css = "fa fa-folder";
-                }
-            }
-            else {
-                switch (extension) {
-                    case 'png':
-                    case 'svg':
-                    case 'jpg':
-                    case 'gif':
-                        css = null;
-                        icon = Wiki.gitRelativeURL(branch, path);
-                        var connectionName = Core.getConnectionNameParameter();
-                        if (connectionName) {
-                            var connectionOptions = Core.getConnectOptions(connectionName);
-                            if (connectionOptions) {
-                                connectionOptions.path = Core.url('/' + icon);
-                                icon = Core.createServerConnectionUrl(connectionOptions);
-                            }
-                        }
-                        break;
-                    case 'json':
-                    case 'xml':
-                        css = "fa fa-file-text";
-                        break;
-                    case 'md':
-                        css = "fa fa-file-text-o";
-                        break;
-                    default:
-                        // log.debug("No match for extension: ", extension, " using a generic file icon");
-                        css = "fa fa-file-alt";
-                }
-            }
-        }
-        if (icon) {
-            return "<img src='" + Core.url(icon) + "'>";
-        }
-        else {
-            return "<i class='" + css + "'></i>";
-        }
-    }
-    Wiki.fileIconHtml = fileIconHtml;
-    function iconClass(row) {
-        var name = row.getProperty("name");
-        var extension = fileExtension(name);
-        var directory = row.getProperty("directory");
-        if (directory) {
-            return "fa fa-folder";
-        }
-        if ("xml" === extension) {
-            return "fa fa-cog";
-        }
-        else if ("md" === extension) {
-            return "fa fa-file-text-o";
-        }
-        // TODO could we use different icons for markdown v xml v html
-        return "fa fa-file-alt";
-    }
-    Wiki.iconClass = iconClass;
-    /**
-     * Extracts the pageId, branch, objectId from the route parameters
-     * @method initScope
-     * @for Wiki
-     * @static
-     * @param {*} $scope
-     * @param {any} $routeParams
-     * @param {ng.ILocationService} $location
-     */
-    function initScope($scope, $routeParams, $location) {
-        $scope.pageId = Wiki.pageId($routeParams, $location);
-        $scope.branch = $routeParams["branch"] || $location.search()["branch"];
-        $scope.objectId = $routeParams["objectId"];
-        $scope.startLink = Wiki.startLink($scope.branch);
-        $scope.historyLink = startLink($scope.branch) + "/history/" + ($scope.pageId || "");
-    }
-    Wiki.initScope = initScope;
-    /**
-     * Loads the branches for this wiki repository and stores them in the branches property in
-     * the $scope and ensures $scope.branch is set to a valid value
-     *
-     * @param wikiRepository
-     * @param $scope
-     * @param isFmc whether we run as fabric8 or as hawtio
-     */
-    function loadBranches(jolokia, wikiRepository, $scope, isFmc) {
-        if (isFmc === void 0) { isFmc = false; }
-        if (isFmc) {
-            // when using fabric then the branches is the fabric versions, so we should use that instead
-            $scope.branches = Fabric.getVersionIds(jolokia);
-            var defaultVersion = Fabric.getDefaultVersionId(jolokia);
-            // use current default version as default branch
-            if (!$scope.branch) {
-                $scope.branch = defaultVersion;
-            }
-            // lets sort by version number
-            $scope.branches = $scope.branches.sortBy(function (v) { return Core.versionToSortableString(v); }, true);
-            Core.$apply($scope);
-        }
-        else {
-            wikiRepository.branches(function (response) {
-                // lets sort by version number
-                $scope.branches = response.sortBy(function (v) { return Core.versionToSortableString(v); }, true);
-                // default the branch name if we have 'master'
-                if (!$scope.branch && $scope.branches.find(function (branch) {
-                    return branch === "master";
-                })) {
-                    $scope.branch = "master";
-                }
-                Core.$apply($scope);
-            });
-        }
-    }
-    Wiki.loadBranches = loadBranches;
-    /**
-     * Extracts the pageId from the route parameters
-     * @method pageId
-     * @for Wiki
-     * @static
-     * @param {any} $routeParams
-     * @param @ng.ILocationService @location
-     * @return {String}
-     */
-    function pageId($routeParams, $location) {
-        var pageId = $routeParams['page'];
-        if (!pageId) {
-            for (var i = 0; i < 100; i++) {
-                var value = $routeParams['path' + i];
-                if (angular.isDefined(value)) {
-                    if (!pageId) {
-                        pageId = value;
-                    }
-                    else {
-                        pageId += "/" + value;
-                    }
-                }
-                else
-                    break;
-            }
-            return pageId || "/";
-        }
-        // if no $routeParams variables lets figure it out from the $location
-        if (!pageId) {
-            pageId = pageIdFromURI($location.path());
-        }
-        return pageId;
-    }
-    Wiki.pageId = pageId;
-    function pageIdFromURI(url) {
-        var wikiPrefix = "/wiki/";
-        if (url && url.startsWith(wikiPrefix)) {
-            var idx = url.indexOf("/", wikiPrefix.length + 1);
-            if (idx > 0) {
-                return url.substring(idx + 1, url.length);
-            }
-        }
-        return null;
-    }
-    Wiki.pageIdFromURI = pageIdFromURI;
-    function fileExtension(name) {
-        if (name.indexOf('#') > 0)
-            name = name.substring(0, name.indexOf('#'));
-        return Core.fileExtension(name, "markdown");
-    }
-    Wiki.fileExtension = fileExtension;
-    function onComplete(status) {
-        console.log("Completed operation with status: " + JSON.stringify(status));
-    }
-    Wiki.onComplete = onComplete;
-    /**
-     * Parses the given JSON text reporting to the user if there is a parse error
-     * @method parseJson
-     * @for Wiki
-     * @static
-     * @param {String} text
-     * @return {any}
-     */
-    function parseJson(text) {
-        if (text) {
-            try {
-                return JSON.parse(text);
-            }
-            catch (e) {
-                Core.notification("error", "Failed to parse JSON: " + e);
-            }
-        }
-        return null;
-    }
-    Wiki.parseJson = parseJson;
-    /**
-     * Adjusts a relative or absolute link from a wiki or file system to one using the hash bang syntax
-     * @method adjustHref
-     * @for Wiki
-     * @static
-     * @param {*} $scope
-     * @param {ng.ILocationService} $location
-     * @param {String} href
-     * @param {String} fileExtension
-     * @return {string}
-     */
-    function adjustHref($scope, $location, href, fileExtension) {
-        var extension = fileExtension ? "." + fileExtension : "";
-        // if the last part of the path has a dot in it lets
-        // exclude it as we are relative to a markdown or html file in a folder
-        // such as when viewing readme.md or index.md
-        var path = $location.path();
-        var folderPath = path;
-        var idx = path.lastIndexOf("/");
-        if (idx > 0) {
-            var lastName = path.substring(idx + 1);
-            if (lastName.indexOf(".") >= 0) {
-                folderPath = path.substring(0, idx);
-            }
-        }
-        // Deal with relative URLs first...
-        if (href.startsWith('../')) {
-            var parts = href.split('/');
-            var pathParts = folderPath.split('/');
-            var parents = parts.filter(function (part) {
-                return part === "..";
-            });
-            parts = parts.last(parts.length - parents.length);
-            pathParts = pathParts.first(pathParts.length - parents.length);
-            return '#' + pathParts.join('/') + '/' + parts.join('/') + extension + $location.hash();
-        }
-        // Turn an absolute link into a wiki link...
-        if (href.startsWith('/')) {
-            return Wiki.branchLink($scope.branch, href + extension, $location) + extension;
-        }
-        if (!Wiki.excludeAdjustmentPrefixes.any(function (exclude) {
-            return href.startsWith(exclude);
-        })) {
-            return '#' + folderPath + "/" + href + extension + $location.hash();
-        }
-        else {
-            return null;
-        }
-    }
-    Wiki.adjustHref = adjustHref;
-})(Wiki || (Wiki = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="../../wiki/ts/wikiHelpers.ts"/>
-/// <reference path="activemqPlugin.ts"/>
-var ActiveMQ;
-(function (ActiveMQ) {
-    ActiveMQ._module.controller("ActiveMQ.BrokerDiagramController", ["$scope", "$compile", "$location", "localStorage", "jolokia", "workspace", function ($scope, $compile, $location, localStorage, jolokia, workspace) {
-        Fabric.initScope($scope, $location, jolokia, workspace);
-        var isFmc = Wiki.isFMCContainer(workspace);
-        $scope.isFmc = isFmc;
-        $scope.selectedNode = null;
-        var defaultFlags = {
-            panel: true,
-            popup: false,
-            label: true,
-            group: false,
-            profile: false,
-            slave: false,
-            broker: isFmc,
-            network: true,
-            container: false,
-            queue: true,
-            topic: true,
-            consumer: true,
-            producer: true
-        };
-        $scope.viewSettings = {};
-        $scope.shapeSize = {
-            broker: 20,
-            queue: 14,
-            topic: 14
-        };
-        var redrawGraph = Core.throttled(doRedrawGraph, 1000);
-        var graphBuilder = new ForceGraph.GraphBuilder();
-        Core.bindModelToSearchParam($scope, $location, "searchFilter", "q", "");
-        angular.forEach(defaultFlags, function (defaultValue, key) {
-            var modelName = "viewSettings." + key;
-            // bind model values to search params...
-            function currentValue() {
-                var answer = $location.search()[paramName] || defaultValue;
-                return answer === "false" ? false : answer;
-            }
-            var paramName = key;
-            var value = currentValue();
-            Core.pathSet($scope, modelName, value);
-            $scope.$watch(modelName, function () {
-                var current = Core.pathGet($scope, modelName);
-                var old = currentValue();
-                if (current !== old) {
-                    var defaultValue = defaultFlags[key];
-                    if (current !== defaultValue) {
-                        if (!current) {
-                            current = "false";
-                        }
-                        $location.search(paramName, current);
-                    }
-                    else {
-                        $location.search(paramName, null);
-                    }
-                }
-                redrawGraph();
-            });
-        });
-        $scope.connectToBroker = function () {
-            var selectedNode = $scope.selectedNode;
-            if (selectedNode) {
-                var container = selectedNode["brokerContainer"] || selectedNode;
-                connectToBroker(container, selectedNode["brokerName"]);
-            }
-        };
-        function connectToBroker(container, brokerName, postfix) {
-            if (postfix === void 0) { postfix = null; }
-            if (isFmc && container.jolokia !== jolokia) {
-                Fabric.connectToBroker($scope, container, postfix);
-            }
-            else {
-                var view = "/jmx/attributes?tab=activemq";
-                if (!postfix) {
-                    if (brokerName) {
-                        // lets default to the broker view
-                        postfix = "nid=root-org.apache.activemq-Broker-" + brokerName;
-                    }
-                }
-                if (postfix) {
-                    view += "&" + postfix;
-                }
-                ActiveMQ.log.info("Opening view " + view);
-                var path = Core.url("/#" + view);
-                window.open(path, '_destination');
-                window.focus();
-            }
-        }
-        $scope.connectToDestination = function () {
-            var selectedNode = $scope.selectedNode;
-            if (selectedNode) {
-                var container = selectedNode["brokerContainer"] || selectedNode;
-                var brokerName = selectedNode["brokerName"];
-                var destinationType = selectedNode["destinationType"] || selectedNode["typeLabel"];
-                var destinationName = selectedNode["destinationName"];
-                var postfix = null;
-                if (brokerName && destinationType && destinationName) {
-                    postfix = "nid=root-org.apache.activemq-Broker-" + brokerName + "-" + destinationType + "-" + destinationName;
-                }
-                connectToBroker(container, brokerName, postfix);
-            }
-        };
-        $scope.$on('$destroy', function (event) {
-            stopOldJolokia();
-        });
-        function stopOldJolokia() {
-            var oldJolokia = $scope.selectedNodeJolokia;
-            if (oldJolokia && oldJolokia !== jolokia) {
-                oldJolokia.stop();
-            }
-        }
-        $scope.$watch("selectedNode", function (newValue, oldValue) {
-            // lets cancel any previously registered thingy
-            if ($scope.unregisterFn) {
-                $scope.unregisterFn();
-                $scope.unregisterFn = null;
-            }
-            var node = $scope.selectedNode;
-            if (node) {
-                var mbean = node.objectName;
-                var brokerContainer = node.brokerContainer || {};
-                var nodeJolokia = node.jolokia || brokerContainer.jolokia || jolokia;
-                if (nodeJolokia !== $scope.selectedNodeJolokia) {
-                    stopOldJolokia();
-                    $scope.selectedNodeJolokia = nodeJolokia;
-                    if (nodeJolokia !== jolokia) {
-                        var rate = Core.parseIntValue(localStorage['updateRate'] || "2000", "update rate");
-                        if (rate) {
-                            nodeJolokia.start(rate);
-                        }
-                    }
-                }
-                var dummyResponse = { value: node.panelProperties || {} };
-                if (mbean && nodeJolokia) {
-                    ActiveMQ.log.debug("reading ", mbean, " on remote container");
-                    $scope.unregisterFn = Core.register(nodeJolokia, $scope, {
-                        type: 'read',
-                        mbean: mbean
-                    }, Core.onSuccess(renderNodeAttributes, {
-                        error: function (response) {
-                            // probably we've got a wrong mbean name?
-                            // so lets render at least
-                            renderNodeAttributes(dummyResponse);
-                            Core.defaultJolokiaErrorHandler(response);
-                        }
-                    }));
-                }
-                else {
-                    ActiveMQ.log.debug("no mbean or jolokia available, using dummy response");
-                    renderNodeAttributes(dummyResponse);
-                }
-            }
-        });
-        function getDestinationTypeName(attributes) {
-            var prefix = attributes["DestinationTemporary"] ? "Temporary " : "";
-            return prefix + (attributes["DestinationTopic"] ? "Topic" : "Queue");
-        }
-        var ignoreNodeAttributes = ["Broker", "BrokerId", "BrokerName", "Connection", "DestinationName", "DestinationQueue", "DestinationTemporary", "DestinationTopic",];
-        var ignoreNodeAttributesByType = {
-            producer: ["Producer", "ProducerId"],
-            queue: ["Name", "MessageGroups", "MessageGroupType", "Subscriptions"],
-            topic: ["Name", "Subscriptions"],
-            broker: ["DataDirectory", "DurableTopicSubscriptions", "DynamicDestinationProducers", "InactiveDurableToppicSubscribers"]
-        };
-        var brokerShowProperties = ["AverageMessageSize", "BrokerId", "JobSchedulerStorePercentUsage", "Slave", "MemoryPercentUsage", "StorePercentUsage", "TempPercentUsage"];
-        var onlyShowAttributesByType = {
-            broker: brokerShowProperties,
-            brokerSlave: brokerShowProperties
-        };
-        function renderNodeAttributes(response) {
-            var properties = [];
-            if (response) {
-                var value = response.value || {};
-                $scope.selectedNodeAttributes = value;
-                var selectedNode = $scope.selectedNode || {};
-                var brokerContainer = selectedNode['brokerContainer'] || {};
-                var nodeType = selectedNode["type"];
-                var brokerName = selectedNode["brokerName"];
-                var containerId = selectedNode["container"] || brokerContainer["container"];
-                var group = selectedNode["group"] || brokerContainer["group"];
-                var jolokiaUrl = selectedNode["jolokiaUrl"] || brokerContainer["jolokiaUrl"];
-                var profile = selectedNode["profile"] || brokerContainer["profile"];
-                var version = selectedNode["version"] || brokerContainer["version"];
-                var isBroker = nodeType && nodeType.startsWith("broker");
-                var ignoreKeys = ignoreNodeAttributes.concat(ignoreNodeAttributesByType[nodeType] || []);
-                var onlyShowKeys = onlyShowAttributesByType[nodeType];
-                angular.forEach(value, function (v, k) {
-                    if (onlyShowKeys ? onlyShowKeys.indexOf(k) >= 0 : ignoreKeys.indexOf(k) < 0) {
-                        var formattedValue = Core.humanizeValueHtml(v);
-                        properties.push({ key: Core.humanizeValue(k), value: formattedValue });
-                    }
-                });
-                properties = properties.sortBy("key");
-                var brokerProperty = null;
-                if (brokerName) {
-                    var brokerHtml = '<a target="broker" ng-click="connectToBroker()">' + '<img title="Apache ActiveMQ" src="img/icons/messagebroker.svg"> ' + brokerName + '</a>';
-                    if (version && profile) {
-                        var brokerLink = Fabric.brokerConfigLink(workspace, jolokia, localStorage, version, profile, brokerName);
-                        if (brokerLink) {
-                            brokerHtml += ' <a title="configuration settings" target="brokerConfig" href="' + brokerLink + '"><i class="fa fa-tasks"></i></a>';
-                        }
-                    }
-                    var html = $compile(brokerHtml)($scope);
-                    brokerProperty = { key: "Broker", value: html };
-                    if (!isBroker) {
-                        properties.splice(0, 0, brokerProperty);
-                    }
-                }
-                if (containerId) {
-                    //var containerModel = "selectedNode" + (selectedNode['brokerContainer'] ? ".brokerContainer" : "");
-                    properties.splice(0, 0, { key: "Container", value: $compile('<div fabric-container-link="' + selectedNode['container'] + '"></div>')($scope) });
-                }
-                var destinationName = value["DestinationName"] || selectedNode["destinationName"];
-                if (destinationName && (nodeType !== "queue" && nodeType !== "topic")) {
-                    var destinationTypeName = getDestinationTypeName(value);
-                    var html = createDestinationLink(destinationName, destinationTypeName);
-                    properties.splice(0, 0, { key: destinationTypeName, value: html });
-                }
-                var typeLabel = selectedNode["typeLabel"];
-                var name = selectedNode["name"] || selectedNode["id"] || selectedNode['objectName'];
-                if (typeLabel) {
-                    var html = name;
-                    if (nodeType === "queue" || nodeType === "topic") {
-                        html = createDestinationLink(name, nodeType);
-                    }
-                    var typeProperty = { key: typeLabel, value: html };
-                    if (isBroker && brokerProperty) {
-                        typeProperty = brokerProperty;
-                    }
-                    properties.splice(0, 0, typeProperty);
-                }
-            }
-            $scope.selectedNodeProperties = properties;
-            Core.$apply($scope);
-        }
-        /**
-         * Generates the HTML for a link to the destination
-         */
-        function createDestinationLink(destinationName, destinationType) {
-            if (destinationType === void 0) { destinationType = "queue"; }
-            return $compile('<a target="destination" title="' + destinationName + '" ng-click="connectToDestination()">' + destinationName + '</a>')($scope);
-        }
-        $scope.$watch("searchFilter", function (newValue, oldValue) {
-            redrawGraph();
-        });
-        if (isFmc) {
-            Fabric.loadBrokerStatus(onBrokerData);
-        }
-        else {
-            // lets just use the current stuff from the workspace
-            $scope.$watch('workspace.tree', function () {
-                redrawGraph();
-            });
-            $scope.$on('jmxTreeUpdated', function () {
-                redrawGraph();
-            });
-        }
-        function onBrokerData(response) {
-            if (response) {
-                var responseJson = angular.toJson(response.value);
-                if ($scope.responseJson === responseJson) {
-                    return;
-                }
-                $scope.responseJson = responseJson;
-                $scope.brokers = response.value;
-                doRedrawGraph();
-            }
-        }
-        function redrawFabricBrokers() {
-            var containersToDelete = $scope.activeContainers || {};
-            $scope.activeContainers = {};
-            angular.forEach($scope.brokers, function (brokerStatus) {
-                // only query master brokers which are provisioned correctly
-                brokerStatus.validContainer = brokerStatus.alive && brokerStatus.master && brokerStatus.provisionStatus === "success";
-                // don't use type field so we can use it for the node types..
-                renameTypeProperty(brokerStatus);
-                //log.info("Broker status: " + angular.toJson(brokerStatus, true));
-                var groupId = brokerStatus.group;
-                var profileId = brokerStatus.profile;
-                var brokerId = brokerStatus.brokerName;
-                var containerId = brokerStatus.container;
-                var versionId = brokerStatus.version || "1.0";
-                var group = getOrAddNode("group", groupId, brokerStatus, function () {
-                    return {
-                        /*
-                         navUrl: ,
-                         image: {
-                         url: "/hawtio/img/icons/osgi/bundle.png",
-                         width: 32,
-                         height:32
-                         },
-                         */
-                        typeLabel: "Broker Group",
-                        popup: {
-                            title: "Broker Group: " + groupId,
-                            content: "<p>" + groupId + "</p>"
-                        }
-                    };
-                });
-                var profile = getOrAddNode("profile", profileId, brokerStatus, function () {
-                    return {
-                        typeLabel: "Profile",
-                        popup: {
-                            title: "Profile: " + profileId,
-                            content: "<p>" + profileId + "</p>"
-                        }
-                    };
-                });
-                // TODO do we need to create a physical broker node per container and logical broker maybe?
-                var container = null;
-                if (containerId) {
-                    container = getOrAddNode("container", containerId, brokerStatus, function () {
-                        return {
-                            containerId: containerId,
-                            typeLabel: "Container",
-                            popup: {
-                                title: "Container: " + containerId,
-                                content: "<p>" + containerId + " version: " + versionId + "</p>"
-                            }
-                        };
-                    });
-                }
-                var master = brokerStatus.master;
-                var broker = getOrAddBroker(master, brokerId, groupId, containerId, container, brokerStatus);
-                if (container && container.validContainer) {
-                    var key = container.containerId;
-                    $scope.activeContainers[key] = container;
-                    delete containersToDelete[key];
-                }
-                // add the links...
-                if ($scope.viewSettings.group) {
-                    if ($scope.viewSettings.profile) {
-                        addLink(group, profile, "group");
-                        addLink(profile, broker, "broker");
-                    }
-                    else {
-                        addLink(group, broker, "group");
-                    }
-                }
-                else {
-                    if ($scope.viewSettings.profile) {
-                        addLink(profile, broker, "broker");
-                    }
-                }
-                if (container) {
-                    if ((master || $scope.viewSettings.slave) && $scope.viewSettings.container) {
-                        addLink(broker, container, "container");
-                        container.destinationLinkNode = container;
-                    }
-                    else {
-                        container.destinationLinkNode = broker;
-                    }
-                }
-            });
-            redrawActiveContainers();
-        }
-        function redrawLocalBroker() {
-            var container = {
-                jolokia: jolokia
-            };
-            var containerId = "local";
-            $scope.activeContainers = {
-                containerId: container
-            };
-            if ($scope.viewSettings.broker) {
-                jolokia.search("org.apache.activemq:type=Broker,brokerName=*", Core.onSuccess(function (response) {
-                    angular.forEach(response, function (objectName) {
-                        var details = Core.parseMBean(objectName);
-                        if (details) {
-                            var properties = details['attributes'];
-                            ActiveMQ.log.info("Got broker: " + objectName + " on container: " + containerId + " properties: " + angular.toJson(properties, true));
-                            if (properties) {
-                                var master = true;
-                                var brokerId = properties["brokerName"] || "unknown";
-                                var groupId = "";
-                                var broker = getOrAddBroker(master, brokerId, groupId, containerId, container, properties);
-                            }
-                        }
-                    });
-                    redrawActiveContainers();
-                }));
-            }
-            else {
-                redrawActiveContainers();
-            }
-        }
-        function redrawActiveContainers() {
-            // TODO delete any nodes from dead containers in containersToDelete
-            angular.forEach($scope.activeContainers, function (container, id) {
-                var containerJolokia = container.jolokia;
-                if (containerJolokia) {
-                    onContainerJolokia(containerJolokia, container, id);
-                }
-                else {
-                    Fabric.containerJolokia(jolokia, id, function (containerJolokia) { return onContainerJolokia(containerJolokia, container, id); });
-                }
-            });
-            $scope.graph = graphBuilder.buildGraph();
-            Core.$apply($scope);
-        }
-        function doRedrawGraph() {
-            graphBuilder = new ForceGraph.GraphBuilder();
-            if (isFmc) {
-                redrawFabricBrokers();
-            }
-            else {
-                redrawLocalBroker();
-            }
-        }
-        function brokerNameMarkup(brokerName) {
-            return brokerName ? "<p></p>broker: " + brokerName + "</p>" : "";
-        }
-        function matchesDestinationName(destinationName, typeName) {
-            if (destinationName) {
-                var selection = workspace.selection;
-                if (selection && selection.domain === ActiveMQ.jmxDomain) {
-                    var type = selection.entries["destinationType"];
-                    if (type) {
-                        if ((type === "Queue" && typeName === "topic") || (type === "Topic" && typeName === "queue")) {
-                            return false;
-                        }
-                    }
-                    var destName = selection.entries["destinationName"];
-                    if (destName) {
-                        if (destName !== destinationName)
-                            return false;
-                    }
-                }
-                ActiveMQ.log.info("selection: " + selection);
-                // TODO if the current selection is a destination...
-                return !$scope.searchFilter || destinationName.indexOf($scope.searchFilter) >= 0;
-            }
-            return false;
-        }
-        function onContainerJolokia(containerJolokia, container, id) {
-            if (containerJolokia) {
-                container.jolokia = containerJolokia;
-                function getOrAddDestination(properties) {
-                    var typeName = properties.destType;
-                    var brokerName = properties.brokerName;
-                    var destinationName = properties.destinationName;
-                    if (!matchesDestinationName(destinationName, typeName)) {
-                        return null;
-                    }
-                    // should we be filtering this destination out
-                    var hideFlag = "topic" === typeName ? $scope.viewSettings.topic : $scope.viewSettings.queue;
-                    if (!hideFlag) {
-                        return null;
-                    }
-                    var destination = getOrAddNode(typeName, destinationName, properties, function () {
-                        var destinationTypeName = properties.destinationType || "Queue";
-                        var objectName = "";
-                        if (brokerName) {
-                            // lets ignore temp topic stuff as there's no mbean for these
-                            if (!destinationName.startsWith("ActiveMQ.Advisory.TempQueue_ActiveMQ.Advisory.TempTopic")) {
-                                objectName = "org.apache.activemq:type=Broker,brokerName=" + brokerName + ",destinationType=" + destinationTypeName + ",destinationName=" + destinationName;
-                            }
-                        }
-                        var answer = {
-                            typeLabel: destinationTypeName,
-                            brokerContainer: container,
-                            objectName: objectName,
-                            jolokia: containerJolokia,
-                            popup: {
-                                title: destinationTypeName + ": " + destinationName,
-                                content: brokerNameMarkup(properties.brokerName)
-                            }
-                        };
-                        if (!brokerName) {
-                            containerJolokia.search("org.apache.activemq:destinationType=" + destinationTypeName + ",destinationName=" + destinationName + ",*", Core.onSuccess(function (response) {
-                                ActiveMQ.log.info("Found destination mbean: " + response);
-                                if (response && response.length) {
-                                    answer.objectName = response[0];
-                                }
-                            }));
-                        }
-                        return answer;
-                    });
-                    if (destination && $scope.viewSettings.broker && brokerName) {
-                        addLinkIds(brokerNodeId(brokerName), destination["id"], "destination");
-                    }
-                    return destination;
-                }
-                // find networks
-                var brokerId = container.brokerName;
-                if (brokerId && $scope.viewSettings.network && $scope.viewSettings.broker) {
-                    containerJolokia.request({ type: "read", mbean: "org.apache.activemq:connector=networkConnectors,*" }, Core.onSuccess(function (response) {
-                        angular.forEach(response.value, function (properties, objectName) {
-                            var details = Core.parseMBean(objectName);
-                            var attributes = details['attributes'];
-                            if (properties) {
-                                configureDestinationProperties(properties);
-                                var remoteBrokerId = properties.RemoteBrokerName;
-                                if (remoteBrokerId) {
-                                    addLinkIds(brokerNodeId(brokerId), brokerNodeId(remoteBrokerId), "network");
-                                }
-                            }
-                        });
-                        graphModelUpdated();
-                    }));
-                }
-                // find consumers
-                if ($scope.viewSettings.consumer) {
-                    containerJolokia.search("org.apache.activemq:endpoint=Consumer,*", Core.onSuccess(function (response) {
-                        angular.forEach(response, function (objectName) {
-                            //log.info("Got consumer: " + objectName + " on container: " + id);
-                            var details = Core.parseMBean(objectName);
-                            if (details) {
-                                var properties = details['attributes'];
-                                if (properties) {
-                                    configureDestinationProperties(properties);
-                                    var consumerId = properties.consumerId;
-                                    if (consumerId) {
-                                        var destination = getOrAddDestination(properties);
-                                        if (destination) {
-                                            addLink(container.destinationLinkNode, destination, "destination");
-                                            var consumer = getOrAddNode("consumer", consumerId, properties, function () {
-                                                return {
-                                                    typeLabel: "Consumer",
-                                                    brokerContainer: container,
-                                                    objectName: objectName,
-                                                    jolokia: containerJolokia,
-                                                    popup: {
-                                                        title: "Consumer: " + consumerId,
-                                                        content: "<p>client: " + (properties.clientId || "") + "</p> " + brokerNameMarkup(properties.brokerName)
-                                                    }
-                                                };
-                                            });
-                                            addLink(destination, consumer, "consumer");
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                        graphModelUpdated();
-                    }));
-                }
-                // find producers
-                if ($scope.viewSettings.producer) {
-                    containerJolokia.search("org.apache.activemq:endpoint=Producer,*", Core.onSuccess(function (response) {
-                        angular.forEach(response, function (objectName) {
-                            var details = Core.parseMBean(objectName);
-                            if (details) {
-                                var properties = details['attributes'];
-                                if (properties) {
-                                    configureDestinationProperties(properties);
-                                    var producerId = properties.producerId;
-                                    if (producerId) {
-                                        var destination = getOrAddDestination(properties);
-                                        if (destination) {
-                                            addLink(container.destinationLinkNode, destination, "destination");
-                                            var producer = getOrAddNode("producer", producerId, properties, function () {
-                                                return {
-                                                    typeLabel: "Producer",
-                                                    brokerContainer: container,
-                                                    objectName: objectName,
-                                                    jolokia: containerJolokia,
-                                                    popup: {
-                                                        title: "Producer: " + producerId,
-                                                        content: "<p>client: " + (properties.clientId || "") + "</p> " + brokerNameMarkup(properties.brokerName)
-                                                    }
-                                                };
-                                            });
-                                            addLink(producer, destination, "producer");
-                                        }
-                                        graphModelUpdated();
-                                    }
-                                }
-                            }
-                        });
-                        graphModelUpdated();
-                    }));
-                }
-                // find dynamic producers
-                if ($scope.viewSettings.producer) {
-                    containerJolokia.request({ type: "read", mbean: "org.apache.activemq:endpoint=dynamicProducer,*" }, Core.onSuccess(function (response) {
-                        angular.forEach(response.value, function (mbeanValues, objectName) {
-                            var details = Core.parseMBean(objectName);
-                            var attributes = details['attributes'];
-                            var properties = {};
-                            angular.forEach(attributes, function (value, key) {
-                                properties[key] = value;
-                            });
-                            angular.forEach(mbeanValues, function (value, key) {
-                                properties[key] = value;
-                            });
-                            configureDestinationProperties(properties);
-                            properties['destinationName'] = properties['DestinationName'];
-                            var producerId = properties["producerId"] || properties["ProducerId"];
-                            if (properties["DestinationTemporary"] || properties["DestinationTopc"]) {
-                                properties["destType"] = "topic";
-                            }
-                            var destination = getOrAddDestination(properties);
-                            if (producerId && destination) {
-                                addLink(container.destinationLinkNode, destination, "destination");
-                                var producer = getOrAddNode("producer", producerId, properties, function () {
-                                    return {
-                                        typeLabel: "Producer (Dynamic)",
-                                        brokerContainer: container,
-                                        objectName: objectName,
-                                        jolokia: containerJolokia,
-                                        popup: {
-                                            title: "Producer (Dynamic): " + producerId,
-                                            content: "<p>client: " + (properties['ClientId'] || "") + "</p> " + brokerNameMarkup(properties['brokerName'])
-                                        }
-                                    };
-                                });
-                                addLink(producer, destination, "producer");
-                            }
-                        });
-                        graphModelUpdated();
-                    }));
-                }
-            }
-        }
-        function graphModelUpdated() {
-            $scope.graph = graphBuilder.buildGraph();
-            Core.$apply($scope);
-        }
-        function getOrAddBroker(master, brokerId, groupId, containerId, container, brokerStatus) {
-            var broker = null;
-            var brokerFlag = master ? $scope.viewSettings.broker : $scope.viewSettings.slave;
-            if (brokerFlag) {
-                broker = getOrAddNode("broker", brokerId + (master ? "" : ":slave"), brokerStatus, function () {
-                    return {
-                        type: master ? "broker" : "brokerSlave",
-                        typeLabel: master ? "Broker" : "Slave Broker",
-                        popup: {
-                            title: (master ? "Master" : "Slave") + " Broker: " + brokerId,
-                            content: "<p>Container: " + containerId + "</p> <p>Group: " + groupId + "</p>"
-                        }
-                    };
-                });
-                if (master) {
-                    if (!broker['objectName']) {
-                        // lets try guess the mbean name
-                        broker['objectName'] = "org.apache.activemq:type=Broker,brokerName=" + brokerId;
-                        ActiveMQ.log.info("Guessed broker mbean: " + broker['objectName']);
-                    }
-                    if (!broker['brokerContainer'] && container) {
-                        broker['brokerContainer'] = container;
-                    }
-                }
-            }
-            return broker;
-        }
-        function getOrAddNode(typeName, id, properties, createFn) {
-            var node = null;
-            if (id) {
-                var nodeId = typeName + ":" + id;
-                node = graphBuilder.getNode(nodeId);
-                if (!node) {
-                    var nodeValues = createFn();
-                    node = angular.copy(properties);
-                    angular.forEach(nodeValues, function (value, key) { return node[key] = value; });
-                    node['id'] = nodeId;
-                    if (!node['type']) {
-                        node['type'] = typeName;
-                    }
-                    if (!node['name']) {
-                        node['name'] = id;
-                    }
-                    if (node) {
-                        var size = $scope.shapeSize[typeName];
-                        if (size && !node['size']) {
-                            node['size'] = size;
-                        }
-                        if (!node['summary']) {
-                            node['summary'] = node['popup'] || "";
-                        }
-                        if (!$scope.viewSettings.popup) {
-                            delete node['popup'];
-                        }
-                        if (!$scope.viewSettings.label) {
-                            delete node['name'];
-                        }
-                        // lets not add nodes which are defined as being disabled
-                        var enabled = $scope.viewSettings[typeName];
-                        if (enabled || !angular.isDefined(enabled)) {
-                            //log.info("Adding node " + nodeId + " of type + " + typeName);
-                            graphBuilder.addNode(node);
-                        }
-                        else {
-                        }
-                    }
-                }
-            }
-            return node;
-        }
-        function addLink(object1, object2, linkType) {
-            if (object1 && object2) {
-                addLinkIds(object1.id, object2.id, linkType);
-            }
-        }
-        function addLinkIds(id1, id2, linkType) {
-            if (id1 && id2) {
-                graphBuilder.addLink(id1, id2, linkType);
-            }
-        }
-        function brokerNodeId(brokerId) {
-            return brokerId ? "broker:" + brokerId : null;
-        }
-        /**
-           * Avoid the JMX type property clashing with the ForceGraph type property; used for associating css classes with nodes on the graph
-           *
-           * @param properties
-           */
-        function renameTypeProperty(properties) {
-            properties.mbeanType = properties['type'];
-            delete properties['type'];
-        }
-        function configureDestinationProperties(properties) {
-            renameTypeProperty(properties);
-            var destinationType = properties.destinationType || "Queue";
-            var typeName = destinationType.toLowerCase();
-            properties.isQueue = !typeName.startsWith("t");
-            properties['destType'] = typeName;
-        }
-    }]);
 })(ActiveMQ || (ActiveMQ = {}));
 
 /// <reference path="../../includes.ts"/>
@@ -9957,6 +8240,63 @@ var Fabric;
     Fabric.getVersionIds = getVersionIds;
 })(Fabric || (Fabric = {}));
 
+/**
+ * @module Git
+ */
+var Git;
+(function (Git) {
+    function createGitRepository(workspace, jolokia, localStorage) {
+        var mbean = getGitMBean(workspace);
+        if (mbean && jolokia) {
+            return new Git.JolokiaGit(mbean, jolokia, localStorage, workspace.userDetails);
+        }
+        // TODO use local storage to make a little wiki thingy?
+        return null;
+    }
+    Git.createGitRepository = createGitRepository;
+    Git.jmxDomain = "hawtio";
+    Git.mbeanType = "GitFacade";
+    function hasGit(workspace) {
+        return getGitMBean(workspace) !== null;
+    }
+    Git.hasGit = hasGit;
+    /**
+     * Returns the JMX ObjectName of the git mbean
+     * @method getGitMBean
+     * @for Git
+     * @param {Workspace} workspace
+     * @return {String}
+     */
+    function getGitMBean(workspace) {
+        return Core.getMBeanTypeObjectName(workspace, Git.jmxDomain, Git.mbeanType);
+    }
+    Git.getGitMBean = getGitMBean;
+    /**
+     * Returns the Folder for the git mbean if it can be found
+     * @method getGitMBeanFolder
+     * @for Git
+     * @param {Workspace} workspace
+     * @return {Folder}
+     */
+    function getGitMBeanFolder(workspace) {
+        return Core.getMBeanTypeFolder(workspace, Git.jmxDomain, Git.mbeanType);
+    }
+    Git.getGitMBeanFolder = getGitMBeanFolder;
+    /**
+     * Returns true if the git mbean is a fabric configuration repository
+     * (so we can use it for the fabric plugin)
+     * @method isGitMBeanFabric
+     * @for Git
+     * @param {Workspace} workspace
+     * @return {Boolean}
+     */
+    function isGitMBeanFabric(workspace) {
+        var folder = getGitMBeanFolder(workspace);
+        return folder && folder.entries["repo"] === "fabric";
+    }
+    Git.isGitMBeanFabric = isGitMBeanFabric;
+})(Git || (Git = {}));
+
 /// <reference path="../../includes.ts"/>
 /// <reference path="gitHelpers.ts"/>
 /**
@@ -14615,6 +12955,935 @@ var Osgi;
 
 /// <reference path="../../includes.ts"/>
 /// <reference path="../../git/ts/gitHelpers.ts"/>
+/**
+ * @module Wiki
+ */
+var Wiki;
+(function (Wiki) {
+    Wiki.log = Logger.get("Wiki");
+    Wiki.camelNamespaces = ["http://camel.apache.org/schema/spring", "http://camel.apache.org/schema/blueprint"];
+    Wiki.springNamespaces = ["http://www.springframework.org/schema/beans"];
+    Wiki.droolsNamespaces = ["http://drools.org/schema/drools-spring"];
+    Wiki.dozerNamespaces = ["http://dozer.sourceforge.net"];
+    Wiki.activemqNamespaces = ["http://activemq.apache.org/schema/core"];
+    Wiki.excludeAdjustmentPrefixes = ["http://", "https://", "#"];
+    (function (ViewMode) {
+        ViewMode[ViewMode["List"] = 0] = "List";
+        ViewMode[ViewMode["Icon"] = 1] = "Icon";
+    })(Wiki.ViewMode || (Wiki.ViewMode = {}));
+    var ViewMode = Wiki.ViewMode;
+    ;
+    /**
+     * The custom views within the wiki namespace; either "/wiki/$foo" or "/wiki/branch/$branch/$foo"
+     */
+    Wiki.customWikiViewPages = ["/formTable", "/camel/diagram", "/camel/canvas", "/camel/properties", "/dozer/mappings"];
+    /**
+     * Which extensions do we wish to hide in the wiki file listing
+     * @property hideExtensions
+     * @for Wiki
+     * @type Array
+     */
+    Wiki.hideExtensions = [".profile"];
+    var defaultFileNamePattern = /^[a-zA-Z0-9._-]*$/;
+    var defaultFileNamePatternInvalid = "Name must be: letters, numbers, and . _ or - characters";
+    var defaultFileNameExtensionPattern = "";
+    var defaultLowerCaseFileNamePattern = /^[a-z0-9._-]*$/;
+    var defaultLowerCaseFileNamePatternInvalid = "Name must be: lower-case letters, numbers, and . _ or - characters";
+    /**
+     * The wizard tree for creating new content in the wiki
+     * @property documentTemplates
+     * @for Wiki
+     * @type Array
+     */
+    Wiki.documentTemplates = [
+        {
+            label: "Folder",
+            tooltip: "Create a new folder to contain documents",
+            folder: true,
+            icon: "/img/icons/wiki/folder.gif",
+            exemplar: "myfolder",
+            regex: defaultLowerCaseFileNamePattern,
+            invalid: defaultLowerCaseFileNamePatternInvalid
+        },
+        {
+            label: "App",
+            tooltip: "Creates a new App folder used to configure and run containers",
+            addClass: "fa fa-cog green",
+            exemplar: 'myapp',
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: '',
+            generated: {
+                mbean: ['io.fabric8', { type: 'KubernetesTemplateManager' }],
+                init: function (workspace, $scope) {
+                },
+                generate: function (options) {
+                    Wiki.log.debug("Got options: ", options);
+                    options.form.name = options.name;
+                    options.form.path = options.parentId;
+                    options.form.branch = options.branch;
+                    var json = angular.toJson(options.form);
+                    var jolokia = HawtioCore.injector.get("jolokia");
+                    jolokia.request({
+                        type: 'exec',
+                        mbean: 'io.fabric8:type=KubernetesTemplateManager',
+                        operation: 'createAppByJson',
+                        arguments: [json]
+                    }, Core.onSuccess(function (response) {
+                        Wiki.log.debug("Generated app, response: ", response);
+                        options.success(undefined);
+                    }, {
+                        error: function (response) {
+                            options.error(response.error);
+                        }
+                    }));
+                },
+                form: function (workspace, $scope) {
+                    if (!$scope.doDockerRegistryCompletion) {
+                        $scope.fetchDockerRepositories = function () {
+                            return DockerRegistry.completeDockerRegistry();
+                        };
+                    }
+                    return {
+                        summaryMarkdown: 'Add app summary here',
+                        replicaCount: 1
+                    };
+                },
+                schema: {
+                    description: 'App settings',
+                    type: 'java.lang.String',
+                    properties: {
+                        'dockerImage': {
+                            'description': 'Docker Image',
+                            'type': 'java.lang.String',
+                            'input-attributes': {
+                                'required': '',
+                                'class': 'input-xlarge',
+                                'typeahead': 'repo for repo in fetchDockerRepositories() | filter:$viewValue',
+                                'typeahead-wait-ms': '200'
+                            }
+                        },
+                        'summaryMarkdown': {
+                            'description': 'Short Description',
+                            'type': 'java.lang.String',
+                            'input-attributes': { 'class': 'input-xlarge' }
+                        },
+                        'replicaCount': {
+                            'description': 'Replica Count',
+                            'type': 'java.lang.Integer',
+                            'input-attributes': {
+                                min: '0'
+                            }
+                        },
+                        'labels': {
+                            'description': 'Labels',
+                            'type': 'map',
+                            'items': {
+                                'type': 'string'
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            label: "Fabric8 Profile",
+            tooltip: "Create a new empty fabric profile. Using a hyphen ('-') will create a folder heirarchy, for example 'my-awesome-profile' will be available via the path 'my/awesome/profile'.",
+            profile: true,
+            addClass: "fa fa-book green",
+            exemplar: "user-profile",
+            regex: defaultLowerCaseFileNamePattern,
+            invalid: defaultLowerCaseFileNamePatternInvalid,
+            fabricOnly: true
+        },
+        {
+            label: "Properties File",
+            tooltip: "A properties file typically used to configure Java classes",
+            exemplar: "properties-file.properties",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".properties"
+        },
+        {
+            label: "JSON File",
+            tooltip: "A file containing JSON data",
+            exemplar: "document.json",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".json"
+        },
+        {
+            label: "Key Store File",
+            tooltip: "Creates a keystore (database) of cryptographic keys, X.509 certificate chains, and trusted certificates.",
+            exemplar: 'keystore.jks',
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".jks",
+            generated: {
+                mbean: ['hawtio', { type: 'KeystoreService' }],
+                init: function (workspace, $scope) {
+                    var mbean = 'hawtio:type=KeystoreService';
+                    var response = workspace.jolokia.request({ type: "read", mbean: mbean, attribute: "SecurityProviderInfo" }, {
+                        success: function (response) {
+                            $scope.securityProviderInfo = response.value;
+                            Core.$apply($scope);
+                        },
+                        error: function (response) {
+                            console.log('Could not find the supported security algorithms: ', response.error);
+                            Core.$apply($scope);
+                        }
+                    });
+                },
+                generate: function (options) {
+                    var encodedForm = JSON.stringify(options.form);
+                    var mbean = 'hawtio:type=KeystoreService';
+                    var response = options.workspace.jolokia.request({
+                        type: 'exec',
+                        mbean: mbean,
+                        operation: 'createKeyStoreViaJSON(java.lang.String)',
+                        arguments: [encodedForm]
+                    }, {
+                        method: 'POST',
+                        success: function (response) {
+                            options.success(response.value);
+                        },
+                        error: function (response) {
+                            options.error(response.error);
+                        }
+                    });
+                },
+                form: function (workspace, $scope) {
+                    return {
+                        storeType: $scope.securityProviderInfo.supportedKeyStoreTypes[0],
+                        createPrivateKey: false,
+                        keyLength: 4096,
+                        keyAlgorithm: $scope.securityProviderInfo.supportedKeyAlgorithms[0],
+                        keyValidity: 365
+                    };
+                },
+                schema: {
+                    "description": "Keystore Settings",
+                    "type": "java.lang.String",
+                    "properties": {
+                        "storePassword": {
+                            "description": "Keystore password.",
+                            "type": "password",
+                            'input-attributes': { "required": "", "ng-minlength": 6 }
+                        },
+                        "storeType": {
+                            "description": "The type of store to create",
+                            "type": "java.lang.String",
+                            'input-element': "select",
+                            'input-attributes': { "ng-options": "v for v in securityProviderInfo.supportedKeyStoreTypes" }
+                        },
+                        "createPrivateKey": {
+                            "description": "Should we generate a self-signed private key?",
+                            "type": "boolean"
+                        },
+                        "keyCommonName": {
+                            "description": "The common name of the key, typically set to the hostname of the server",
+                            "type": "java.lang.String",
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        },
+                        "keyLength": {
+                            "description": "The length of the cryptographic key",
+                            "type": "Long",
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        },
+                        "keyAlgorithm": {
+                            "description": "The key algorithm",
+                            "type": "java.lang.String",
+                            'input-element': "select",
+                            'input-attributes': { "ng-options": "v for v in securityProviderInfo.supportedKeyAlgorithms" },
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        },
+                        "keyValidity": {
+                            "description": "The number of days the key will be valid for",
+                            "type": "Long",
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        },
+                        "keyPassword": {
+                            "description": "Password to the private key",
+                            "type": "password",
+                            'control-group-attributes': { 'ng-show': "formData.createPrivateKey" }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            label: "Markdown Document",
+            tooltip: "A basic markup document using the Markdown wiki markup, particularly useful for ReadMe files in directories",
+            exemplar: "ReadMe.md",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".md"
+        },
+        {
+            label: "Text Document",
+            tooltip: "A plain text file",
+            exemplar: "document.text",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".txt"
+        },
+        {
+            label: "HTML Document",
+            tooltip: "A HTML document you can edit directly using the HTML markup",
+            exemplar: "document.html",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".html"
+        },
+        {
+            label: "XML Document",
+            tooltip: "An empty XML document",
+            exemplar: "document.xml",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".xml"
+        },
+        {
+            label: "Integration Flows",
+            tooltip: "Camel routes for defining your integration flows",
+            children: [
+                {
+                    label: "Camel XML document",
+                    tooltip: "A vanilla Camel XML document for integration flows",
+                    icon: "/img/icons/camel.svg",
+                    exemplar: "camel.xml",
+                    regex: defaultFileNamePattern,
+                    invalid: defaultFileNamePatternInvalid,
+                    extension: ".xml"
+                },
+                {
+                    label: "Camel OSGi Blueprint XML document",
+                    tooltip: "A vanilla Camel XML document for integration flows when using OSGi Blueprint",
+                    icon: "/img/icons/camel.svg",
+                    exemplar: "camel-blueprint.xml",
+                    regex: defaultFileNamePattern,
+                    invalid: defaultFileNamePatternInvalid,
+                    extension: ".xml"
+                },
+                {
+                    label: "Camel Spring XML document",
+                    tooltip: "A vanilla Camel XML document for integration flows when using the Spring framework",
+                    icon: "/img/icons/camel.svg",
+                    exemplar: "camel-spring.xml",
+                    regex: defaultFileNamePattern,
+                    invalid: defaultFileNamePatternInvalid,
+                    extension: ".xml"
+                }
+            ]
+        },
+        {
+            label: "Data Mapping Document",
+            tooltip: "Dozer based configuration of mapping documents",
+            icon: "/img/icons/dozer/dozer.gif",
+            exemplar: "dozer-mapping.xml",
+            regex: defaultFileNamePattern,
+            invalid: defaultFileNamePatternInvalid,
+            extension: ".xml"
+        }
+    ];
+    function isFMCContainer(workspace) {
+        return false;
+    }
+    Wiki.isFMCContainer = isFMCContainer;
+    function isWikiEnabled(workspace, jolokia, localStorage) {
+        return Git.createGitRepository(workspace, jolokia, localStorage) !== null;
+    }
+    Wiki.isWikiEnabled = isWikiEnabled;
+    function goToLink(link, $timeout, $location) {
+        var href = Core.trimLeading(link, "#");
+        $timeout(function () {
+            Wiki.log.debug("About to navigate to: " + href);
+            $location.url(href);
+        }, 100);
+    }
+    Wiki.goToLink = goToLink;
+    /**
+     * Returns all the links for the given branch for the custom views, starting with "/"
+     * @param $scope
+     * @returns {string[]}
+     */
+    function customViewLinks($scope) {
+        var branch = $scope.branch;
+        var prefix = Core.trimLeading(Wiki.startLink(branch), "#");
+        return Wiki.customWikiViewPages.map(function (path) { return prefix + path; });
+    }
+    Wiki.customViewLinks = customViewLinks;
+    /**
+     * Returns a new create document wizard tree
+     * @method createWizardTree
+     * @for Wiki
+     * @static
+     */
+    function createWizardTree(workspace, $scope) {
+        var root = new Folder("New Documents");
+        addCreateWizardFolders(workspace, $scope, root, Wiki.documentTemplates);
+        return root;
+    }
+    Wiki.createWizardTree = createWizardTree;
+    function addCreateWizardFolders(workspace, $scope, parent, templates) {
+        angular.forEach(templates, function (template) {
+            if (template['fabricOnly'] && !Fabric.hasFabric(workspace)) {
+                return;
+            }
+            if (template.generated) {
+                if (template.generated.mbean) {
+                    var exists = workspace.treeContainsDomainAndProperties.apply(workspace, template.generated.mbean);
+                    if (!exists) {
+                        return;
+                    }
+                }
+                if (template.generated.init) {
+                    template.generated.init(workspace, $scope);
+                }
+            }
+            var title = template.label || key;
+            var node = new Folder(title);
+            node.parent = parent;
+            node.entity = template;
+            var addClass = template.addClass;
+            if (addClass) {
+                node.addClass = addClass;
+            }
+            var key = template.exemplar;
+            var parentKey = parent.key || "";
+            node.key = parentKey ? parentKey + "_" + key : key;
+            var icon = template.icon;
+            if (icon) {
+                node.icon = Core.url(icon);
+            }
+            // compiler was complaining about 'label' had no idea where it's coming from
+            // var tooltip = value["tooltip"] || value["description"] || label;
+            var tooltip = template["tooltip"] || template["description"] || '';
+            node.tooltip = tooltip;
+            if (template["folder"]) {
+                node.isFolder = function () {
+                    return true;
+                };
+            }
+            parent.children.push(node);
+            var children = template.children;
+            if (children) {
+                addCreateWizardFolders(workspace, $scope, node, children);
+            }
+        });
+    }
+    Wiki.addCreateWizardFolders = addCreateWizardFolders;
+    function startLink(branch) {
+        var start = "/wiki";
+        if (branch) {
+            start = UrlHelpers.join(start, 'branch', branch);
+        }
+        return start;
+    }
+    Wiki.startLink = startLink;
+    /**
+     * Returns true if the given filename/path is an index page (named index.* and is a markdown/html page).
+     *
+     * @param path
+     * @returns {boolean}
+     */
+    function isIndexPage(path) {
+        return path && (path.endsWith("index.md") || path.endsWith("index.html") || path.endsWith("index")) ? true : false;
+    }
+    Wiki.isIndexPage = isIndexPage;
+    function viewLink(branch, pageId, $location, fileName) {
+        if (fileName === void 0) { fileName = null; }
+        var link = null;
+        var start = startLink(branch);
+        if (pageId) {
+            // figure out which view to use for this page
+            var view = isIndexPage(pageId) ? "/book/" : "/view/";
+            link = start + view + encodePath(Core.trimLeading(pageId, "/"));
+        }
+        else {
+            // lets use the current path
+            var path = $location.path();
+            link = "#" + path.replace(/(edit|create)/, "view");
+        }
+        if (fileName && pageId && pageId.endsWith(fileName)) {
+            return link;
+        }
+        if (fileName) {
+            if (!link.endsWith("/")) {
+                link += "/";
+            }
+            link += fileName;
+        }
+        return link;
+    }
+    Wiki.viewLink = viewLink;
+    function branchLink(branch, pageId, $location, fileName) {
+        if (fileName === void 0) { fileName = null; }
+        return viewLink(branch, pageId, $location, fileName);
+    }
+    Wiki.branchLink = branchLink;
+    function editLink(branch, pageId, $location) {
+        var link = null;
+        var format = Wiki.fileFormat(pageId);
+        switch (format) {
+            case "image":
+                break;
+            default:
+                var start = startLink(branch);
+                if (pageId) {
+                    link = start + "/edit/" + encodePath(pageId);
+                }
+                else {
+                    // lets use the current path
+                    var path = $location.path();
+                    link = "#" + path.replace(/(view|create)/, "edit");
+                }
+        }
+        return link;
+    }
+    Wiki.editLink = editLink;
+    function createLink(branch, pageId, $location, $scope) {
+        var path = $location.path();
+        var start = startLink(branch);
+        var link = '';
+        if (pageId) {
+            link = start + "/create/" + encodePath(pageId);
+        }
+        else {
+            // lets use the current path
+            link = "#" + path.replace(/(view|edit|formTable)/, "create");
+        }
+        // we have the link so lets now remove the last path
+        // or if there is no / in the path then remove the last section
+        var idx = link.lastIndexOf("/");
+        if (idx > 0 && !$scope.children && !path.startsWith("/wiki/formTable")) {
+            link = link.substring(0, idx + 1);
+        }
+        return link;
+    }
+    Wiki.createLink = createLink;
+    function encodePath(pageId) {
+        return pageId.split("/").map(encodeURIComponent).join("/");
+    }
+    Wiki.encodePath = encodePath;
+    function decodePath(pageId) {
+        return pageId.split("/").map(decodeURIComponent).join("/");
+    }
+    Wiki.decodePath = decodePath;
+    function fileFormat(name, fileExtensionTypeRegistry) {
+        var extension = fileExtension(name);
+        var answer = null;
+        if (!fileExtensionTypeRegistry) {
+            fileExtensionTypeRegistry = HawtioCore.injector.get("fileExtensionTypeRegistry");
+        }
+        angular.forEach(fileExtensionTypeRegistry, function (array, key) {
+            if (array.indexOf(extension) >= 0) {
+                answer = key;
+            }
+        });
+        return answer;
+    }
+    Wiki.fileFormat = fileFormat;
+    /**
+     * Returns the file name of the given path; stripping off any directories
+     * @method fileName
+     * @for Wiki
+     * @static
+     * @param {String} path
+     * @return {String}
+     */
+    function fileName(path) {
+        if (path) {
+            var idx = path.lastIndexOf("/");
+            if (idx > 0) {
+                return path.substring(idx + 1);
+            }
+        }
+        return path;
+    }
+    Wiki.fileName = fileName;
+    /**
+     * Returns the folder of the given path (everything but the last path name)
+     * @method fileParent
+     * @for Wiki
+     * @static
+     * @param {String} path
+     * @return {String}
+     */
+    function fileParent(path) {
+        if (path) {
+            var idx = path.lastIndexOf("/");
+            if (idx > 0) {
+                return path.substring(0, idx);
+            }
+        }
+        // lets return the root directory
+        return "";
+    }
+    Wiki.fileParent = fileParent;
+    /**
+     * Returns the file name for the given name; we hide some extensions
+     * @method hideFineNameExtensions
+     * @for Wiki
+     * @static
+     * @param {String} name
+     * @return {String}
+     */
+    function hideFileNameExtensions(name) {
+        if (name) {
+            angular.forEach(Wiki.hideExtensions, function (extension) {
+                if (name.endsWith(extension)) {
+                    name = name.substring(0, name.length - extension.length);
+                }
+            });
+        }
+        return name;
+    }
+    Wiki.hideFileNameExtensions = hideFileNameExtensions;
+    /**
+     * Returns the URL to perform a GET or POST for the given branch name and path
+     */
+    function gitRestURL(branch, path) {
+        var url = gitRelativeURL(branch, path);
+        url = Core.url('/' + url);
+        var connectionName = Core.getConnectionNameParameter();
+        if (connectionName) {
+            var connectionOptions = Core.getConnectOptions(connectionName);
+            if (connectionOptions) {
+                connectionOptions.path = url;
+                url = Core.createServerConnectionUrl(connectionOptions);
+            }
+        }
+        return url;
+    }
+    Wiki.gitRestURL = gitRestURL;
+    function gitUrlPrefix() {
+        var prefix = "";
+        var injector = HawtioCore.injector;
+        if (injector) {
+            prefix = injector.get("WikiGitUrlPrefix") || "";
+        }
+        return prefix;
+    }
+    /**
+   * Returns a relative URL to perform a GET or POST for the given branch/path
+   */
+    function gitRelativeURL(branch, path) {
+        var prefix = gitUrlPrefix();
+        branch = branch || "master";
+        path = path || "/";
+        return UrlHelpers.join(prefix, "git/" + branch, path);
+    }
+    Wiki.gitRelativeURL = gitRelativeURL;
+    /**
+     * Takes a row containing the entity object; or can take the entity directly.
+     *
+     * It then uses the name, directory and xmlNamespaces properties
+     *
+     * @method fileIconHtml
+     * @for Wiki
+     * @static
+     * @param {any} row
+     * @return {String}
+     *
+     */
+    function fileIconHtml(row) {
+        var name = row.name;
+        var path = row.path;
+        var branch = row.branch;
+        var directory = row.directory;
+        var xmlNamespaces = row.xmlNamespaces;
+        var iconUrl = row.iconUrl;
+        var entity = row.entity;
+        if (entity) {
+            name = name || entity.name;
+            path = path || entity.path;
+            branch = branch || entity.branch;
+            directory = directory || entity.directory;
+            xmlNamespaces = xmlNamespaces || entity.xmlNamespaces;
+            iconUrl = iconUrl || entity.iconUrl;
+        }
+        branch = branch || "master";
+        var css = null;
+        var icon = null;
+        var extension = fileExtension(name);
+        // TODO could we use different icons for markdown v xml v html
+        if (xmlNamespaces && xmlNamespaces.length) {
+            if (xmlNamespaces.any(function (ns) { return Wiki.camelNamespaces.any(ns); })) {
+                icon = "img/icons/camel.svg";
+            }
+            else if (xmlNamespaces.any(function (ns) { return Wiki.dozerNamespaces.any(ns); })) {
+                icon = "img/icons/dozer/dozer.gif";
+            }
+            else if (xmlNamespaces.any(function (ns) { return Wiki.activemqNamespaces.any(ns); })) {
+                icon = "img/icons/messagebroker.svg";
+            }
+            else {
+                Wiki.log.debug("file " + name + " has namespaces " + xmlNamespaces);
+            }
+        }
+        if (iconUrl) {
+            css = null;
+            var prefix = gitUrlPrefix();
+            icon = UrlHelpers.join(prefix, "git", iconUrl);
+            var connectionName = Core.getConnectionNameParameter();
+            if (connectionName) {
+                var connectionOptions = Core.getConnectOptions(connectionName);
+                if (connectionOptions) {
+                    connectionOptions.path = Core.url('/' + icon);
+                    icon = Core.createServerConnectionUrl(connectionOptions);
+                }
+            }
+        }
+        if (!icon) {
+            if (directory) {
+                switch (extension) {
+                    case 'profile':
+                        css = "fa fa-book";
+                        break;
+                    default:
+                        // log.debug("No match for extension: ", extension, " using a generic folder icon");
+                        css = "fa fa-folder";
+                }
+            }
+            else {
+                switch (extension) {
+                    case 'png':
+                    case 'svg':
+                    case 'jpg':
+                    case 'gif':
+                        css = null;
+                        icon = Wiki.gitRelativeURL(branch, path);
+                        var connectionName = Core.getConnectionNameParameter();
+                        if (connectionName) {
+                            var connectionOptions = Core.getConnectOptions(connectionName);
+                            if (connectionOptions) {
+                                connectionOptions.path = Core.url('/' + icon);
+                                icon = Core.createServerConnectionUrl(connectionOptions);
+                            }
+                        }
+                        break;
+                    case 'json':
+                    case 'xml':
+                        css = "fa fa-file-text";
+                        break;
+                    case 'md':
+                        css = "fa fa-file-text-o";
+                        break;
+                    default:
+                        // log.debug("No match for extension: ", extension, " using a generic file icon");
+                        css = "fa fa-file-alt";
+                }
+            }
+        }
+        if (icon) {
+            return "<img src='" + Core.url(icon) + "'>";
+        }
+        else {
+            return "<i class='" + css + "'></i>";
+        }
+    }
+    Wiki.fileIconHtml = fileIconHtml;
+    function iconClass(row) {
+        var name = row.getProperty("name");
+        var extension = fileExtension(name);
+        var directory = row.getProperty("directory");
+        if (directory) {
+            return "fa fa-folder";
+        }
+        if ("xml" === extension) {
+            return "fa fa-cog";
+        }
+        else if ("md" === extension) {
+            return "fa fa-file-text-o";
+        }
+        // TODO could we use different icons for markdown v xml v html
+        return "fa fa-file-alt";
+    }
+    Wiki.iconClass = iconClass;
+    /**
+     * Extracts the pageId, branch, objectId from the route parameters
+     * @method initScope
+     * @for Wiki
+     * @static
+     * @param {*} $scope
+     * @param {any} $routeParams
+     * @param {ng.ILocationService} $location
+     */
+    function initScope($scope, $routeParams, $location) {
+        $scope.pageId = Wiki.pageId($routeParams, $location);
+        $scope.branch = $routeParams["branch"] || $location.search()["branch"];
+        $scope.objectId = $routeParams["objectId"];
+        $scope.startLink = Wiki.startLink($scope.branch);
+        $scope.historyLink = startLink($scope.branch) + "/history/" + ($scope.pageId || "");
+    }
+    Wiki.initScope = initScope;
+    /**
+     * Loads the branches for this wiki repository and stores them in the branches property in
+     * the $scope and ensures $scope.branch is set to a valid value
+     *
+     * @param wikiRepository
+     * @param $scope
+     * @param isFmc whether we run as fabric8 or as hawtio
+     */
+    function loadBranches(jolokia, wikiRepository, $scope, isFmc) {
+        if (isFmc === void 0) { isFmc = false; }
+        if (isFmc) {
+            // when using fabric then the branches is the fabric versions, so we should use that instead
+            $scope.branches = Fabric.getVersionIds(jolokia);
+            var defaultVersion = Fabric.getDefaultVersionId(jolokia);
+            // use current default version as default branch
+            if (!$scope.branch) {
+                $scope.branch = defaultVersion;
+            }
+            // lets sort by version number
+            $scope.branches = $scope.branches.sortBy(function (v) { return Core.versionToSortableString(v); }, true);
+            Core.$apply($scope);
+        }
+        else {
+            wikiRepository.branches(function (response) {
+                // lets sort by version number
+                $scope.branches = response.sortBy(function (v) { return Core.versionToSortableString(v); }, true);
+                // default the branch name if we have 'master'
+                if (!$scope.branch && $scope.branches.find(function (branch) {
+                    return branch === "master";
+                })) {
+                    $scope.branch = "master";
+                }
+                Core.$apply($scope);
+            });
+        }
+    }
+    Wiki.loadBranches = loadBranches;
+    /**
+     * Extracts the pageId from the route parameters
+     * @method pageId
+     * @for Wiki
+     * @static
+     * @param {any} $routeParams
+     * @param @ng.ILocationService @location
+     * @return {String}
+     */
+    function pageId($routeParams, $location) {
+        var pageId = $routeParams['page'];
+        if (!pageId) {
+            for (var i = 0; i < 100; i++) {
+                var value = $routeParams['path' + i];
+                if (angular.isDefined(value)) {
+                    if (!pageId) {
+                        pageId = value;
+                    }
+                    else {
+                        pageId += "/" + value;
+                    }
+                }
+                else
+                    break;
+            }
+            return pageId || "/";
+        }
+        // if no $routeParams variables lets figure it out from the $location
+        if (!pageId) {
+            pageId = pageIdFromURI($location.path());
+        }
+        return pageId;
+    }
+    Wiki.pageId = pageId;
+    function pageIdFromURI(url) {
+        var wikiPrefix = "/wiki/";
+        if (url && url.startsWith(wikiPrefix)) {
+            var idx = url.indexOf("/", wikiPrefix.length + 1);
+            if (idx > 0) {
+                return url.substring(idx + 1, url.length);
+            }
+        }
+        return null;
+    }
+    Wiki.pageIdFromURI = pageIdFromURI;
+    function fileExtension(name) {
+        if (name.indexOf('#') > 0)
+            name = name.substring(0, name.indexOf('#'));
+        return Core.fileExtension(name, "markdown");
+    }
+    Wiki.fileExtension = fileExtension;
+    function onComplete(status) {
+        console.log("Completed operation with status: " + JSON.stringify(status));
+    }
+    Wiki.onComplete = onComplete;
+    /**
+     * Parses the given JSON text reporting to the user if there is a parse error
+     * @method parseJson
+     * @for Wiki
+     * @static
+     * @param {String} text
+     * @return {any}
+     */
+    function parseJson(text) {
+        if (text) {
+            try {
+                return JSON.parse(text);
+            }
+            catch (e) {
+                Core.notification("error", "Failed to parse JSON: " + e);
+            }
+        }
+        return null;
+    }
+    Wiki.parseJson = parseJson;
+    /**
+     * Adjusts a relative or absolute link from a wiki or file system to one using the hash bang syntax
+     * @method adjustHref
+     * @for Wiki
+     * @static
+     * @param {*} $scope
+     * @param {ng.ILocationService} $location
+     * @param {String} href
+     * @param {String} fileExtension
+     * @return {string}
+     */
+    function adjustHref($scope, $location, href, fileExtension) {
+        var extension = fileExtension ? "." + fileExtension : "";
+        // if the last part of the path has a dot in it lets
+        // exclude it as we are relative to a markdown or html file in a folder
+        // such as when viewing readme.md or index.md
+        var path = $location.path();
+        var folderPath = path;
+        var idx = path.lastIndexOf("/");
+        if (idx > 0) {
+            var lastName = path.substring(idx + 1);
+            if (lastName.indexOf(".") >= 0) {
+                folderPath = path.substring(0, idx);
+            }
+        }
+        // Deal with relative URLs first...
+        if (href.startsWith('../')) {
+            var parts = href.split('/');
+            var pathParts = folderPath.split('/');
+            var parents = parts.filter(function (part) {
+                return part === "..";
+            });
+            parts = parts.last(parts.length - parents.length);
+            pathParts = pathParts.first(pathParts.length - parents.length);
+            return '#' + pathParts.join('/') + '/' + parts.join('/') + extension + $location.hash();
+        }
+        // Turn an absolute link into a wiki link...
+        if (href.startsWith('/')) {
+            return Wiki.branchLink($scope.branch, href + extension, $location) + extension;
+        }
+        if (!Wiki.excludeAdjustmentPrefixes.any(function (exclude) {
+            return href.startsWith(exclude);
+        })) {
+            return '#' + folderPath + "/" + href + extension + $location.hash();
+        }
+        else {
+            return null;
+        }
+    }
+    Wiki.adjustHref = adjustHref;
+})(Wiki || (Wiki = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="../../git/ts/gitHelpers.ts"/>
 /// <reference path="wikiHelpers.ts"/>
 /**
  * @module Wiki
@@ -18188,8 +17457,7 @@ var Wiki;
     }]);
 })(Wiki || (Wiki = {}));
 
-angular.module("hawtio-wiki-templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("plugins/activemq/html/brokerDiagram.html","<style type=\"text/css\">\n\n.col-md-4.node-panel {\n  margin-top: 10px;\n  margin-left: 10px;\n  width: 33%;\n}\n.node-attributes dl {\n  margin-top: 5px;\n  margin-bottom: 10px;\n}\n.node-attributes dt {\n  width: 150px;\n}\n.node-attributes dd {\n  margin-left: 160px;\n}\n.node-attributes dd a {\n  /** lets make the destination links wrap */\n  -ms-word-break: break-all;\n  word-break: break-all;\n  -webkit-hyphens: auto;\n  -moz-hyphens: auto;\n  hyphens: auto;\n}\n\nul.viewMenu li {\n  padding-left: 10px;\n  padding-top: 2px;\n  padding-bottom: 2px;\n}\n\ndiv#pop-up {\n  display: none;\n  position: absolute;\n  color: white;\n  font-size: 14px;\n  background: rgba(0, 0, 0, 0.6);\n  padding: 5px 10px 5px 10px;\n  -moz-border-radius: 8px 8px;\n  border-radius: 8px 8px;\n}\n\ndiv#pop-up-title {\n  font-size: 15px;\n  margin-bottom: 4px;\n  font-weight: bolder;\n}\n\ndiv#pop-up-content {\n  font-size: 12px;\n}\n\nrect.graphbox {\n  fill: #FFF;\n}\n\nrect.graphbox.frame {\n  stroke: #222;\n  stroke-width: 2px\n}\n\n/* only things directly related to the network graph should be here */\n\npath.link {\n  fill: none;\n  stroke: #666;\n  stroke-width: 1.5px;  b\n}\n\nmarker.broker {\n  stroke: red;\n  fill: red;\n  stroke-width: 1.5px;\n}\n\ncircle.broker {\n  fill: #0c0;\n}\n\ncircle.brokerSlave {\n  fill: #c00;\n}\n\ncircle.notActive {\n  fill: #c00;\n}\n\npath.link.group {\n  stroke: #ccc;\n}\n\nmarker#group {\n  stroke: #ccc;\n  fill: #ccc;\n}\n\ncircle.group {\n  fill: #eee;\n  stroke: #ccc;\n}\n\ncircle.destination {\n  fill: #bbb;\n  stroke: #ccc;\n}\n\ncircle.pinned {\n  stroke-width: 4.5px;\n}\n\npath.link.profile {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\nmarker#container {\n}\n\ncircle.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\npath.link.container {\n  stroke-dasharray: 0, 2 1;\n  stroke: #888;\n}\n\ncircle {\n  fill: #ccc;\n  stroke: #333;\n  stroke-width: 1.5px;\n  cursor: pointer;\n}\n\ncircle.closeMode {\n  cursor: crosshair;\n}\n\npath.link.destination {\n  stroke: #ccc;\n}\n\ncircle.topic {\n  fill: #c0c;\n}\n\ncircle.queue {\n  fill: #00c;\n}\n\ncircle.consumer {\n  fill: #cfc;\n}\n\ncircle.producer {\n  fill: #ccf;\n}\n\npath.link.producer {\n  stroke: #ccc;\n}\n\npath.link.consumer {\n  stroke: #ccc;\n}\n\npath.link.network {\n  stroke: #ccc;\n}\n\ncircle.selected {\n  stroke-width: 3px;\n}\n\n.selected {\n  stroke-width: 3px;\n}\n\ntext {\n  font: 10px sans-serif;\n  pointer-events: none;\n}\n\ntext.shadow {\n  stroke: #fff;\n  stroke-width: 3px;\n  stroke-opacity: .8;\n}\n</style>\n\n\n<div class=\"row mq-page\" ng-controller=\"ActiveMQ.BrokerDiagramController\">\n\n  <div ng-hide=\"inDashboard\" class=\"col-md-12 page-padded\">\n    <div class=\"section-header\">\n\n      <div class=\"section-filter\">\n        <input type=\"text\" class=\"search-query\" placeholder=\"Filter...\" ng-model=\"searchFilter\">\n        <i class=\"fa fa-remove clickable\" title=\"Clear filter\" ng-click=\"searchFilter = \'\'\"></i>\n      </div>\n\n      <div class=\"section-controls\">\n        <a href=\"#\"\n           class=\"dropdown-toggle\"\n           data-toggle=\"dropdown\">\n          View &nbsp;<i class=\"fa fa-caret-down\"></i>\n        </a>\n\n        <ul class=\"dropdown-menu viewMenu\">\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.consumer\"> Consumers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.producer\"> Producers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.queue\"> Queues\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.topic\"> Topics\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.group\"> Broker groups\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.profile\"> Profiles\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.broker\"> Brokers\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.slave\"> Slave brokers\n            </label>\n          </li>\n          <li>\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.network\"> Networks\n            </label>\n          </li>\n          <li ng-show=\"isFmc\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.container\"> Containers\n            </label>\n          </li>\n          <li class=\"divider\"></li>\n          <li title=\"Should we show the details panel on the left\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.panel\"> Details panel\n            </label>\n          </li>\n          <li title=\"Show the summary popup as you hover over nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.popup\"> Hover text\n            </label>\n          </li>\n          <li title=\"Show the labels next to nodes\">\n            <label class=\"checkbox\">\n              <input type=\"checkbox\" ng-model=\"viewSettings.label\"> Label\n            </label>\n          </li>\n        </ul>\n\n        <a ng-show=\"isFmc\" ng-href=\"#/fabric/mq/brokers{{hash}}\" title=\"View the broker and container diagram\">\n          <i class=\"fa fa-edit\"></i> Configuration\n        </a>\n      </div>\n    </div>\n  </div>\n\n\n  <div id=\"pop-up\">\n    <div id=\"pop-up-title\"></div>\n    <div id=\"pop-up-content\"></div>\n  </div>\n\n  <div class=\"row\">\n    <div class=\"{{viewSettings.panel ? \'col-md-8\' : \'col-md-12\'}} canvas broker-canvas\">\n      <div hawtio-force-graph graph=\"graph\" selected-model=\"selectedNode\" link-distance=\"150\" charge=\"-600\" nodesize=\"10\" marker-kind=\"marker-end\"\n           style=\"min-height: 800px\">\n      </div>\n    </div>\n    <div ng-show=\"viewSettings.panel\" class=\"col-md-4 node-panel\">\n      <div ng-show=\"selectedNode\" class=\"node-attributes\">\n        <dl ng-repeat=\"property in selectedNodeProperties\" class=\"dl-horizontal\">\n          <dt title=\"{{property.key}}\">{{property.key}}:</dt>\n          <dd ng-bind-html-unsafe=\"property.value\"></dd>\n        </dl>\n      </div>\n    </div>\n  </div>\n\n  <!--\n  <div ng-include=\"\'plugins/fabric/html/connectToContainerDialog.html\'\"></div>\n  -->\n\n</div>\n\n\n");
-$templateCache.put("plugins/activemq/html/browseQueue.html","<div ng-controller=\"ActiveMQ.BrowseQueueController\">\n  <div class=\"row\">\n    <div class=\"col-md-6\">\n      <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n             placeholder=\"Filter messages\">\n    </div>\n    <div class=\"col-md-6\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline\">\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-show=\"dlq\" ng-click=\"retryMessages()\"\n                  title=\"Moves the dead letter queue message back to its original destination so it can be retried\" data-placement=\"bottom\">\n            <i class=\"fa fa-reply\"></i> Retry\n          </button>\n          <button class=\"btn\" ng-disabled=\"gridOptions.selectedItems.length !== 1\" ng-click=\"resendMessage()\"\n                    title=\"Edit the message to resend it\" data-placement=\"bottom\">\n           <i class=\"fa fa-share-alt\"></i> Resend\n          </button>\n\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                  title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n            <i class=\"fa fa-share-alt\"></i> Move\n          </button>\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                  ng-click=\"deleteDialog = true\"\n                  title=\"Delete the selected messages\">\n            <i class=\"fa fa-remove\"></i> Delete\n          </button>\n          <button class=\"btn\" ng-click=\"refresh()\"\n                  title=\"Refreshes the list of messages\">\n            <i class=\"fa fa-refresh\"></i>\n          </button>\n        </form>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row\">\n    <table class=\"table table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n  </div>\n\n  <div hawtio-slideout=\"showMessageDetails\" title=\"{{row.JMSMessageID}}\">\n    <div class=\"dialog-body\">\n\n      <div class=\"row\">\n        <div class=\"pull-right\">\n          <form class=\"form-horizontal no-bottom-margin\">\n\n            <div class=\"btn-group\"\n                 hawtio-pager=\"messages\"\n                 on-index-change=\"selectRowIndex\"\n                 row-index=\"rowIndex\"></div>\n\n            <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                    title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n              <i class=\"fa fa-share-alt\"></i> Move\n            </button>\n\n            <button class=\"btn btn-danger\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                    ng-click=\"deleteDialog = true\"\n                    title=\"Delete the selected messages\">\n              <i class=\"fa fa-remove\"></i> Delete\n            </button>\n\n            <button class=\"btn\" ng-click=\"showMessageDetails = !showMessageDetails\" title=\"Close this dialog\">\n              <i class=\"fa fa-remove\"></i> Close\n            </button>\n\n          </form>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div class=\"expandable closed\">\n          <div title=\"Headers\" class=\"title\">\n            <i class=\"expandable-indicator\"></i> Headers & Properties\n          </div>\n          <div class=\"expandable-body well\">\n            <table class=\"table table-condensed table-striped\">\n              <thead>\n              <tr>\n                <th>Header</th>\n                <th>Value</th>\n              </tr>\n              </thead>\n              <tbody ng-bind-html=\"row.headerHtml\">\n              </tbody>\n              <!--\n                            <tr ng-repeat=\"(key, value) in row.headers\">\n                              <td class=\"property-name\">{{key}}</td>\n                              <td class=\"property-value\">{{value}}</td>\n                            </tr>\n              -->\n            </table>\n          </div>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div>Displaying body as <span ng-bind=\"row.textMode\"></span></div>\n        <div hawtio-editor=\"row.bodyText\" read-only=\"true\" mode=\'mode\'></div>\n      </div>\n\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"deleteDialog\"\n       ok-button-text=\"Delete\"\n       on-ok=\"deleteMessages()\">\n    <div class=\"dialog-body\">\n      <p>You are about to delete\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'a message!\', \'other\': \'{} messages!\'}\">\n        </ng-pluralize>\n      </p>\n      <p>This operation cannot be undone so please be careful.</p>\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"moveDialog\"\n       ok-button-text=\"Move\"\n       on-ok=\"moveMessages()\">\n    <div class=\"dialog-body\">\n      <p>Move\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'{} messages\'}\"></ng-pluralize>\n        to: <input type=\"text\" ng-model=\"queueName\" placeholder=\"Queue name\"\n                   typeahead=\"title.unescapeHTML() for title in queueNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'></p>\n      <p>\n        You cannot undo this operation.<br>\n        Though after the move you can always move the\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'messages\'}\"></ng-pluralize>\n        back again.\n      </p>\n    </div>\n  </div>\n\n</div>\n\n");
+angular.module("hawtio-wiki-templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("plugins/activemq/html/browseQueue.html","<div ng-controller=\"ActiveMQ.BrowseQueueController\">\n  <div class=\"row\">\n    <div class=\"col-md-6\">\n      <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n             placeholder=\"Filter messages\">\n    </div>\n    <div class=\"col-md-6\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline\">\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-show=\"dlq\" ng-click=\"retryMessages()\"\n                  title=\"Moves the dead letter queue message back to its original destination so it can be retried\" data-placement=\"bottom\">\n            <i class=\"fa fa-reply\"></i> Retry\n          </button>\n          <button class=\"btn\" ng-disabled=\"gridOptions.selectedItems.length !== 1\" ng-click=\"resendMessage()\"\n                    title=\"Edit the message to resend it\" data-placement=\"bottom\">\n           <i class=\"fa fa-share-alt\"></i> Resend\n          </button>\n\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                  title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n            <i class=\"fa fa-share-alt\"></i> Move\n          </button>\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                  ng-click=\"deleteDialog = true\"\n                  title=\"Delete the selected messages\">\n            <i class=\"fa fa-remove\"></i> Delete\n          </button>\n          <button class=\"btn\" ng-click=\"refresh()\"\n                  title=\"Refreshes the list of messages\">\n            <i class=\"fa fa-refresh\"></i>\n          </button>\n        </form>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row\">\n    <table class=\"table table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n  </div>\n\n  <div hawtio-slideout=\"showMessageDetails\" title=\"{{row.JMSMessageID}}\">\n    <div class=\"dialog-body\">\n\n      <div class=\"row\">\n        <div class=\"pull-right\">\n          <form class=\"form-horizontal no-bottom-margin\">\n\n            <div class=\"btn-group\"\n                 hawtio-pager=\"messages\"\n                 on-index-change=\"selectRowIndex\"\n                 row-index=\"rowIndex\"></div>\n\n            <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                    title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n              <i class=\"fa fa-share-alt\"></i> Move\n            </button>\n\n            <button class=\"btn btn-danger\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                    ng-click=\"deleteDialog = true\"\n                    title=\"Delete the selected messages\">\n              <i class=\"fa fa-remove\"></i> Delete\n            </button>\n\n            <button class=\"btn\" ng-click=\"showMessageDetails = !showMessageDetails\" title=\"Close this dialog\">\n              <i class=\"fa fa-remove\"></i> Close\n            </button>\n\n          </form>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div class=\"expandable closed\">\n          <div title=\"Headers\" class=\"title\">\n            <i class=\"expandable-indicator\"></i> Headers & Properties\n          </div>\n          <div class=\"expandable-body well\">\n            <table class=\"table table-condensed table-striped\">\n              <thead>\n              <tr>\n                <th>Header</th>\n                <th>Value</th>\n              </tr>\n              </thead>\n              <tbody ng-bind-html=\"row.headerHtml\">\n              </tbody>\n              <!--\n                            <tr ng-repeat=\"(key, value) in row.headers\">\n                              <td class=\"property-name\">{{key}}</td>\n                              <td class=\"property-value\">{{value}}</td>\n                            </tr>\n              -->\n            </table>\n          </div>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div>Displaying body as <span ng-bind=\"row.textMode\"></span></div>\n        <div hawtio-editor=\"row.bodyText\" read-only=\"true\" mode=\'mode\'></div>\n      </div>\n\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"deleteDialog\"\n       ok-button-text=\"Delete\"\n       on-ok=\"deleteMessages()\">\n    <div class=\"dialog-body\">\n      <p>You are about to delete\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'a message!\', \'other\': \'{} messages!\'}\">\n        </ng-pluralize>\n      </p>\n      <p>This operation cannot be undone so please be careful.</p>\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"moveDialog\"\n       ok-button-text=\"Move\"\n       on-ok=\"moveMessages()\">\n    <div class=\"dialog-body\">\n      <p>Move\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'{} messages\'}\"></ng-pluralize>\n        to: <input type=\"text\" ng-model=\"queueName\" placeholder=\"Queue name\"\n                   typeahead=\"title.unescapeHTML() for title in queueNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'></p>\n      <p>\n        You cannot undo this operation.<br>\n        Though after the move you can always move the\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'messages\'}\"></ng-pluralize>\n        back again.\n      </p>\n    </div>\n  </div>\n\n</div>\n\n");
 $templateCache.put("plugins/activemq/html/createDestination.html","<form class=\"form-horizontal\" ng-controller=\"ActiveMQ.DestinationController\">\n\n  <div class=\"alert alert-info\">\n    <span class=\"pficon pficon-info\"></span>The JMS API does not define a standard address syntax. <p></p> Although a\n    standard address syntax was considered, it was decided that the differences in address semantics between existing\n    message-oriented middleware (MOM) products were too wide to bridge with a single syntax.\n  </div>\n\n  <div class=\"form-group\">\n    <label class=\"col-sm-2 control-label\" for=\"name-markup\">{{destinationTypeName}} name</label>\n\n    <div class=\"col-sm-10\">\n      <input id=\"name-markup\" class=\"form-control\" type=\"text\" size=\"60\" style=\"margin-left:15px;\" maxlength=\"300\"\n             name=\"destinationName\" ng-model=\"destinationName\" placeholder=\"{{destinationTypeName}} name\"/>\n    </div>\n  </div>\n  <div class=\"form-group\">\n    <label class=\"col-sm-2 control-label\">Destination type</label>\n\n    <div class=\"col-sm-10\">\n      <label class=\"checkbox\">\n        <input type=\"radio\" ng-model=\"queueType\" value=\"true\"> Queue\n      </label>\n      <label class=\"checkbox\">\n        <input type=\"radio\" ng-model=\"queueType\" value=\"false\"> Topic\n      </label>\n    </div>\n  </div>\n\n  <div class=\"control-group col-md-12\">\n    <button type=\"submit\" class=\"btn btn-primary\" ng-click=\"createDestination(destinationName, queueType)\"\n            ng-disabled=\"!destinationName\">Create {{destinationTypeName}}\n    </button>\n  </div>\n\n</form>\n");
 $templateCache.put("plugins/activemq/html/deleteQueue.html","<div ng-controller=\"ActiveMQ.DestinationController\">\n  <div class=\"row\">\n\n    <div class=\"control-group\">\n\n      <div class=\"alert alert-warning\">\n        <span class=\"pficon-layered\">\n          <span class=\"pficon pficon-warning-triangle\"></span>\n          <span class=\"pficon pficon-warning-exclamation\"></span>\n        </span>\n        <strong>Warning:</strong> these operations cannot be undone. Please be careful!\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row\">\n    <div class=\"col-md-4\">\n      <div class=\"control-group\">\n        <button type=\"submit\" class=\"btn btn-warning\" ng-click=\"deleteDialog = true\">Delete queue\n          \'{{name().unescapeHTML()}}\'\n        </button>\n        <label>This will remove the queue completely.</label>\n      </div>\n    </div>\n    <div class=\"col-md-4\">\n      <div class=\"control-group\">\n        <button type=\"submit\" class=\"btn btn-warning\" ng-click=\"purgeDialog = true\">Purge queue\n          \'{{name().unescapeHTML()}}\'\n        </button>\n        <label>Purges all the current messages on the queue.</label>\n      </div>\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"deleteDialog\"\n       title=\"Confirm delete queue\"\n       ok-button-text=\"Delete\"\n       cancel-button-text=\"Cancel\"\n       on-ok=\"deleteDestination()\">\n    <div class=\"dialog-body\">\n      <p>You are about to delete the <b>{{name().unescapeHTML()}}</b> queue</p>\n      <p>This operation cannot be undone so please be careful.</p>\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"purgeDialog\"\n       title=\"Confirm purge queue\"\n       ok-button-text=\"Purge\"\n       cancel-button-text=\"Cancel\"\n       on-ok=\"purgeDestination()\">\n    <div class=\"dialog-body\">\n      <p>You are about to purge the <b>{{name().unescapeHTML()}}</b> queue</p>\n      <p>This operation cannot be undone so please be careful.</p>\n    </div>\n  </div>\n\n</div>\n");
 $templateCache.put("plugins/activemq/html/deleteTopic.html","<div ng-controller=\"ActiveMQ.DestinationController\">\n  <div class=\"row\">\n\n    <div class=\"control-group\">\n\n      <div class=\"alert alert-warning\">\n        <span class=\"pficon-layered\">\n          <span class=\"pficon pficon-warning-triangle\"></span>\n          <span class=\"pficon pficon-warning-exclamation\"></span>\n        </span>\n        <strong>Warning:</strong> this operation cannot be undone. Please be careful!\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row\">\n    <div class=\"col-md-4\">\n      <div class=\"control-group\">\n        <button type=\"submit\" class=\"btn btn-warning\" ng-click=\"deleteDialog = true\">Delete topic\n          \'{{name().unescapeHTML()}}\'\n        </button>\n        <label>This will remove the topic completely.</label>\n      </div>\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"deleteDialog\"\n       title=\"Confirm delete topic\"\n       ok-button-text=\"Delete\"\n       cancel-button-text=\"Cancel\"\n       on-ok=\"deleteDestination()\">\n    <div class=\"dialog-body\">\n      <p>You are about to delete the <b>{{name().unescapeHTML()}}</b> topic</p>\n      <p>This operation cannot be undone so please be careful.</p>\n    </div>\n  </div>\n\n</div>\n");
