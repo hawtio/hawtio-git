@@ -179,37 +179,6 @@ module Camel {
         Core.$apply($scope);
       });
 
-      // TODO: https://github.com/hawtio/hawtio/issues/1261
-      // we need some kind of right-click menu on d3
-      // disabled code below as its work in progress
-/*      gNodes.dblclick(function() {
-        //var allStats = $(doc).find("processorStat");
-        var cid = this.getAttribute("data-cid");
-        log.info("You double clicked " + cid);
-
-        // find the node of the cid we clicked, and then find the folder in the Camel tree
-        // to grab the folder key, which is the nid for the location in the JMX plugin to
-        // view the processor mbean
-        var node = $scope.nodes[cid];
-        if (node) {
-          var pid = node.elementId;
-
-          var processors = camelProcessorMBeansById(workspace);
-          var processor = processors[pid];
-          if (processor) {
-            var key = processor.key;
-            // change url to jmx attributes so we can see the jmx stats for the selected processor
-            $location.search("nid", key);
-            var url = "/jmx/attributes";
-            var href = Core.createHref($location, url);
-            // change path to the jmx attributes page so we can see the processor mbean
-            log.info("Changing to path: " + href);
-            $location.url(href);
-            Core.$apply($scope);
-          }
-        }
-      });*/
-
       if ($scope.mbean) {
         Core.register(jolokia, $scope, {
           type: 'exec', mbean: $scope.mbean,

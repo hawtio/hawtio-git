@@ -3,7 +3,7 @@
 /// <reference path="activemqPlugin.ts"/>
 
 module ActiveMQ {
-  _module.controller("ActiveMQ.DestinationController", ["$scope", "workspace", "jolokia", ($scope, workspace:Workspace, jolokia) => {
+  _module.controller("ActiveMQ.DestinationController", ["$scope", "workspace", "$location", "jolokia", ($scope, workspace:Workspace, $location, jolokia) => {
     $scope.workspace = workspace;
     $scope.message = "";
     $scope.destinationName = "";
@@ -104,6 +104,16 @@ module ActiveMQ {
           $scope.message = "Deleted topic " + name;
         }
         jolokia.execute(mbean, operation, name, Core.onSuccess(deleteSuccess));
+
+        // the entity we just deleted are no longer som redirect to the folder
+        // TODO: figure out cid
+        if (isQueue) {
+          var cid = "root-org.apache.activemq-Broker-myBroker-Queue";
+          $location.path('/jmx/attributes').search({"main-tab": "activemq", "sub-tab": "activemq-attributes", "nid": cid});
+        } else {
+          var cid = "root-org.apache.activemq-Broker-myBroker-Topic";
+          $location.path('/jmx/attributes').search({"main-tab": "activemq", "sub-tab": "activemq-attributes", "nid": cid});
+        }
       }
     };
 
