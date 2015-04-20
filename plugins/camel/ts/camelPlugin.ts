@@ -23,7 +23,6 @@ module Camel {
             .when('/camel/createEndpoint', {templateUrl: 'plugins/camel/html/createEndpoint.html'})
             .when('/camel/route/diagram/:contextId/:routeId', {templateUrl: 'plugins/camel/html/routes.html'})
             .when('/camel/routes', {templateUrl: 'plugins/camel/html/routes.html'})
-            .when('/camel/fabricDiagram', {templateUrl: 'plugins/camel/html/fabricDiagram.html', reloadOnSearch: false})
             .when('/camel/typeConverter', {templateUrl: 'plugins/camel/html/typeConverter.html', reloadOnSearch: false})
             .when('/camel/restRegistry', {templateUrl: 'plugins/camel/html/restRegistry.html', reloadOnSearch: false})
             .when('/camel/routeMetrics', {templateUrl: 'plugins/camel/html/routeMetrics.html', reloadOnSearch: false})
@@ -67,7 +66,6 @@ module Camel {
 
     viewRegistry['camel/endpoint/'] = layoutFull;
     viewRegistry['camel/route/'] = layoutFull;
-    viewRegistry['camel/fabricDiagram'] = layoutFull;
     viewRegistry['{ "main-tab": "camel" }'] = 'plugins/camel/html/layoutCamelTree.html';
 
     helpRegistry.addUserDoc('camel', 'plugins/camel/doc/help.md', () => {
