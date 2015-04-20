@@ -5540,6 +5540,57 @@ var Camel;
 var Camel;
 (function (Camel) {
     Camel._module.controller("Camel.PreferencesController", ["$scope", "localStorage", function ($scope, localStorage) {
+        var config = {
+            properties: {
+                camelHideOptionDocumentation: {
+                    type: 'boolean',
+                    default: Camel.defaultHideOptionDocumentation,
+                    description: 'Whether to hide documentation in the properties view and Camel route editor'
+                },
+                camelHideOptionDefaultValue: {
+                    type: 'boolean',
+                    default: Camel.defaultHideOptionDefaultValue,
+                    description: 'Whether to hide options that are using a default value in the properties view'
+                },
+                camelHideOptionUnusedValue: {
+                    type: 'boolean',
+                    default: Camel.defaultHideOptionUnusedValue,
+                    description: 'Whether to hide unused/empty options in the properties view'
+                },
+                camelTraceOrDebugIncludeStreams: {
+                    type: 'boolean',
+                    default: Camel.defaultCamelTraceOrDebugIncludeStreams,
+                    description: 'Whether to include stream based message body when using the tracer and debugger'
+                },
+                camelMaximumTraceOrDebugBodyLength: {
+                    type: 'number',
+                    default: Camel.defaultCamelMaximumTraceOrDebugBodyLength,
+                    description: 'The maximum length of the body before its clipped when using the tracer and debugger'
+                },
+                camelMaximumLabelWidth: {
+                    type: 'number',
+                    description: 'The maximum length of a label in Camel diagrams before it is clipped'
+                },
+                camelIgnoreIdForLabel: {
+                    type: 'boolean',
+                    default: false,
+                    description: 'If enabled then we will ignore the ID value when viewing a pattern in a Camel diagram; otherwise we will use the ID value as the label (the tooltip will show the actual detail)'
+                },
+                camelShowInflightCounter: {
+                    type: 'boolean',
+                    default: true,
+                    description: 'Whether to show inflight counter in route diagram'
+                },
+                camelRouteMetricMaxSeconds: {
+                    type: 'number',
+                    min: '1',
+                    max: '100',
+                    description: 'The maximum value in seconds used by the route metrics duration and histogram charts'
+                }
+            }
+        };
+        $scope.entity = $scope;
+        $scope.config = config;
         Core.initPreferenceScope($scope, localStorage, {
             'camelIgnoreIdForLabel': {
                 'value': false,
@@ -17479,7 +17530,7 @@ $templateCache.put("plugins/camel/html/inflight.html","<div class=\"row-fluid\" 
 $templateCache.put("plugins/camel/html/layoutCamelTree.html","\n<script type=\"text/ng-template\" id=\"camelTreeHeader.html\">\n  <div class=\"tree-header\" ng-controller=\"Jmx.TreeHeaderController\">\n    <!--\n  <div class=\"camel tree-header\" ng-controller=\"Camel.TreeHeaderController\">\n    TODO - changes to the tree made this filter not work\n    <div class=\"left\">\n      <div class=\"section-filter\">\n        <input id=\"camelContextIdFilter\"\n               class=\"search-query\"\n               type=\"text\"\n               ng-model=\"contextFilterText\"\n               title=\"filter camel context IDs\"\n               placeholder=\"Filter...\">\n        <i class=\"fa fa-remove clickable\"\n           title=\"Clear filter\"\n           ng-click=\"contextFilterText = \'\'\"></i>\n      </div>\n    </div>\n    -->\n    <div class=\"right\">\n      <i class=\"fa fa-chevron-down clickable\"\n         title=\"Expand all nodes\"\n         ng-click=\"expandAll()\"></i>\n      <i class=\"fa fa-chevron-up clickable\"\n         title=\"Unexpand all nodes\"\n         ng-click=\"contractAll()\"></i>\n    </div>\n  </div>\n</script>\n\n<hawtio-pane position=\"left\" width=\"300\" header=\"camelTreeHeader.html\">\n  <div id=\"tree-container\" ng-controller=\"Jmx.MBeansController\">\n    <div class=\"camel-tree\" ng-controller=\"Camel.TreeController\">\n      <div id=\"cameltree\"></div>\n    </div>\n  </div>\n</hawtio-pane>\n<div class=\"row\">\n  <!--\n  <ng-include src=\"\'plugins/jmx/html/subLevelTabs.html\'\"></ng-include>\n  -->\n  <div id=\"properties\" ng-view></div>\n</div>\n");
 $templateCache.put("plugins/camel/html/nodePropertiesEdit.html","<div class=\"row-fluid\">\n\n  <!-- the label and input fields needs to be wider -->\n  <style>\n    input, textarea, .uneditable-input {\n      width: 600px;\n    }\n    input, textarea, .editable-input {\n      width: 600px;\n    }\n\n    .form-horizontal .control-label {\n      width: 180px;\n    }\n\n    .form-horizontal .controls {\n      margin-left: 200px;\n    }\n  </style>\n\n  <h3>\n    <img src=\"{{icon}}\" width=\"48\" height=\"48\" ng-show=\"icon\"/> {{model.title}}\n    <span style=\"margin-left: 10px\" ng-repeat=\"label in labels track by $index\" class=\"pod-label badge\" title=\"{{label}}\">{{label}}</span>\n  </h3>\n\n  <div simple-form name=\"formViewer\" mode=\'edit\' entity=\'nodeData\' data=\'model\' schema=\"schema\"\n       showhelp=\"!hideHelp\"></div>\n</div>\n");
 $templateCache.put("plugins/camel/html/nodePropertiesView.html","<div class=\"row-fluid\">\n\n  <!-- the label and input fields needs to be wider -->\n  <style>\n    input, textarea, .uneditable-input {\n      width: 600px;\n    }\n\n    input, textarea, .editable-input {\n      width: 600px;\n    }\n\n    .form-horizontal .control-label {\n      width: 180px;\n    }\n\n    .form-horizontal .controls {\n      margin-left: 200px;\n    }\n  </style>\n\n  <h3>\n    <img src=\"{{icon}}\" width=\"48\" height=\"48\" ng-show=\"icon\"/> {{model.title}}\n    <span style=\"margin-left: 10px\" ng-repeat=\"label in labels track by $index\" class=\"pod-label badge\" title=\"{{label}}\">{{label}}</span>\n  </h3>\n\n  <div simple-form name=\"formViewer\" mode=\'view\' entity=\'nodeData\' data=\'model\' schema=\"schema\"\n       showhelp=\"!hideHelp\" showempty=\"showEntity\"></div>\n</div>\n");
-$templateCache.put("plugins/camel/html/preferences.html","<div ng-controller=\"Camel.PreferencesController\">\n  <form class=\"form-horizontal\">\n\n    <label class=\"control-label\">Hide documentation for options</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelHideOptionDocumentation\">\n        <span class=\"help-block\">Whether to hide documentation in the properties view and Camel route editor</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Hide options with default values</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelHideOptionDefaultValue\">\n        <span class=\"help-block\">Whether to hide options that are using a default value in the properties view</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Hide options with unused values</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelHideOptionUnusedValue\">\n        <span class=\"help-block\">Whether to hide unused/empty options in the properties view</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Include Streams</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelTraceOrDebugIncludeStreams\">\n        <span class=\"help-block\">Whether to include stream based message body when using the tracer and debugger</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Maximum body length</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelMaximumTraceOrDebugBodyLength\" min=\"0\">\n        <span class=\"help-block\">The maximum length of the body before its clipped when using the tracer and debugger</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Maximum label length</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelMaximumLabelWidth\" min=\"0\">\n        <span class=\"help-block\">The maximum length of a label in Camel diagrams before it is clipped</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Do not use ID for label</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelIgnoreIdForLabel\">\n        <span class=\"help-block\">If enabled then we will ignore the ID value when viewing a pattern in a Camel diagram; otherwise we will use the ID value as the label (the tooltip will show the actual detail)</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Show Inflight Counter</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"checkbox\" ng-model=\"camelShowInflightCounter\">\n        <span class=\"help-block\">Whether to show inflight counter in route diagram</span>\n      </div>\n    </div>\n\n    <label class=\"control-label\">Route Metrics maximum seconds</label>\n    <div class=\"control-group\">\n      <div class=\"controls\">\n        <input type=\"number\" ng-model=\"camelRouteMetricMaxSeconds\" min=\"1\" max=\"100\">\n        <span class=\"help-block\">The maximum value in seconds used by the route metrics duration and histogram charts</span>\n      </div>\n    </div>\n\n  </form>\n</div>\n");
+$templateCache.put("plugins/camel/html/preferences.html","<div ng-controller=\"Camel.PreferencesController\">\n  <div hawtio-form-2=\"config\" entity=\"entity\"></div>\n</div>\n");
 $templateCache.put("plugins/camel/html/profileRoute.html","<div class=\"row\" ng-controller=\"Camel.ProfileRouteController\">\n\n    <div ng-show=\"initDone\">\n\n        <div class=\"row-fluid\">\n            <div class=\"pull-right\">\n                <hawtio-filter ng-model=\"gridOptions.filterOptions.filterText\"\n                               placeholder=\"Filter...\"></hawtio-filter>\n            </div>\n        </div>\n\n        <div class=\"row-fluid\">\n            <table class=\"table table-condensed table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n        </div>\n\n    </div>\n\n    <div ng-hide=\"initDone\">\n        <p class=\"text-center\"><i class=\"fa fa-spinner fa-spin\"></i></p>\n    </div>\n\n</div>\n\n");
 $templateCache.put("plugins/camel/html/properties.html","<div ng-controller=\"Camel.PropertiesController\">\n\n  <div class=\"control-group inline-block\">\n    <form class=\"form-inline no-bottom-margin\">\n      <label>Hide Documentation:\n        <input type=\"checkbox\" ng-model=\"hideHelp\"\n               title=\"Hide documentation for the options\"/>\n      </label>\n      <label>Hide Default:\n        <input type=\"checkbox\" ng-model=\"hideDefault\"\n               title=\"Hide options with default values\"/>\n      </label>\n      <label>Hide Unused:\n        <input type=\"checkbox\" ng-model=\"hideUnused\"\n               title=\"Hide options with unused/empty values\"/>\n      </label>\n    </form>\n  </div>\n\n  <div ng-include=\"viewTemplate\"></div>\n</div>\n");
 $templateCache.put("plugins/camel/html/propertiesComponent.html","<div ng-controller=\"Camel.PropertiesComponentController\">\n\n  <div class=\"control-group inline-block\">\n    <form class=\"form-inline no-bottom-margin\">\n      <label>Hide Documentation:\n        <input type=\"checkbox\" ng-model=\"hideHelp\"\n               title=\"Hide documentation for the options\"/>\n      </label>\n      <label>Hide Default:\n        <input type=\"checkbox\" ng-model=\"hideDefault\"\n               title=\"Hide options with default values\"/>\n      </label>\n      <label>Hide Unused:\n        <input type=\"checkbox\" ng-model=\"hideUnused\"\n               title=\"Hide options with unused/empty values\"/>\n      </label>\n    </form>\n  </div>\n\n  <div ng-include=\"viewTemplate\"></div>\n</div>\n");
