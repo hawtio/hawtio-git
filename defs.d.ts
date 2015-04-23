@@ -1,9 +1,4 @@
 /// <reference path="d.ts/includes.d.ts"/>
-/// <reference path="d.ts/docker-registry/ts/dockerRegistryInterfaces.d.ts"/>
-/// <reference path="d.ts/docker-registry/ts/dockerRegistryHelpers.d.ts"/>
-/// <reference path="d.ts/docker-registry/ts/dockerRegistryPlugin.d.ts"/>
-/// <reference path="d.ts/docker-registry/ts/dockerRegistryTopLevel.d.ts"/>
-/// <reference path="d.ts/docker-registry/ts/list.d.ts"/>
 /// <reference path="d.ts/dozer/ts/dozerHelpers.d.ts"/>
 /// <reference path="d.ts/dozer/ts/model.d.ts"/>
 /// <reference path="d.ts/dozer/ts/schemaConfigure.d.ts"/>
@@ -33,3 +28,8 @@
 /// <reference path="d.ts/wiki/ts/wikiDirectives.d.ts"/>
 /// <reference path="d.ts/wiki/ts/wikiRepository.d.ts"/>
 /// <reference path="d.ts/wiki/ts/wikiTopLevel.d.ts"/>
+/// <reference path="d.ts/docker-registry/ts/dockerRegistryInterfaces.d.ts"/>
+/// <reference path="d.ts/docker-registry/ts/dockerRegistryHelpers.d.ts"/>
+/// <reference path="d.ts/docker-registry/ts/dockerRegistryPlugin.d.ts"/>
+/// <reference path="d.ts/docker-registry/ts/dockerRegistryTopLevel.d.ts"/>
+/// <reference path="d.ts/docker-registry/ts/list.d.ts"/>
