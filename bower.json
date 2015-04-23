@@ -5,9 +5,6 @@
     "hawtio"
   ],
   "main": [
-    "dist/metrics-watcher.js",
-    "dist/metrics-watcher-style.css",
-    "dist/camelModel.js",
     "dist/hawtio-wiki.js"
   ],
   "ignore": [
