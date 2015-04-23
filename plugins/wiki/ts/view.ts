@@ -1,5 +1,4 @@
 /// <reference path="../../includes.ts"/>
-/// <reference path="../../camel/ts/camelHelpers.ts"/>
 /// <reference path="../../git/ts/gitHelpers.ts"/>
 /// <reference path="wikiHelpers.ts"/>
 /// <reference path="wikiPlugin.ts"/>
@@ -89,8 +88,8 @@ module Wiki {
 
     $scope.paneTemplate = '';
 
-    $scope.profileId = Fabric.pagePathToProfileId($scope.pageId);
-    $scope.showProfileHeader = $scope.profileId && $scope.pageId.endsWith(Fabric.profileSuffix) ? true : false;
+    $scope.profileId = "";
+    $scope.showProfileHeader = false;
     $scope.showAppHeader = false;
 
     $scope.operationCounter = 1;
@@ -507,13 +506,9 @@ module Wiki {
           if (form) {
             // now lets try load the form JSON so we can then render the form
             $scope.sourceView = null;
-            if (form === "/") {
-              onFormSchema(Camel._jsonSchema);
-            } else {
-              $scope.git = wikiRepository.getPage($scope.branch, form, $scope.objectId, (details) => {
-                onFormSchema(Wiki.parseJson(details.text));
-              });
-            }
+            $scope.git = wikiRepository.getPage($scope.branch, form, $scope.objectId, (details) => {
+              onFormSchema(Wiki.parseJson(details.text));
+            });
           } else {
             $scope.sourceView = "plugins/wiki/html/sourceView.html";
           }

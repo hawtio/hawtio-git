@@ -131,41 +131,6 @@ module Wiki {
         var profileName = toProfileName(concatenated);
         var targetPath = toPath(profileName);
 
-        // check if profile exists
-        var profile = Fabric.getProfile(workspace.jolokia, $scope.branch, profileName, false);
-        if (profile) {
-          $scope.fileExists.exists = true;
-          $scope.fileExists.name = profileName;
-          Core.$apply($scope);
-          return;
-        }
-
-        Fabric.createProfile(workspace.jolokia, $scope.branch, profileName, ['default'], () => {
-          // notification('success', 'Created profile ' + profileName);
-          Core.$apply($scope);
-          Fabric.newConfigFile(workspace.jolokia, $scope.branch, profileName, 'ReadMe.md', () => {
-            // notification('info', 'Created empty Readme.md in profile ' + profileName);
-            Core.$apply($scope);
-            var contents = "Here's an empty ReadMe.md for '" + profileName + "', please update!";
-            Fabric.saveConfigFile(workspace.jolokia, $scope.branch, profileName, 'ReadMe.md', contents.encodeBase64(), () => {
-              // notification('info', 'Updated Readme.md in profile ' + profileName);
-              Core.$apply($scope);
-              var link = Wiki.viewLink($scope.branch, targetPath, $location);
-              goToLink(link, $timeout, $location);
-  }, (response) => {
-              Core.notification('error', 'Failed to set ReadMe.md data in profile ' + profileName + ' due to ' + response.error);
-              Core.$apply($scope);
-            });
-          }, (response) => {
-            Core.notification('error', 'Failed to create ReadMe.md in profile ' + profileName + ' due to ' + response.error);
-            Core.$apply($scope);
-          });
-
-        }, (response) => {
-          Core.notification('error', 'Failed to create profile ' + profileName + ' due to ' + response.error);
-          Core.$apply($scope);
-        });
-
       } else if (template.generated) {
         var options:Wiki.GenerateOptions = {
           workspace: workspace,

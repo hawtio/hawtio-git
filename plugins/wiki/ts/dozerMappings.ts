@@ -14,7 +14,6 @@ module Wiki {
     Wiki.initScope($scope, $routeParams, $location);
     Dozer.schemaConfigure();
 
-    $scope.profileId = Fabric.pagePathToProfileId($scope.pageId);
     $scope.versionId = $scope.branch || "1.0";
 
     $scope.schema = {};
@@ -58,13 +57,6 @@ module Wiki {
         }
       ]
     };
-
-    if ($scope.profileId) {
-      Fabric.profileJolokia(jolokia, $scope.profileId, $scope.versionId, (containerJolokia) => {
-        $scope.containerJolokia = containerJolokia;
-        $scope.missingContainer = !containerJolokia ? true : false;
-      });
-    }
 
     $scope.$on("$routeChangeSuccess", function (event, current, previous) {
       // lets do this asynchronously to avoid Error: $digest already in progress
