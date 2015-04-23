@@ -12,8 +12,7 @@ module Wiki {
   export var templatePath = 'plugins/wiki/html/';
   export var tab:any = null;
 
-  export var _module = angular.module(pluginName, ['ngResource', 'hawtio-core', 'hawtio-ui', 'camel', 'osgi']);
-  //export var _module = angular.module(pluginName, ['bootstrap', 'ui.bootstrap.dialog', 'ui.bootstrap.tabs', 'ngResource', 'hawtio-core', 'hawtio-ui', 'tree', 'camel']);
+  export var _module = angular.module(pluginName, ['ngResource', 'hawtio-core', 'hawtio-ui', 'camel', ]);
   export var controller = PluginHelpers.createControllerFunction(_module, 'Wiki');
   export var route = PluginHelpers.createRoutingFunction(templatePath);
 

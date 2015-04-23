@@ -8496,6 +8496,667 @@ var Git;
 })(Git || (Git = {}));
 
 /// <reference path="../../includes.ts"/>
+/**
+ * @module Maven
+ */
+var Maven;
+(function (Maven) {
+    Maven.log = Logger.get("Maven");
+    /**
+     * Returns the maven indexer mbean (from the hawtio-maven-indexer library)
+     * @method getMavenIndexerMBean
+     * @for Maven
+     * @param {Core.Workspace} workspace
+     * @return {String}
+     */
+    function getMavenIndexerMBean(workspace) {
+        if (workspace) {
+            var mavenStuff = workspace.mbeanTypesToDomain["Indexer"] || {};
+            var object = mavenStuff["hawtio"] || {};
+            return object.objectName;
+        }
+        else
+            return null;
+    }
+    Maven.getMavenIndexerMBean = getMavenIndexerMBean;
+    function getAetherMBean(workspace) {
+        if (workspace) {
+            var mavenStuff = workspace.mbeanTypesToDomain["AetherFacade"] || {};
+            var object = mavenStuff["hawtio"] || {};
+            return object.objectName;
+        }
+        else
+            return null;
+    }
+    Maven.getAetherMBean = getAetherMBean;
+    function mavenLink(url) {
+        var path = null;
+        if (url) {
+            if (url.startsWith("mvn:")) {
+                path = url.substring(4);
+            }
+            else {
+                var idx = url.indexOf(":mvn:");
+                if (idx > 0) {
+                    path = url.substring(idx + 5);
+                }
+            }
+        }
+        return path ? "#/maven/artifact/" + path : null;
+    }
+    Maven.mavenLink = mavenLink;
+    function getName(row) {
+        var id = (row.group || row.groupId) + "/" + (row.artifact || row.artifactId);
+        if (row.version) {
+            id += "/" + row.version;
+        }
+        if (row.classifier) {
+            id += "/" + row.classifier;
+        }
+        if (row.packaging) {
+            id += "/" + row.packaging;
+        }
+        return id;
+    }
+    Maven.getName = getName;
+    function completeMavenUri($q, $scope, workspace, jolokia, query) {
+        var mbean = getMavenIndexerMBean(workspace);
+        if (!angular.isDefined(mbean)) {
+            return $q.when([]);
+        }
+        var parts = query.split('/');
+        if (parts.length === 1) {
+            // still searching the groupId
+            return Maven.completeGroupId(mbean, $q, $scope, workspace, jolokia, query, null, null);
+        }
+        if (parts.length === 2) {
+            // have the groupId, guess we're looking for the artifactId
+            return Maven.completeArtifactId(mbean, $q, $scope, workspace, jolokia, parts[0], parts[1], null, null);
+        }
+        if (parts.length === 3) {
+            // guess we're searching for the version
+            return Maven.completeVersion(mbean, $q, $scope, workspace, jolokia, parts[0], parts[1], parts[2], null, null);
+        }
+        return $q.when([]);
+    }
+    Maven.completeMavenUri = completeMavenUri;
+    function completeVersion(mbean, $q, $scope, workspace, jolokia, groupId, artifactId, partial, packaging, classifier) {
+        /*
+        if (partial.length < 5) {
+          return $q.when([]);
+        }
+        */
+        var deferred = $q.defer();
+        jolokia.request({
+            type: 'exec',
+            mbean: mbean,
+            operation: 'versionComplete(java.lang.String, java.lang.String, java.lang.String, java.lang.String, java.lang.String)',
+            arguments: [groupId, artifactId, partial, packaging, classifier]
+        }, {
+            method: 'POST',
+            success: function (response) {
+                $scope.$apply(function () {
+                    deferred.resolve(response.value.sortBy().first(15));
+                });
+            },
+            error: function (response) {
+                $scope.$apply(function () {
+                    console.log("got back an error: ", response);
+                    deferred.reject();
+                });
+            }
+        });
+        return deferred.promise;
+    }
+    Maven.completeVersion = completeVersion;
+    function completeArtifactId(mbean, $q, $scope, workspace, jolokia, groupId, partial, packaging, classifier) {
+        var deferred = $q.defer();
+        jolokia.request({
+            type: 'exec',
+            mbean: mbean,
+            operation: 'artifactIdComplete(java.lang.String, java.lang.String, java.lang.String, java.lang.String)',
+            arguments: [groupId, partial, packaging, classifier]
+        }, {
+            method: 'POST',
+            success: function (response) {
+                $scope.$apply(function () {
+                    deferred.resolve(response.value.sortBy().first(15));
+                });
+            },
+            error: function (response) {
+                $scope.$apply(function () {
+                    console.log("got back an error: ", response);
+                    deferred.reject();
+                });
+            }
+        });
+        return deferred.promise;
+    }
+    Maven.completeArtifactId = completeArtifactId;
+    function completeGroupId(mbean, $q, $scope, workspace, jolokia, partial, packaging, classifier) {
+        // let's go easy on the indexer
+        if (partial.length < 5) {
+            return $q.when([]);
+        }
+        var deferred = $q.defer();
+        jolokia.request({
+            type: 'exec',
+            mbean: mbean,
+            operation: 'groupIdComplete(java.lang.String, java.lang.String, java.lang.String)',
+            arguments: [partial, packaging, classifier]
+        }, {
+            method: 'POST',
+            success: function (response) {
+                $scope.$apply(function () {
+                    deferred.resolve(response.value.sortBy().first(15));
+                });
+            },
+            error: function (response) {
+                console.log("got back an error: ", response);
+                $scope.$apply(function () {
+                    deferred.reject();
+                });
+            }
+        });
+        return deferred.promise;
+    }
+    Maven.completeGroupId = completeGroupId;
+    function addMavenFunctions($scope, workspace) {
+        $scope.detailLink = function (row) {
+            var group = row.groupId;
+            var artifact = row.artifactId;
+            var version = row.version || "";
+            var classifier = row.classifier || "";
+            var packaging = row.packaging || "";
+            if (group && artifact) {
+                return "#/maven/artifact/" + group + "/" + artifact + "/" + version + "/" + classifier + "/" + packaging;
+            }
+            return "";
+        };
+        $scope.javadocLink = function (row) {
+            var group = row.groupId;
+            var artifact = row.artifactId;
+            var version = row.version;
+            if (group && artifact && version) {
+                return "javadoc/" + group + ":" + artifact + ":" + version + "/";
+            }
+            return "";
+        };
+        $scope.versionsLink = function (row) {
+            var group = row.groupId;
+            var artifact = row.artifactId;
+            var classifier = row.classifier || "";
+            var packaging = row.packaging || "";
+            if (group && artifact) {
+                return "#/maven/versions/" + group + "/" + artifact + "/" + classifier + "/" + packaging;
+            }
+            return "";
+        };
+        $scope.dependenciesLink = function (row) {
+            var group = row.groupId;
+            var artifact = row.artifactId;
+            var classifier = row.classifier || "";
+            var packaging = row.packaging || "";
+            var version = row.version;
+            if (group && artifact) {
+                return "#/maven/dependencies/" + group + "/" + artifact + "/" + version + "/" + classifier + "/" + packaging;
+            }
+            return "";
+        };
+        $scope.hasDependencyMBean = function () {
+            var mbean = Maven.getAetherMBean(workspace);
+            return angular.isDefined(mbean);
+        };
+        $scope.sourceLink = function (row) {
+            var group = row.groupId;
+            var artifact = row.artifactId;
+            var version = row.version;
+            if (group && artifact && version) {
+                return "#/source/index/" + group + ":" + artifact + ":" + version + "/";
+            }
+            return "";
+        };
+    }
+    Maven.addMavenFunctions = addMavenFunctions;
+})(Maven || (Maven = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="mavenHelpers.ts"/>
+/**
+ * @module Maven
+ * @main Maven
+ */
+var Maven;
+(function (Maven) {
+    var pluginName = 'maven';
+    Maven._module = angular.module(pluginName, ['ngResource', 'datatable', 'tree', 'hawtio-core', 'hawtio-ui']);
+    //export var _module = angular.module(pluginName, ['bootstrap', 'ngResource', 'datatable', 'tree', 'hawtio-core', 'hawtio-ui']);
+    Maven._module.config(["$routeProvider", function ($routeProvider) {
+        $routeProvider.when('/maven', { redirectTo: '/maven/search' }).when('/maven/search', { templateUrl: 'plugins/maven/html/search.html' }).when('/maven/advancedSearch', { templateUrl: 'plugins/maven/html/advancedSearch.html' }).when('/maven/artifact/:group/:artifact/:version/:classifier/:packaging', { templateUrl: 'plugins/maven/html/artifact.html' }).when('/maven/artifact/:group/:artifact/:version/:classifier', { templateUrl: 'plugins/maven/html/artifact.html' }).when('/maven/artifact/:group/:artifact/:version', { templateUrl: 'plugins/maven/html/artifact.html' }).when('/maven/dependencies/:group/:artifact/:version/:classifier/:packaging', { templateUrl: 'plugins/maven/html/dependencies.html' }).when('/maven/dependencies/:group/:artifact/:version/:classifier', { templateUrl: 'plugins/maven/html/dependencies.html' }).when('/maven/dependencies/:group/:artifact/:version', { templateUrl: 'plugins/maven/html/dependencies.html' }).when('/maven/versions/:group/:artifact/:classifier/:packaging', { templateUrl: 'plugins/maven/html/versions.html' }).when('/maven/view/:group/:artifact/:version/:classifier/:packaging', { templateUrl: 'plugins/maven/html/view.html' }).when('/maven/test', { templateUrl: 'plugins/maven/html/test.html' });
+    }]);
+    Maven._module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", function (nav, $location, workspace, viewRegistry, helpRegistry) {
+        //viewRegistry['maven'] = "plugins/maven/html/layoutMaven.html";
+        var builder = nav.builder();
+        var search = builder.id('maven-search').title(function () { return 'Search'; }).href(function () { return '/maven/search' + workspace.hash(); }).isSelected(function () { return workspace.isLinkPrefixActive('/maven/search'); }).build();
+        var advanced = builder.id('maven-advanced-search').title(function () { return 'Advanced Search'; }).href(function () { return '/maven/advancedSearch' + workspace.hash(); }).isSelected(function () { return workspace.isLinkPrefixActive('/maven/advancedSearch'); }).build();
+        var tab = builder.id('maven').title(function () { return 'Maven'; }).isValid(function () { return Maven.getMavenIndexerMBean(workspace); }).href(function () { return '/maven'; }).isSelected(function () { return workspace.isLinkActive('/maven'); }).tabs(search, advanced).build();
+        nav.add(tab);
+        /*
+        workspace.topLevelTabs.push({
+          id: "maven",
+          content: "Maven",
+          title: "Search maven repositories for artifacts",
+          isValid: (workspace: Workspace) => Maven.getMavenIndexerMBean(workspace),
+          href: () => "#/maven/search",
+          isActive: (workspace: Workspace) => workspace.isLinkActive("/maven")
+        });
+        */
+        helpRegistry.addUserDoc('maven', 'plugins/maven/doc/help.md', function () {
+            return Maven.getMavenIndexerMBean(workspace) !== null;
+        });
+        helpRegistry.addDevDoc("maven", 'plugins/maven/doc/developer.md');
+    }]);
+    hawtioPluginLoader.addModule(pluginName);
+})(Maven || (Maven = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="mavenPlugin.ts"/>
+/**
+ * @module Maven
+ */
+var Maven;
+(function (Maven) {
+    Maven._module.controller("Maven.ArtifactController", ["$scope", "$routeParams", "workspace", "jolokia", function ($scope, $routeParams, workspace, jolokia) {
+        $scope.row = {
+            groupId: $routeParams["group"] || "",
+            artifactId: $routeParams["artifact"] || "",
+            version: $routeParams["version"] || "",
+            classifier: $routeParams["classifier"] || "",
+            packaging: $routeParams["packaging"] || ""
+        };
+        var row = $scope.row;
+        $scope.id = Maven.getName(row);
+        Maven.addMavenFunctions($scope, workspace);
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            // lets do this asynchronously to avoid Error: $digest already in progress
+            setTimeout(updateTableContents, 50);
+        });
+        $scope.$watch('workspace.selection', function () {
+            updateTableContents();
+        });
+        function updateTableContents() {
+            var mbean = Maven.getMavenIndexerMBean(workspace);
+            // lets query the name and description of the GAV
+            if (mbean) {
+                jolokia.execute(mbean, "search", row.groupId, row.artifactId, row.version, row.packaging, row.classifier, "", Core.onSuccess(render));
+            }
+            else {
+                console.log("No MavenIndexerMBean!");
+            }
+        }
+        function render(response) {
+            if (response && response.length) {
+                var first = response[0];
+                row.name = first.name;
+                row.description = first.description;
+            }
+            Core.$apply($scope);
+        }
+    }]);
+})(Maven || (Maven = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="mavenPlugin.ts"/>
+/**
+ * @module Maven
+ */
+var Maven;
+(function (Maven) {
+    Maven._module.controller("Maven.DependenciesController", ["$scope", "$routeParams", "$location", "workspace", "jolokia", function ($scope, $routeParams, $location, workspace, jolokia) {
+        $scope.artifacts = [];
+        $scope.group = $routeParams["group"] || "";
+        $scope.artifact = $routeParams["artifact"] || "";
+        $scope.version = $routeParams["version"] || "";
+        $scope.classifier = $routeParams["classifier"] || "";
+        $scope.packaging = $routeParams["packaging"] || "";
+        $scope.dependencyTree = null;
+        Maven.addMavenFunctions($scope, workspace);
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            // lets do this asynchronously to avoid Error: $digest already in progress
+            setTimeout(updateTableContents, 50);
+        });
+        $scope.$watch('workspace.selection', function () {
+            updateTableContents();
+        });
+        $scope.onSelectNode = function (node) {
+            $scope.selected = node;
+        };
+        $scope.onRootNode = function (rootNode) {
+            // process the rootNode
+        };
+        $scope.validSelection = function () {
+            return $scope.selected && $scope.selected !== $scope.rootDependency;
+        };
+        $scope.viewDetails = function () {
+            var dependency = Core.pathGet($scope.selected, ["dependency"]);
+            var link = $scope.detailLink(dependency);
+            if (link) {
+                var path = Core.trimLeading(link, "#");
+                console.log("going to view " + path);
+                $location.path(path);
+            }
+        };
+        function updateTableContents() {
+            var mbean = Maven.getAetherMBean(workspace);
+            if (mbean) {
+                jolokia.execute(mbean, "resolveJson(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)", $scope.group, $scope.artifact, $scope.version, $scope.packaging, $scope.classifier, Core.onSuccess(render));
+            }
+            else {
+                console.log("No AetherMBean!");
+            }
+        }
+        function render(response) {
+            if (response) {
+                var json = JSON.parse(response);
+                if (json) {
+                    //console.log("Found json: " + JSON.stringify(json, null, "  "));
+                    $scope.dependencyTree = new Folder("Dependencies");
+                    $scope.dependencyActivations = [];
+                    addChildren($scope.dependencyTree, json);
+                    $scope.dependencyActivations.reverse();
+                    $scope.rootDependency = $scope.dependencyTree.children[0];
+                }
+            }
+            Core.$apply($scope);
+        }
+        function addChildren(folder, dependency) {
+            var name = Maven.getName(dependency);
+            var node = new Folder(name);
+            node.key = name.replace(/\//g, '_');
+            node["dependency"] = dependency;
+            $scope.dependencyActivations.push(node.key);
+            /*
+                  var imageUrl = Camel.getRouteNodeIcon(value);
+                  node.icon = imageUrl;
+                  //node.tooltip = tooltip;
+            */
+            folder.children.push(node);
+            var children = dependency["children"];
+            angular.forEach(children, function (child) {
+                addChildren(node, child);
+            });
+        }
+    }]);
+})(Maven || (Maven = {}));
+
+/// <reference path="mavenHelpers.ts"/>
+/// <reference path="mavenPlugin.ts"/>
+/**
+ * @module Maven
+ */
+var Maven;
+(function (Maven) {
+    Maven._module.controller("Maven.PomXmlController", ["$scope", function ($scope) {
+        $scope.mavenPomXml = "\n" + "  <dependency>\n" + "    <groupId>" + orBlank($scope.row.groupId) + "</groupId>\n" + "    <artifactId>" + orBlank($scope.row.artifactId) + "</artifactId>\n" + "    <version>" + orBlank($scope.row.version) + "</version>\n" + "  </dependency>\n";
+        function orBlank(text) {
+            return text || "";
+        }
+    }]);
+})(Maven || (Maven = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="mavenPlugin.ts"/>
+/**
+ * @module Maven
+ */
+var Maven;
+(function (Maven) {
+    Maven._module.controller("Maven.SearchController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        var log = Logger.get("Maven");
+        $scope.artifacts = [];
+        $scope.selected = [];
+        $scope.done = false;
+        $scope.inProgress = false;
+        $scope.form = {
+            searchText: ""
+        };
+        $scope.search = "";
+        $scope.searchForm = 'plugins/maven/html/searchForm.html';
+        Maven.addMavenFunctions($scope, workspace);
+        var columnDefs = [
+            {
+                field: 'groupId',
+                displayName: 'Group'
+            },
+            {
+                field: 'artifactId',
+                displayName: 'Artifact',
+                cellTemplate: '<div class="ngCellText" title="Name: {{row.entity.name}}">{{row.entity.artifactId}}</div>'
+            },
+            {
+                field: 'version',
+                displayName: 'Version',
+                cellTemplate: '<div class="ngCellText" title="Name: {{row.entity.name}}"><a ng-href="{{detailLink(row.entity)}}">{{row.entity.version}}</a</div>'
+            }
+        ];
+        $scope.gridOptions = {
+            data: 'artifacts',
+            displayFooter: true,
+            selectedItems: $scope.selected,
+            selectWithCheckboxOnly: true,
+            columnDefs: columnDefs,
+            rowDetailTemplateId: "artifactDetailTemplate",
+            filterOptions: {
+                filterText: 'search'
+            }
+        };
+        $scope.hasAdvancedSearch = function (form) {
+            return form.searchGroup || form.searchArtifact || form.searchVersion || form.searchPackaging || form.searchClassifier || form.searchClassName;
+        };
+        $scope.doSearch = function () {
+            $scope.done = false;
+            $scope.inProgress = true;
+            $scope.artifacts = [];
+            // ensure ui is updated with search in progress...
+            setTimeout(function () {
+                Core.$apply($scope);
+            }, 50);
+            var mbean = Maven.getMavenIndexerMBean(workspace);
+            var form = $scope.form;
+            if (mbean) {
+                var searchText = form.searchText;
+                var kind = form.artifactType;
+                if (kind) {
+                    if (kind === "className") {
+                        log.debug("Search for: " + form.searchText + " className");
+                        jolokia.execute(mbean, "searchClasses", searchText, Core.onSuccess(render));
+                    }
+                    else {
+                        var paths = kind.split('/');
+                        var packaging = paths[0];
+                        var classifier = paths[1];
+                        log.debug("Search for: " + form.searchText + " packaging " + packaging + " classifier " + classifier);
+                        jolokia.execute(mbean, "searchTextAndPackaging", searchText, packaging, classifier, Core.onSuccess(render));
+                    }
+                }
+                else if (searchText) {
+                    log.debug("Search text is: " + form.searchText);
+                    jolokia.execute(mbean, "searchText", form.searchText, Core.onSuccess(render));
+                }
+                else if ($scope.hasAdvancedSearch(form)) {
+                    log.debug("Searching for " + form.searchGroup + "/" + form.searchArtifact + "/" + form.searchVersion + "/" + form.searchPackaging + "/" + form.searchClassifier + "/" + form.searchClassName);
+                    jolokia.execute(mbean, "search", form.searchGroup || "", form.searchArtifact || "", form.searchVersion || "", form.searchPackaging || "", form.searchClassifier || "", form.searchClassName || "", Core.onSuccess(render));
+                }
+            }
+            else {
+                Core.notification("error", "Cannot find the Maven Indexer MBean!");
+            }
+        };
+        // cap ui table at one thousand
+        var RESPONSE_LIMIT = 1000;
+        var SERVER_RESPONSE_LIMIT = (10 * RESPONSE_LIMIT) + 1;
+        function render(response) {
+            log.debug("Search done, preparing result.");
+            $scope.done = true;
+            $scope.inProgress = false;
+            // let's limit the reponse to avoid blowing up
+            // the browser until we start using a widget
+            // that supports pagination
+            if (response.length > RESPONSE_LIMIT) {
+                var serverLimit = response.length === SERVER_RESPONSE_LIMIT;
+                if (serverLimit) {
+                    $scope.tooManyResponses = "This search returned more than " + (SERVER_RESPONSE_LIMIT - 1) + " artifacts, showing the first " + RESPONSE_LIMIT + ", please refine your search";
+                }
+                else {
+                    $scope.tooManyResponses = "This search returned " + response.length + " artifacts, showing the first " + RESPONSE_LIMIT + ", please refine your search";
+                }
+            }
+            else {
+                $scope.tooManyResponses = "";
+            }
+            $scope.artifacts = response.first(RESPONSE_LIMIT);
+            Core.$apply($scope);
+        }
+    }]);
+})(Maven || (Maven = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="mavenPlugin.ts"/>
+/**
+ * @module Maven
+ */
+var Maven;
+(function (Maven) {
+    Maven._module.controller("Maven.TestController", ["$scope", "workspace", "jolokia", "$q", "$templateCache", function ($scope, workspace, jolokia, $q, $templateCache) {
+        $scope.html = "text/html";
+        $scope.someUri = '';
+        $scope.uriParts = [];
+        $scope.mavenCompletion = $templateCache.get("mavenCompletionTemplate");
+        $scope.$watch('someUri', function (newValue, oldValue) {
+            if (newValue !== oldValue) {
+                $scope.uriParts = newValue.split("/");
+            }
+        });
+        $scope.$watch('uriParts', function (newValue, oldValue) {
+            if (newValue !== oldValue) {
+                if (newValue.length === 1 && newValue.length < oldValue.length) {
+                    if (oldValue.last() !== '' && newValue.first().has(oldValue.last())) {
+                        var merged = oldValue.first(oldValue.length - 1).include(newValue.first());
+                        $scope.someUri = merged.join('/');
+                    }
+                }
+            }
+        }, true);
+        $scope.doCompletionMaven = function (something) {
+            return Maven.completeMavenUri($q, $scope, workspace, jolokia, something);
+        };
+    }]);
+})(Maven || (Maven = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="mavenPlugin.ts"/>
+/**
+ * @module Maven
+ */
+var Maven;
+(function (Maven) {
+    Maven._module.controller("Maven.VersionsController", ["$scope", "$routeParams", "workspace", "jolokia", function ($scope, $routeParams, workspace, jolokia) {
+        $scope.artifacts = [];
+        $scope.group = $routeParams["group"] || "";
+        $scope.artifact = $routeParams["artifact"] || "";
+        $scope.version = "";
+        $scope.classifier = $routeParams["classifier"] || "";
+        $scope.packaging = $routeParams["packaging"] || "";
+        var id = $scope.group + "/" + $scope.artifact;
+        if ($scope.classifier) {
+            id += "/" + $scope.classifier;
+        }
+        if ($scope.packaging) {
+            id += "/" + $scope.packaging;
+        }
+        var columnTitle = id + " versions";
+        var columnDefs = [
+            {
+                field: 'version',
+                displayName: columnTitle,
+                cellTemplate: '<div class="ngCellText"><a href="#/maven/artifact/{{row.entity.groupId}}/{{row.entity.artifactId}}/{{row.entity.version}}">{{row.entity.version}}</a></div>',
+            }
+        ];
+        $scope.gridOptions = {
+            data: 'artifacts',
+            displayFooter: true,
+            selectedItems: $scope.selected,
+            selectWithCheckboxOnly: true,
+            columnDefs: columnDefs,
+            rowDetailTemplateId: "artifactDetailTemplate",
+            sortInfo: { field: 'versionNumber', direction: 'DESC' },
+            filterOptions: {
+                filterText: 'search'
+            }
+        };
+        Maven.addMavenFunctions($scope, workspace);
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            // lets do this asynchronously to avoid Error: $digest already in progress
+            setTimeout(updateTableContents, 50);
+        });
+        $scope.$watch('workspace.selection', function () {
+            updateTableContents();
+        });
+        function updateTableContents() {
+            var mbean = Maven.getMavenIndexerMBean(workspace);
+            if (mbean) {
+                jolokia.execute(mbean, "versionComplete", $scope.group, $scope.artifact, $scope.version, $scope.packaging, $scope.classifier, Core.onSuccess(render));
+            }
+            else {
+                console.log("No MavenIndexerMBean!");
+            }
+        }
+        function render(response) {
+            $scope.artifacts = [];
+            angular.forEach(response, function (version) {
+                var versionNumberArray = Core.parseVersionNumbers(version);
+                var versionNumber = 0;
+                for (var i = 0; i <= 4; i++) {
+                    var num = (i >= versionNumberArray.length) ? 0 : versionNumberArray[i];
+                    versionNumber *= 1000;
+                    versionNumber += num;
+                }
+                $scope.artifacts.push({
+                    groupId: $scope.group,
+                    artifactId: $scope.artifact,
+                    packaging: $scope.packaging,
+                    classifier: $scope.classifier,
+                    version: version,
+                    versionNumber: versionNumber
+                });
+            });
+            Core.$apply($scope);
+        }
+    }]);
+})(Maven || (Maven = {}));
+
+/// <reference path="../../includes.ts"/>
+/// <reference path="mavenPlugin.ts"/>
+/**
+ * @module Maven
+ */
+var Maven;
+(function (Maven) {
+    Maven._module.controller("Maven.ViewController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
+        $scope.$watch('workspace.tree', function () {
+            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
+            // so lets reload, asynchronously just in case
+            setTimeout(loadData, 50);
+        });
+        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
+            setTimeout(loadData, 50);
+        });
+        function loadData() {
+        }
+    }]);
+})(Maven || (Maven = {}));
+
+/// <reference path="../../includes.ts"/>
 /// <reference path="../../git/ts/gitHelpers.ts"/>
 /**
  * @module Wiki
@@ -9436,8 +10097,7 @@ var Wiki;
     Wiki.pluginName = 'wiki';
     Wiki.templatePath = 'plugins/wiki/html/';
     Wiki.tab = null;
-    Wiki._module = angular.module(Wiki.pluginName, ['ngResource', 'hawtio-core', 'hawtio-ui', 'camel', 'osgi']);
-    //export var _module = angular.module(pluginName, ['bootstrap', 'ui.bootstrap.dialog', 'ui.bootstrap.tabs', 'ngResource', 'hawtio-core', 'hawtio-ui', 'tree', 'camel']);
+    Wiki._module = angular.module(Wiki.pluginName, ['ngResource', 'hawtio-core', 'hawtio-ui', 'camel',]);
     Wiki.controller = PluginHelpers.createControllerFunction(Wiki._module, 'Wiki');
     Wiki.route = PluginHelpers.createRoutingFunction(Wiki.templatePath);
     Wiki._module.config(["$routeProvider", function ($routeProvider) {
@@ -12998,667 +13658,6 @@ var Wiki;
         */
     }]);
 })(Wiki || (Wiki = {}));
-
-/// <reference path="../../includes.ts"/>
-/**
- * @module Maven
- */
-var Maven;
-(function (Maven) {
-    Maven.log = Logger.get("Maven");
-    /**
-     * Returns the maven indexer mbean (from the hawtio-maven-indexer library)
-     * @method getMavenIndexerMBean
-     * @for Maven
-     * @param {Core.Workspace} workspace
-     * @return {String}
-     */
-    function getMavenIndexerMBean(workspace) {
-        if (workspace) {
-            var mavenStuff = workspace.mbeanTypesToDomain["Indexer"] || {};
-            var object = mavenStuff["hawtio"] || {};
-            return object.objectName;
-        }
-        else
-            return null;
-    }
-    Maven.getMavenIndexerMBean = getMavenIndexerMBean;
-    function getAetherMBean(workspace) {
-        if (workspace) {
-            var mavenStuff = workspace.mbeanTypesToDomain["AetherFacade"] || {};
-            var object = mavenStuff["hawtio"] || {};
-            return object.objectName;
-        }
-        else
-            return null;
-    }
-    Maven.getAetherMBean = getAetherMBean;
-    function mavenLink(url) {
-        var path = null;
-        if (url) {
-            if (url.startsWith("mvn:")) {
-                path = url.substring(4);
-            }
-            else {
-                var idx = url.indexOf(":mvn:");
-                if (idx > 0) {
-                    path = url.substring(idx + 5);
-                }
-            }
-        }
-        return path ? "#/maven/artifact/" + path : null;
-    }
-    Maven.mavenLink = mavenLink;
-    function getName(row) {
-        var id = (row.group || row.groupId) + "/" + (row.artifact || row.artifactId);
-        if (row.version) {
-            id += "/" + row.version;
-        }
-        if (row.classifier) {
-            id += "/" + row.classifier;
-        }
-        if (row.packaging) {
-            id += "/" + row.packaging;
-        }
-        return id;
-    }
-    Maven.getName = getName;
-    function completeMavenUri($q, $scope, workspace, jolokia, query) {
-        var mbean = getMavenIndexerMBean(workspace);
-        if (!angular.isDefined(mbean)) {
-            return $q.when([]);
-        }
-        var parts = query.split('/');
-        if (parts.length === 1) {
-            // still searching the groupId
-            return Maven.completeGroupId(mbean, $q, $scope, workspace, jolokia, query, null, null);
-        }
-        if (parts.length === 2) {
-            // have the groupId, guess we're looking for the artifactId
-            return Maven.completeArtifactId(mbean, $q, $scope, workspace, jolokia, parts[0], parts[1], null, null);
-        }
-        if (parts.length === 3) {
-            // guess we're searching for the version
-            return Maven.completeVersion(mbean, $q, $scope, workspace, jolokia, parts[0], parts[1], parts[2], null, null);
-        }
-        return $q.when([]);
-    }
-    Maven.completeMavenUri = completeMavenUri;
-    function completeVersion(mbean, $q, $scope, workspace, jolokia, groupId, artifactId, partial, packaging, classifier) {
-        /*
-        if (partial.length < 5) {
-          return $q.when([]);
-        }
-        */
-        var deferred = $q.defer();
-        jolokia.request({
-            type: 'exec',
-            mbean: mbean,
-            operation: 'versionComplete(java.lang.String, java.lang.String, java.lang.String, java.lang.String, java.lang.String)',
-            arguments: [groupId, artifactId, partial, packaging, classifier]
-        }, {
-            method: 'POST',
-            success: function (response) {
-                $scope.$apply(function () {
-                    deferred.resolve(response.value.sortBy().first(15));
-                });
-            },
-            error: function (response) {
-                $scope.$apply(function () {
-                    console.log("got back an error: ", response);
-                    deferred.reject();
-                });
-            }
-        });
-        return deferred.promise;
-    }
-    Maven.completeVersion = completeVersion;
-    function completeArtifactId(mbean, $q, $scope, workspace, jolokia, groupId, partial, packaging, classifier) {
-        var deferred = $q.defer();
-        jolokia.request({
-            type: 'exec',
-            mbean: mbean,
-            operation: 'artifactIdComplete(java.lang.String, java.lang.String, java.lang.String, java.lang.String)',
-            arguments: [groupId, partial, packaging, classifier]
-        }, {
-            method: 'POST',
-            success: function (response) {
-                $scope.$apply(function () {
-                    deferred.resolve(response.value.sortBy().first(15));
-                });
-            },
-            error: function (response) {
-                $scope.$apply(function () {
-                    console.log("got back an error: ", response);
-                    deferred.reject();
-                });
-            }
-        });
-        return deferred.promise;
-    }
-    Maven.completeArtifactId = completeArtifactId;
-    function completeGroupId(mbean, $q, $scope, workspace, jolokia, partial, packaging, classifier) {
-        // let's go easy on the indexer
-        if (partial.length < 5) {
-            return $q.when([]);
-        }
-        var deferred = $q.defer();
-        jolokia.request({
-            type: 'exec',
-            mbean: mbean,
-            operation: 'groupIdComplete(java.lang.String, java.lang.String, java.lang.String)',
-            arguments: [partial, packaging, classifier]
-        }, {
-            method: 'POST',
-            success: function (response) {
-                $scope.$apply(function () {
-                    deferred.resolve(response.value.sortBy().first(15));
-                });
-            },
-            error: function (response) {
-                console.log("got back an error: ", response);
-                $scope.$apply(function () {
-                    deferred.reject();
-                });
-            }
-        });
-        return deferred.promise;
-    }
-    Maven.completeGroupId = completeGroupId;
-    function addMavenFunctions($scope, workspace) {
-        $scope.detailLink = function (row) {
-            var group = row.groupId;
-            var artifact = row.artifactId;
-            var version = row.version || "";
-            var classifier = row.classifier || "";
-            var packaging = row.packaging || "";
-            if (group && artifact) {
-                return "#/maven/artifact/" + group + "/" + artifact + "/" + version + "/" + classifier + "/" + packaging;
-            }
-            return "";
-        };
-        $scope.javadocLink = function (row) {
-            var group = row.groupId;
-            var artifact = row.artifactId;
-            var version = row.version;
-            if (group && artifact && version) {
-                return "javadoc/" + group + ":" + artifact + ":" + version + "/";
-            }
-            return "";
-        };
-        $scope.versionsLink = function (row) {
-            var group = row.groupId;
-            var artifact = row.artifactId;
-            var classifier = row.classifier || "";
-            var packaging = row.packaging || "";
-            if (group && artifact) {
-                return "#/maven/versions/" + group + "/" + artifact + "/" + classifier + "/" + packaging;
-            }
-            return "";
-        };
-        $scope.dependenciesLink = function (row) {
-            var group = row.groupId;
-            var artifact = row.artifactId;
-            var classifier = row.classifier || "";
-            var packaging = row.packaging || "";
-            var version = row.version;
-            if (group && artifact) {
-                return "#/maven/dependencies/" + group + "/" + artifact + "/" + version + "/" + classifier + "/" + packaging;
-            }
-            return "";
-        };
-        $scope.hasDependencyMBean = function () {
-            var mbean = Maven.getAetherMBean(workspace);
-            return angular.isDefined(mbean);
-        };
-        $scope.sourceLink = function (row) {
-            var group = row.groupId;
-            var artifact = row.artifactId;
-            var version = row.version;
-            if (group && artifact && version) {
-                return "#/source/index/" + group + ":" + artifact + ":" + version + "/";
-            }
-            return "";
-        };
-    }
-    Maven.addMavenFunctions = addMavenFunctions;
-})(Maven || (Maven = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="mavenHelpers.ts"/>
-/**
- * @module Maven
- * @main Maven
- */
-var Maven;
-(function (Maven) {
-    var pluginName = 'maven';
-    Maven._module = angular.module(pluginName, ['ngResource', 'datatable', 'tree', 'hawtio-core', 'hawtio-ui']);
-    //export var _module = angular.module(pluginName, ['bootstrap', 'ngResource', 'datatable', 'tree', 'hawtio-core', 'hawtio-ui']);
-    Maven._module.config(["$routeProvider", function ($routeProvider) {
-        $routeProvider.when('/maven', { redirectTo: '/maven/search' }).when('/maven/search', { templateUrl: 'plugins/maven/html/search.html' }).when('/maven/advancedSearch', { templateUrl: 'plugins/maven/html/advancedSearch.html' }).when('/maven/artifact/:group/:artifact/:version/:classifier/:packaging', { templateUrl: 'plugins/maven/html/artifact.html' }).when('/maven/artifact/:group/:artifact/:version/:classifier', { templateUrl: 'plugins/maven/html/artifact.html' }).when('/maven/artifact/:group/:artifact/:version', { templateUrl: 'plugins/maven/html/artifact.html' }).when('/maven/dependencies/:group/:artifact/:version/:classifier/:packaging', { templateUrl: 'plugins/maven/html/dependencies.html' }).when('/maven/dependencies/:group/:artifact/:version/:classifier', { templateUrl: 'plugins/maven/html/dependencies.html' }).when('/maven/dependencies/:group/:artifact/:version', { templateUrl: 'plugins/maven/html/dependencies.html' }).when('/maven/versions/:group/:artifact/:classifier/:packaging', { templateUrl: 'plugins/maven/html/versions.html' }).when('/maven/view/:group/:artifact/:version/:classifier/:packaging', { templateUrl: 'plugins/maven/html/view.html' }).when('/maven/test', { templateUrl: 'plugins/maven/html/test.html' });
-    }]);
-    Maven._module.run(["HawtioNav", "$location", "workspace", "viewRegistry", "helpRegistry", function (nav, $location, workspace, viewRegistry, helpRegistry) {
-        //viewRegistry['maven'] = "plugins/maven/html/layoutMaven.html";
-        var builder = nav.builder();
-        var search = builder.id('maven-search').title(function () { return 'Search'; }).href(function () { return '/maven/search' + workspace.hash(); }).isSelected(function () { return workspace.isLinkPrefixActive('/maven/search'); }).build();
-        var advanced = builder.id('maven-advanced-search').title(function () { return 'Advanced Search'; }).href(function () { return '/maven/advancedSearch' + workspace.hash(); }).isSelected(function () { return workspace.isLinkPrefixActive('/maven/advancedSearch'); }).build();
-        var tab = builder.id('maven').title(function () { return 'Maven'; }).isValid(function () { return Maven.getMavenIndexerMBean(workspace); }).href(function () { return '/maven'; }).isSelected(function () { return workspace.isLinkActive('/maven'); }).tabs(search, advanced).build();
-        nav.add(tab);
-        /*
-        workspace.topLevelTabs.push({
-          id: "maven",
-          content: "Maven",
-          title: "Search maven repositories for artifacts",
-          isValid: (workspace: Workspace) => Maven.getMavenIndexerMBean(workspace),
-          href: () => "#/maven/search",
-          isActive: (workspace: Workspace) => workspace.isLinkActive("/maven")
-        });
-        */
-        helpRegistry.addUserDoc('maven', 'plugins/maven/doc/help.md', function () {
-            return Maven.getMavenIndexerMBean(workspace) !== null;
-        });
-        helpRegistry.addDevDoc("maven", 'plugins/maven/doc/developer.md');
-    }]);
-    hawtioPluginLoader.addModule(pluginName);
-})(Maven || (Maven = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="mavenPlugin.ts"/>
-/**
- * @module Maven
- */
-var Maven;
-(function (Maven) {
-    Maven._module.controller("Maven.ArtifactController", ["$scope", "$routeParams", "workspace", "jolokia", function ($scope, $routeParams, workspace, jolokia) {
-        $scope.row = {
-            groupId: $routeParams["group"] || "",
-            artifactId: $routeParams["artifact"] || "",
-            version: $routeParams["version"] || "",
-            classifier: $routeParams["classifier"] || "",
-            packaging: $routeParams["packaging"] || ""
-        };
-        var row = $scope.row;
-        $scope.id = Maven.getName(row);
-        Maven.addMavenFunctions($scope, workspace);
-        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
-            // lets do this asynchronously to avoid Error: $digest already in progress
-            setTimeout(updateTableContents, 50);
-        });
-        $scope.$watch('workspace.selection', function () {
-            updateTableContents();
-        });
-        function updateTableContents() {
-            var mbean = Maven.getMavenIndexerMBean(workspace);
-            // lets query the name and description of the GAV
-            if (mbean) {
-                jolokia.execute(mbean, "search", row.groupId, row.artifactId, row.version, row.packaging, row.classifier, "", Core.onSuccess(render));
-            }
-            else {
-                console.log("No MavenIndexerMBean!");
-            }
-        }
-        function render(response) {
-            if (response && response.length) {
-                var first = response[0];
-                row.name = first.name;
-                row.description = first.description;
-            }
-            Core.$apply($scope);
-        }
-    }]);
-})(Maven || (Maven = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="mavenPlugin.ts"/>
-/**
- * @module Maven
- */
-var Maven;
-(function (Maven) {
-    Maven._module.controller("Maven.DependenciesController", ["$scope", "$routeParams", "$location", "workspace", "jolokia", function ($scope, $routeParams, $location, workspace, jolokia) {
-        $scope.artifacts = [];
-        $scope.group = $routeParams["group"] || "";
-        $scope.artifact = $routeParams["artifact"] || "";
-        $scope.version = $routeParams["version"] || "";
-        $scope.classifier = $routeParams["classifier"] || "";
-        $scope.packaging = $routeParams["packaging"] || "";
-        $scope.dependencyTree = null;
-        Maven.addMavenFunctions($scope, workspace);
-        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
-            // lets do this asynchronously to avoid Error: $digest already in progress
-            setTimeout(updateTableContents, 50);
-        });
-        $scope.$watch('workspace.selection', function () {
-            updateTableContents();
-        });
-        $scope.onSelectNode = function (node) {
-            $scope.selected = node;
-        };
-        $scope.onRootNode = function (rootNode) {
-            // process the rootNode
-        };
-        $scope.validSelection = function () {
-            return $scope.selected && $scope.selected !== $scope.rootDependency;
-        };
-        $scope.viewDetails = function () {
-            var dependency = Core.pathGet($scope.selected, ["dependency"]);
-            var link = $scope.detailLink(dependency);
-            if (link) {
-                var path = Core.trimLeading(link, "#");
-                console.log("going to view " + path);
-                $location.path(path);
-            }
-        };
-        function updateTableContents() {
-            var mbean = Maven.getAetherMBean(workspace);
-            if (mbean) {
-                jolokia.execute(mbean, "resolveJson(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)", $scope.group, $scope.artifact, $scope.version, $scope.packaging, $scope.classifier, Core.onSuccess(render));
-            }
-            else {
-                console.log("No AetherMBean!");
-            }
-        }
-        function render(response) {
-            if (response) {
-                var json = JSON.parse(response);
-                if (json) {
-                    //console.log("Found json: " + JSON.stringify(json, null, "  "));
-                    $scope.dependencyTree = new Folder("Dependencies");
-                    $scope.dependencyActivations = [];
-                    addChildren($scope.dependencyTree, json);
-                    $scope.dependencyActivations.reverse();
-                    $scope.rootDependency = $scope.dependencyTree.children[0];
-                }
-            }
-            Core.$apply($scope);
-        }
-        function addChildren(folder, dependency) {
-            var name = Maven.getName(dependency);
-            var node = new Folder(name);
-            node.key = name.replace(/\//g, '_');
-            node["dependency"] = dependency;
-            $scope.dependencyActivations.push(node.key);
-            /*
-                  var imageUrl = Camel.getRouteNodeIcon(value);
-                  node.icon = imageUrl;
-                  //node.tooltip = tooltip;
-            */
-            folder.children.push(node);
-            var children = dependency["children"];
-            angular.forEach(children, function (child) {
-                addChildren(node, child);
-            });
-        }
-    }]);
-})(Maven || (Maven = {}));
-
-/// <reference path="mavenHelpers.ts"/>
-/// <reference path="mavenPlugin.ts"/>
-/**
- * @module Maven
- */
-var Maven;
-(function (Maven) {
-    Maven._module.controller("Maven.PomXmlController", ["$scope", function ($scope) {
-        $scope.mavenPomXml = "\n" + "  <dependency>\n" + "    <groupId>" + orBlank($scope.row.groupId) + "</groupId>\n" + "    <artifactId>" + orBlank($scope.row.artifactId) + "</artifactId>\n" + "    <version>" + orBlank($scope.row.version) + "</version>\n" + "  </dependency>\n";
-        function orBlank(text) {
-            return text || "";
-        }
-    }]);
-})(Maven || (Maven = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="mavenPlugin.ts"/>
-/**
- * @module Maven
- */
-var Maven;
-(function (Maven) {
-    Maven._module.controller("Maven.SearchController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        var log = Logger.get("Maven");
-        $scope.artifacts = [];
-        $scope.selected = [];
-        $scope.done = false;
-        $scope.inProgress = false;
-        $scope.form = {
-            searchText: ""
-        };
-        $scope.search = "";
-        $scope.searchForm = 'plugins/maven/html/searchForm.html';
-        Maven.addMavenFunctions($scope, workspace);
-        var columnDefs = [
-            {
-                field: 'groupId',
-                displayName: 'Group'
-            },
-            {
-                field: 'artifactId',
-                displayName: 'Artifact',
-                cellTemplate: '<div class="ngCellText" title="Name: {{row.entity.name}}">{{row.entity.artifactId}}</div>'
-            },
-            {
-                field: 'version',
-                displayName: 'Version',
-                cellTemplate: '<div class="ngCellText" title="Name: {{row.entity.name}}"><a ng-href="{{detailLink(row.entity)}}">{{row.entity.version}}</a</div>'
-            }
-        ];
-        $scope.gridOptions = {
-            data: 'artifacts',
-            displayFooter: true,
-            selectedItems: $scope.selected,
-            selectWithCheckboxOnly: true,
-            columnDefs: columnDefs,
-            rowDetailTemplateId: "artifactDetailTemplate",
-            filterOptions: {
-                filterText: 'search'
-            }
-        };
-        $scope.hasAdvancedSearch = function (form) {
-            return form.searchGroup || form.searchArtifact || form.searchVersion || form.searchPackaging || form.searchClassifier || form.searchClassName;
-        };
-        $scope.doSearch = function () {
-            $scope.done = false;
-            $scope.inProgress = true;
-            $scope.artifacts = [];
-            // ensure ui is updated with search in progress...
-            setTimeout(function () {
-                Core.$apply($scope);
-            }, 50);
-            var mbean = Maven.getMavenIndexerMBean(workspace);
-            var form = $scope.form;
-            if (mbean) {
-                var searchText = form.searchText;
-                var kind = form.artifactType;
-                if (kind) {
-                    if (kind === "className") {
-                        log.debug("Search for: " + form.searchText + " className");
-                        jolokia.execute(mbean, "searchClasses", searchText, Core.onSuccess(render));
-                    }
-                    else {
-                        var paths = kind.split('/');
-                        var packaging = paths[0];
-                        var classifier = paths[1];
-                        log.debug("Search for: " + form.searchText + " packaging " + packaging + " classifier " + classifier);
-                        jolokia.execute(mbean, "searchTextAndPackaging", searchText, packaging, classifier, Core.onSuccess(render));
-                    }
-                }
-                else if (searchText) {
-                    log.debug("Search text is: " + form.searchText);
-                    jolokia.execute(mbean, "searchText", form.searchText, Core.onSuccess(render));
-                }
-                else if ($scope.hasAdvancedSearch(form)) {
-                    log.debug("Searching for " + form.searchGroup + "/" + form.searchArtifact + "/" + form.searchVersion + "/" + form.searchPackaging + "/" + form.searchClassifier + "/" + form.searchClassName);
-                    jolokia.execute(mbean, "search", form.searchGroup || "", form.searchArtifact || "", form.searchVersion || "", form.searchPackaging || "", form.searchClassifier || "", form.searchClassName || "", Core.onSuccess(render));
-                }
-            }
-            else {
-                Core.notification("error", "Cannot find the Maven Indexer MBean!");
-            }
-        };
-        // cap ui table at one thousand
-        var RESPONSE_LIMIT = 1000;
-        var SERVER_RESPONSE_LIMIT = (10 * RESPONSE_LIMIT) + 1;
-        function render(response) {
-            log.debug("Search done, preparing result.");
-            $scope.done = true;
-            $scope.inProgress = false;
-            // let's limit the reponse to avoid blowing up
-            // the browser until we start using a widget
-            // that supports pagination
-            if (response.length > RESPONSE_LIMIT) {
-                var serverLimit = response.length === SERVER_RESPONSE_LIMIT;
-                if (serverLimit) {
-                    $scope.tooManyResponses = "This search returned more than " + (SERVER_RESPONSE_LIMIT - 1) + " artifacts, showing the first " + RESPONSE_LIMIT + ", please refine your search";
-                }
-                else {
-                    $scope.tooManyResponses = "This search returned " + response.length + " artifacts, showing the first " + RESPONSE_LIMIT + ", please refine your search";
-                }
-            }
-            else {
-                $scope.tooManyResponses = "";
-            }
-            $scope.artifacts = response.first(RESPONSE_LIMIT);
-            Core.$apply($scope);
-        }
-    }]);
-})(Maven || (Maven = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="mavenPlugin.ts"/>
-/**
- * @module Maven
- */
-var Maven;
-(function (Maven) {
-    Maven._module.controller("Maven.TestController", ["$scope", "workspace", "jolokia", "$q", "$templateCache", function ($scope, workspace, jolokia, $q, $templateCache) {
-        $scope.html = "text/html";
-        $scope.someUri = '';
-        $scope.uriParts = [];
-        $scope.mavenCompletion = $templateCache.get("mavenCompletionTemplate");
-        $scope.$watch('someUri', function (newValue, oldValue) {
-            if (newValue !== oldValue) {
-                $scope.uriParts = newValue.split("/");
-            }
-        });
-        $scope.$watch('uriParts', function (newValue, oldValue) {
-            if (newValue !== oldValue) {
-                if (newValue.length === 1 && newValue.length < oldValue.length) {
-                    if (oldValue.last() !== '' && newValue.first().has(oldValue.last())) {
-                        var merged = oldValue.first(oldValue.length - 1).include(newValue.first());
-                        $scope.someUri = merged.join('/');
-                    }
-                }
-            }
-        }, true);
-        $scope.doCompletionMaven = function (something) {
-            return Maven.completeMavenUri($q, $scope, workspace, jolokia, something);
-        };
-    }]);
-})(Maven || (Maven = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="mavenPlugin.ts"/>
-/**
- * @module Maven
- */
-var Maven;
-(function (Maven) {
-    Maven._module.controller("Maven.VersionsController", ["$scope", "$routeParams", "workspace", "jolokia", function ($scope, $routeParams, workspace, jolokia) {
-        $scope.artifacts = [];
-        $scope.group = $routeParams["group"] || "";
-        $scope.artifact = $routeParams["artifact"] || "";
-        $scope.version = "";
-        $scope.classifier = $routeParams["classifier"] || "";
-        $scope.packaging = $routeParams["packaging"] || "";
-        var id = $scope.group + "/" + $scope.artifact;
-        if ($scope.classifier) {
-            id += "/" + $scope.classifier;
-        }
-        if ($scope.packaging) {
-            id += "/" + $scope.packaging;
-        }
-        var columnTitle = id + " versions";
-        var columnDefs = [
-            {
-                field: 'version',
-                displayName: columnTitle,
-                cellTemplate: '<div class="ngCellText"><a href="#/maven/artifact/{{row.entity.groupId}}/{{row.entity.artifactId}}/{{row.entity.version}}">{{row.entity.version}}</a></div>',
-            }
-        ];
-        $scope.gridOptions = {
-            data: 'artifacts',
-            displayFooter: true,
-            selectedItems: $scope.selected,
-            selectWithCheckboxOnly: true,
-            columnDefs: columnDefs,
-            rowDetailTemplateId: "artifactDetailTemplate",
-            sortInfo: { field: 'versionNumber', direction: 'DESC' },
-            filterOptions: {
-                filterText: 'search'
-            }
-        };
-        Maven.addMavenFunctions($scope, workspace);
-        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
-            // lets do this asynchronously to avoid Error: $digest already in progress
-            setTimeout(updateTableContents, 50);
-        });
-        $scope.$watch('workspace.selection', function () {
-            updateTableContents();
-        });
-        function updateTableContents() {
-            var mbean = Maven.getMavenIndexerMBean(workspace);
-            if (mbean) {
-                jolokia.execute(mbean, "versionComplete", $scope.group, $scope.artifact, $scope.version, $scope.packaging, $scope.classifier, Core.onSuccess(render));
-            }
-            else {
-                console.log("No MavenIndexerMBean!");
-            }
-        }
-        function render(response) {
-            $scope.artifacts = [];
-            angular.forEach(response, function (version) {
-                var versionNumberArray = Core.parseVersionNumbers(version);
-                var versionNumber = 0;
-                for (var i = 0; i <= 4; i++) {
-                    var num = (i >= versionNumberArray.length) ? 0 : versionNumberArray[i];
-                    versionNumber *= 1000;
-                    versionNumber += num;
-                }
-                $scope.artifacts.push({
-                    groupId: $scope.group,
-                    artifactId: $scope.artifact,
-                    packaging: $scope.packaging,
-                    classifier: $scope.classifier,
-                    version: version,
-                    versionNumber: versionNumber
-                });
-            });
-            Core.$apply($scope);
-        }
-    }]);
-})(Maven || (Maven = {}));
-
-/// <reference path="../../includes.ts"/>
-/// <reference path="mavenPlugin.ts"/>
-/**
- * @module Maven
- */
-var Maven;
-(function (Maven) {
-    Maven._module.controller("Maven.ViewController", ["$scope", "$location", "workspace", "jolokia", function ($scope, $location, workspace, jolokia) {
-        $scope.$watch('workspace.tree', function () {
-            // if the JMX tree is reloaded its probably because a new MBean has been added or removed
-            // so lets reload, asynchronously just in case
-            setTimeout(loadData, 50);
-        });
-        $scope.$on("$routeChangeSuccess", function (event, current, previous) {
-            setTimeout(loadData, 50);
-        });
-        function loadData() {
-        }
-    }]);
-})(Maven || (Maven = {}));
 
 angular.module("hawtio-wiki-templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("plugins/activemq/html/browseQueue.html","<div ng-controller=\"ActiveMQ.BrowseQueueController\">\n  <div class=\"row\">\n    <div class=\"col-md-6\">\n      <input class=\"search-query col-md-12\" type=\"text\" ng-model=\"gridOptions.filterOptions.filterText\"\n             placeholder=\"Filter messages\">\n    </div>\n    <div class=\"col-md-6\">\n      <div class=\"pull-right\">\n        <form class=\"form-inline\">\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-show=\"dlq\" ng-click=\"retryMessages()\"\n                  title=\"Moves the dead letter queue message back to its original destination so it can be retried\" data-placement=\"bottom\">\n            <i class=\"fa fa-reply\"></i> Retry\n          </button>\n          <button class=\"btn\" ng-disabled=\"gridOptions.selectedItems.length !== 1\" ng-click=\"resendMessage()\"\n                    title=\"Edit the message to resend it\" data-placement=\"bottom\">\n           <i class=\"fa fa-share-alt\"></i> Resend\n          </button>\n\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                  title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n            <i class=\"fa fa-share-alt\"></i> Move\n          </button>\n          <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                  ng-click=\"deleteDialog = true\"\n                  title=\"Delete the selected messages\">\n            <i class=\"fa fa-remove\"></i> Delete\n          </button>\n          <button class=\"btn\" ng-click=\"refresh()\"\n                  title=\"Refreshes the list of messages\">\n            <i class=\"fa fa-refresh\"></i>\n          </button>\n        </form>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"row\">\n    <table class=\"table table-striped\" hawtio-simple-table=\"gridOptions\"></table>\n  </div>\n\n  <div hawtio-slideout=\"showMessageDetails\" title=\"{{row.JMSMessageID}}\">\n    <div class=\"dialog-body\">\n\n      <div class=\"row\">\n        <div class=\"pull-right\">\n          <form class=\"form-horizontal no-bottom-margin\">\n\n            <div class=\"btn-group\"\n                 hawtio-pager=\"messages\"\n                 on-index-change=\"selectRowIndex\"\n                 row-index=\"rowIndex\"></div>\n\n            <button class=\"btn\" ng-disabled=\"!gridOptions.selectedItems.length\" ng-click=\"moveDialog = true\"\n                    title=\"Move the selected messages to another destination\" data-placement=\"bottom\">\n              <i class=\"fa fa-share-alt\"></i> Move\n            </button>\n\n            <button class=\"btn btn-danger\" ng-disabled=\"!gridOptions.selectedItems.length\"\n                    ng-click=\"deleteDialog = true\"\n                    title=\"Delete the selected messages\">\n              <i class=\"fa fa-remove\"></i> Delete\n            </button>\n\n            <button class=\"btn\" ng-click=\"showMessageDetails = !showMessageDetails\" title=\"Close this dialog\">\n              <i class=\"fa fa-remove\"></i> Close\n            </button>\n\n          </form>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div class=\"expandable closed\">\n          <div title=\"Headers\" class=\"title\">\n            <i class=\"expandable-indicator\"></i> Headers & Properties\n          </div>\n          <div class=\"expandable-body well\">\n            <table class=\"table table-condensed table-striped\">\n              <thead>\n              <tr>\n                <th>Header</th>\n                <th>Value</th>\n              </tr>\n              </thead>\n              <tbody ng-bind-html=\"row.headerHtml\">\n              </tbody>\n              <!--\n                            <tr ng-repeat=\"(key, value) in row.headers\">\n                              <td class=\"property-name\">{{key}}</td>\n                              <td class=\"property-value\">{{value}}</td>\n                            </tr>\n              -->\n            </table>\n          </div>\n        </div>\n      </div>\n\n      <div class=\"row\">\n        <div>Displaying body as <span ng-bind=\"row.textMode\"></span></div>\n        <div hawtio-editor=\"row.bodyText\" read-only=\"true\" mode=\'mode\'></div>\n      </div>\n\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"deleteDialog\"\n       ok-button-text=\"Delete\"\n       on-ok=\"deleteMessages()\">\n    <div class=\"dialog-body\">\n      <p>You are about to delete\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'a message!\', \'other\': \'{} messages!\'}\">\n        </ng-pluralize>\n      </p>\n      <p>This operation cannot be undone so please be careful.</p>\n    </div>\n  </div>\n\n  <div hawtio-confirm-dialog=\"moveDialog\"\n       ok-button-text=\"Move\"\n       on-ok=\"moveMessages()\">\n    <div class=\"dialog-body\">\n      <p>Move\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'{} messages\'}\"></ng-pluralize>\n        to: <input type=\"text\" ng-model=\"queueName\" placeholder=\"Queue name\"\n                   typeahead=\"title.unescapeHTML() for title in queueNames($viewValue) | filter:$viewValue\" typeahead-editable=\'true\'></p>\n      <p>\n        You cannot undo this operation.<br>\n        Though after the move you can always move the\n        <ng-pluralize count=\"gridOptions.selectedItems.length\"\n                      when=\"{\'1\': \'message\', \'other\': \'messages\'}\"></ng-pluralize>\n        back again.\n      </p>\n    </div>\n  </div>\n\n</div>\n\n");
 $templateCache.put("plugins/activemq/html/createDestination.html","<form class=\"form-horizontal\" ng-controller=\"ActiveMQ.DestinationController\">\n\n  <div class=\"alert alert-info\">\n    <span class=\"pficon pficon-info\"></span>The JMS API does not define a standard address syntax. <p></p> Although a\n    standard address syntax was considered, it was decided that the differences in address semantics between existing\n    message-oriented middleware (MOM) products were too wide to bridge with a single syntax.\n  </div>\n\n  <div class=\"form-group\">\n    <label class=\"col-sm-2 control-label\" for=\"name-markup\">{{destinationTypeName}} name</label>\n\n    <div class=\"col-sm-10\">\n      <input id=\"name-markup\" class=\"form-control\" type=\"text\" size=\"60\" style=\"margin-left:15px;\" maxlength=\"300\"\n             name=\"destinationName\" ng-model=\"destinationName\" placeholder=\"{{destinationTypeName}} name\"/>\n    </div>\n  </div>\n  <div class=\"form-group\">\n    <label class=\"col-sm-2 control-label\">Destination type</label>\n\n    <div class=\"col-sm-10\">\n      <label class=\"checkbox\">\n        <input type=\"radio\" ng-model=\"queueType\" value=\"true\"> Queue\n      </label>\n      <label class=\"checkbox\">\n        <input type=\"radio\" ng-model=\"queueType\" value=\"false\"> Topic\n      </label>\n    </div>\n  </div>\n\n  <div class=\"control-group col-md-12\">\n    <button type=\"submit\" class=\"btn btn-primary\" ng-click=\"createDestination(destinationName, queueType)\"\n            ng-disabled=\"!destinationName\">Create {{destinationTypeName}}\n    </button>\n  </div>\n\n</form>\n");
