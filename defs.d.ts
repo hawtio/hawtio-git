@@ -4,11 +4,11 @@
 /// <reference path="d.ts/docker-registry/ts/dockerRegistryPlugin.d.ts"/>
 /// <reference path="d.ts/docker-registry/ts/dockerRegistryTopLevel.d.ts"/>
 /// <reference path="d.ts/docker-registry/ts/list.d.ts"/>
-/// <reference path="d.ts/git/ts/gitHelpers.d.ts"/>
-/// <reference path="d.ts/git/ts/git.d.ts"/>
 /// <reference path="d.ts/dozer/ts/dozerHelpers.d.ts"/>
 /// <reference path="d.ts/dozer/ts/model.d.ts"/>
 /// <reference path="d.ts/dozer/ts/schemaConfigure.d.ts"/>
+/// <reference path="d.ts/git/ts/gitHelpers.d.ts"/>
+/// <reference path="d.ts/git/ts/git.d.ts"/>
 /// <reference path="d.ts/maven/ts/mavenHelpers.d.ts"/>
 /// <reference path="d.ts/maven/ts/mavenPlugin.d.ts"/>
 /// <reference path="d.ts/maven/ts/artifact.d.ts"/>

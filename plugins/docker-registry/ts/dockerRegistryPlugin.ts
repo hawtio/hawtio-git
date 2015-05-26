@@ -10,11 +10,12 @@ module DockerRegistry {
     $routeProvider.when(UrlHelpers.join(context, 'list'), route('list.html', false));
   }]);
 
-  _module.factory('DockerRegistryRestURL', ['jolokiaUrl', 'jolokia', '$q', '$rootScope', (jolokiaUrl:string, jolokia:Jolokia.IJolokia, $q:ng.IQService, $rootScope:ng.IRootScopeService) => {
+  _module.factory('DockerRegistryRestURL', ['$injector', '$q', '$timeout', ($injector, $q:ng.IQService, $timeout:ng.ITimeoutService) => {
     // TODO use the services plugin to find it?
-
-/*
     var answer = <ng.IDeferred<string>> $q.defer();
+    answer.resolve('');
+    return answer.promise;
+    /*
     jolokia.getAttribute(Kubernetes.managerMBean, 'DockerRegistry', undefined, 
       <Jolokia.IParams> Core.onSuccess((response) => {
         var proxified = UrlHelpers.maybeProxy(jolokiaUrl, response);
@@ -32,10 +33,10 @@ module DockerRegistry {
 */
   }]);
 
-  _module.run(['viewRegistry', 'workspace', (viewRegistry, workspace:Core.Workspace) => {
+  _module.run(['viewRegistry', 'workspace', 'DockerRegistryRestURL', (viewRegistry, workspace:Core.Workspace) => {
     log.debug("Running");
     viewRegistry['docker-registry'] = UrlHelpers.join(templatePath, 'layoutDockerRegistry.html');
-    /* TODO commenting this out until we fix the above service :-)
+    /*
     workspace.topLevelTabs.push({
       id: 'docker-registry',
       content: 'Images',
