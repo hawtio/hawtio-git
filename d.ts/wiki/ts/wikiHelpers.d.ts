@@ -52,6 +52,62 @@ declare module Wiki {
     } | {
         label: string;
         tooltip: string;
+        addClass: string;
+        exemplar: string;
+        regex: RegExp;
+        invalid: string;
+        extension: string;
+        generated: {
+            mbean: (string | {
+                type: string;
+            })[];
+            init: (workspace: any, $scope: any) => void;
+            generate: (options: GenerateOptions) => void;
+            form: (workspace: any, $scope: any) => {
+                summaryMarkdown: string;
+                replicaCount: number;
+            };
+            schema: {
+                description: string;
+                type: string;
+                properties: {
+                    'dockerImage': {
+                        'description': string;
+                        'type': string;
+                        'input-attributes': {
+                            'required': string;
+                            'class': string;
+                            'typeahead': string;
+                            'typeahead-wait-ms': string;
+                        };
+                    };
+                    'summaryMarkdown': {
+                        'description': string;
+                        'type': string;
+                        'input-attributes': {
+                            'class': string;
+                        };
+                    };
+                    'replicaCount': {
+                        'description': string;
+                        'type': string;
+                        'input-attributes': {
+                            min: string;
+                        };
+                    };
+                    'labels': {
+                        'description': string;
+                        'type': string;
+                        'items': {
+                            'type': string;
+                        };
+                    };
+                };
+            };
+        };
+    } | {
+        label: string;
+        tooltip: string;
         profile: boolean;
         addClass: string;
         exemplar: string;
@@ -68,6 +124,92 @@ declare module Wiki {
     } | {
         label: string;
         tooltip: string;
+        exemplar: string;
+        regex: RegExp;
+        invalid: string;
+        extension: string;
+        generated: {
+            mbean: (string | {
+                type: string;
+            })[];
+            init: (workspace: any, $scope: any) => void;
+            generate: (options: GenerateOptions) => void;
+            form: (workspace: any, $scope: any) => {
+                storeType: any;
+                createPrivateKey: boolean;
+                keyLength: number;
+                keyAlgorithm: any;
+                keyValidity: number;
+            };
+            schema: {
+                "description": string;
+                "type": string;
+                "properties": {
+                    "storePassword": {
+                        "description": string;
+                        "type": string;
+                        'input-attributes': {
+                            "required": string;
+                            "ng-minlength": number;
+                        };
+                    };
+                    "storeType": {
+                        "description": string;
+                        "type": string;
+                        'input-element': string;
+                        'input-attributes': {
+                            "ng-options": string;
+                        };
+                    };
+                    "createPrivateKey": {
+                        "description": string;
+                        "type": string;
+                    };
+                    "keyCommonName": {
+                        "description": string;
+                        "type": string;
+                        'control-group-attributes': {
+                            'ng-show': string;
+                        };
+                    };
+                    "keyLength": {
+                        "description": string;
+                        "type": string;
+                        'control-group-attributes': {
+                            'ng-show': string;
+                        };
+                    };
+                    "keyAlgorithm": {
+                        "description": string;
+                        "type": string;
+                        'input-element': string;
+                        'input-attributes': {
+                            "ng-options": string;
+                        };
+                        'control-group-attributes': {
+                            'ng-show': string;
+                        };
+                    };
+                    "keyValidity": {
+                        "description": string;
+                        "type": string;
+                        'control-group-attributes': {
+                            'ng-show': string;
+                        };
+                    };
+                    "keyPassword": {
+                        "description": string;
+                        "type": string;
+                        'control-group-attributes': {
+                            'ng-show': string;
+                        };
+                    };
+                };
+            };
+        };
+    } | {
+        label: string;
+        tooltip: string;
         children: {
             label: string;
             tooltip: string;
@@ -77,6 +219,14 @@ declare module Wiki {
             invalid: string;
             extension: string;
         }[];
+    } | {
+        label: string;
+        tooltip: string;
+        icon: string;
+        exemplar: string;
+        regex: RegExp;
+        invalid: string;
+        extension: string;
     })[];
     function isFMCContainer(workspace: any): boolean;
     function isWikiEnabled(workspace: Workspace, jolokia: any, localStorage: any): boolean;
